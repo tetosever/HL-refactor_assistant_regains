@@ -1,0 +1,8 @@
+{
+  "projects": [
+    "db-jdo-hl-23-24-25",
+    "antlr4-hl-23-24-25",
+    "opennlp-hl-23-24-25",
+    "commons-lang-hl-23-24-25"
+  ]
+}
