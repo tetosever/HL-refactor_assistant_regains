@@ -483,7 +483,7 @@ def main():
 
     # Paths
     base_dir = Path(__file__).parent
-    data_dir = base_dir / 'data' / 'dataset_graph_feature'
+    data_dir = base_dir / 'dataset_builder' / 'data' / 'dataset_graph_feature'
     results_dir = base_dir / 'results' / 'discriminator_pretraining'
 
     if not data_dir.exists():
