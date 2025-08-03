@@ -401,12 +401,13 @@ def safe_torch_load(file_path: Path, device: torch.device):
             return torch.load(file_path, map_location=device, weights_only=True)
     except Exception:
         # Fallback to weights_only=False for trusted files
-        logger.warning(f"Loading {file_path} with weights_only=False (trusted source)")
+        import warnings
+        warnings.filterwarnings("ignore", message="Loading .* with weights_only=False")
         return torch.load(file_path, map_location=device, weights_only=False)
 
 
 def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tuple[nn.Module, Dict]:
-    """Load pretrained discriminator with safe loading"""
+    """Load pretrained discriminator with correct architecture parameters"""
     logger.info(f"Loading pretrained discriminator from {model_path}")
 
     if not model_path.exists():
@@ -414,12 +415,28 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
 
     checkpoint = safe_torch_load(model_path, device)
 
-    # Create model with saved dimensions
+    # Get architecture parameters from checkpoint
+    model_architecture = checkpoint.get('model_architecture', {})
+    node_dim = checkpoint['node_dim']
+    edge_dim = checkpoint['edge_dim']
+
+    # Use saved architecture parameters or defaults
+    hidden_dim = model_architecture.get('hidden_dim', 128)
+    num_layers = model_architecture.get('num_layers', 4)  # Fixed: use 4 layers as saved
+    dropout = model_architecture.get('dropout', 0.15)
+    heads = model_architecture.get('heads', 8)
+
+    logger.info(f"Creating discriminator with: hidden_dim={hidden_dim}, num_layers={num_layers}, "
+                f"dropout={dropout}, heads={heads}")
+
+    # Create model with correct architecture
     discriminator = HubDetectionDiscriminator(
-        node_dim=checkpoint['node_dim'],
-        edge_dim=checkpoint['edge_dim'],
-        hidden_dim=128,
-        num_layers=3
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=dropout,
+        heads=heads
     ).to(device)
 
     # Load state dict
@@ -849,7 +866,7 @@ def main():
     if not discriminator_path.exists():
         logger.error(f"❌ Pretrained discriminator not found at {discriminator_path}")
         logger.error("Please run the discriminator pre-training script first:")
-        logger.error("python pretrain_discriminator.py")
+        logger.error("python pre-training-discriminator.py")
         return
 
     # Load data with GPU optimization
@@ -884,7 +901,7 @@ def main():
     # Model parameters from discriminator checkpoint
     node_dim = discriminator_checkpoint['node_dim']
     edge_dim = discriminator_checkpoint['edge_dim']
-    hidden_dim = 128
+    hidden_dim = discriminator_checkpoint.get('model_architecture', {}).get('hidden_dim', 128)
 
     logger.info(f"🔧 Model dimensions - Node: {node_dim}, Edge: {edge_dim}, Hidden: {hidden_dim}")
 
