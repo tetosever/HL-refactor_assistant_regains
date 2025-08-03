@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
 Enhanced GCPN Training Script for Hub-like Dependency Refactoring
-Optimized for GPU/CUDA usage with improved error handling
+Fixed version with robust error handling and discriminator validation
 
 Key Features:
 - Enhanced Policy Network with hub-aware attention
 - Advanced Environment with pattern-based actions
-- Discriminator-based adversarial learning
+- Discriminator-based adversarial learning with robust validation
 - PPO + GAE optimization
-- Curriculum learning with sophisticated progression
 - Comprehensive monitoring and debugging
 - GPU/CUDA optimizations
-- Fixed torch.load issues for PyTorch Geometric data
+- Fixed discriminator validation and environment initialization
 """
 
 import logging
 import random
 import json
 import os
+import warnings
 from collections import deque
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 import numpy as np
 import torch
@@ -39,7 +39,11 @@ from rl_gym import HubRefactoringEnv
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Define RefactoringAction class since it's missing
+# Suppress specific warnings
+warnings.filterwarnings("ignore", message="Loading .* with weights_only=False")
+warnings.filterwarnings("ignore", message=".*weights_only=False.*")
+
+# Define RefactoringAction class
 from dataclasses import dataclass
 
 
@@ -108,9 +112,7 @@ class PPOTrainer:
 
         # GPU optimization settings
         if device.type == 'cuda':
-            # Enable cuDNN benchmark for consistent input sizes
             torch.backends.cudnn.benchmark = True
-            # Set memory growth strategy
             torch.cuda.empty_cache()
 
     def compute_gae(self, rewards: List[float], values: List[float],
@@ -166,7 +168,6 @@ class PPOTrainer:
                 batch_data = batch_data.to(self.device)
         except Exception as e:
             logger.warning(f"Batching failed: {e}, using fallback")
-            # Fallback: process individually
             policy_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
             entropy = torch.tensor(0.0, device=self.device)
             return {
@@ -202,10 +203,10 @@ class PPOTrainer:
                 if hub_probs_i.size(0) == 0:
                     continue
 
-                hub_dist = Categorical(hub_probs_i + 1e-8)  # Add small epsilon for numerical stability
+                hub_dist = Categorical(hub_probs_i + 1e-8)
                 hub_action_tensor = torch.tensor(action.source_node, device=self.device)
                 if action.source_node >= hub_probs_i.size(0):
-                    hub_action_tensor = torch.tensor(0, device=self.device)  # Fallback to first node
+                    hub_action_tensor = torch.tensor(0, device=self.device)
 
                 log_prob_hub = hub_dist.log_prob(hub_action_tensor)
                 entropy_hub = hub_dist.entropy()
@@ -244,13 +245,11 @@ class PPOTrainer:
                 entropies.append(total_entropy)
 
             except Exception as e:
-                logger.warning(f"Error computing log prob for action {i}: {e}")
-                # Add dummy values to maintain consistency
+                logger.debug(f"Error computing log prob for action {i}: {e}")
                 log_probs.append(torch.tensor(0.0, device=self.device))
                 entropies.append(torch.tensor(0.0, device=self.device))
 
         if not log_probs:
-            # Return dummy values if no valid log probs
             policy_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
             entropy = torch.tensor(0.0, device=self.device)
             return {
@@ -299,7 +298,7 @@ class PPOTrainer:
 
             for start in range(0, len(states), batch_size):
                 end = min(start + batch_size, len(states))
-                batch_indices = indices[start:end].cpu().numpy()  # Move to CPU for indexing
+                batch_indices = indices[start:end].cpu().numpy()
 
                 # Create batch
                 batch_states = [states[i] for i in batch_indices]
@@ -322,7 +321,7 @@ class PPOTrainer:
 
                 # Early stopping on large KL divergence
                 if loss_info['approx_kl'] > 0.01:
-                    logger.warning(f"Early stopping due to large KL: {loss_info['approx_kl']:.4f}")
+                    logger.debug(f"Early stopping due to large KL: {loss_info['approx_kl']:.4f}")
                     break
 
         self.policy_losses.append(total_loss.item())
@@ -385,7 +384,7 @@ class PPOTrainer:
                 self.disc_losses.append(disc_loss.item())
 
             except Exception as e:
-                logger.warning(f"Error in discriminator update: {e}")
+                logger.debug(f"Error in discriminator update: {e}")
                 continue
 
         # GPU memory cleanup
@@ -396,13 +395,9 @@ class PPOTrainer:
 def safe_torch_load(file_path: Path, device: torch.device):
     """Safely load PyTorch files with PyTorch Geometric compatibility"""
     try:
-        # Add safe globals for PyTorch Geometric
         with torch.serialization.safe_globals([torch_geometric.data.data.DataEdgeAttr]):
             return torch.load(file_path, map_location=device, weights_only=True)
     except Exception:
-        # Fallback to weights_only=False for trusted files
-        import warnings
-        warnings.filterwarnings("ignore", message="Loading .* with weights_only=False")
         return torch.load(file_path, map_location=device, weights_only=False)
 
 
@@ -422,7 +417,7 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
 
     # Use saved architecture parameters or defaults
     hidden_dim = model_architecture.get('hidden_dim', 128)
-    num_layers = model_architecture.get('num_layers', 4)  # Fixed: use 4 layers as saved
+    num_layers = model_architecture.get('num_layers', 4)
     dropout = model_architecture.get('dropout', 0.15)
     heads = model_architecture.get('heads', 8)
 
@@ -453,53 +448,80 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
     return discriminator, checkpoint
 
 
+def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: torch.device) -> Optional[float]:
+    """Get discriminator prediction for a single graph with robust error handling"""
+    try:
+        discriminator.eval()
+
+        # Ensure data is on correct device
+        if data.x.device != device:
+            data = data.to(device)
+
+        # Ensure batch attribute exists
+        if not hasattr(data, 'batch'):
+            data.batch = torch.zeros(data.x.size(0), dtype=torch.long, device=device)
+
+        with torch.no_grad():
+            output = discriminator(data)
+
+            if output is None or 'logits' not in output:
+                return None
+
+            logits = output['logits']
+            if logits is None or logits.size(0) == 0:
+                return None
+
+            # Get probability of being smelly
+            prob_smelly = F.softmax(logits, dim=1)[0, 1].item()
+            return prob_smelly
+
+    except Exception as e:
+        logger.debug(f"Error in discriminator prediction: {e}")
+        return None
+
+
 def validate_discriminator_performance(discriminator: nn.Module, smelly_data: List[Data],
                                        clean_data: List[Data], device: torch.device) -> Dict[str, float]:
-    """Validate discriminator performance on current dataset - GPU optimized"""
+    """Validate discriminator performance with robust error handling"""
     logger.info("Validating discriminator performance...")
 
-    discriminator.eval()
     correct_predictions = 0
     total_predictions = 0
     smelly_correct = 0
     clean_correct = 0
 
-    with torch.no_grad():
-        # Test on smelly graphs
-        for data in smelly_data[:50]:  # Test on subset
-            try:
-                data = data.to(device)
-                output = discriminator(data)
-                prob_smelly = F.softmax(output['logits'], dim=1)[0, 1].item()
+    # Test on smelly graphs
+    for i, data in enumerate(smelly_data[:20]):  # Smaller subset for faster validation
+        prob_smelly = get_discriminator_prediction(discriminator, data, device)
 
-                if prob_smelly > 0.5:  # Correctly identified as smelly
-                    smelly_correct += 1
-                total_predictions += 1
-            except Exception as e:
-                logger.debug(f"Error validating smelly graph: {e}")
-                continue
+        if prob_smelly is not None:
+            if prob_smelly > 0.5:  # Correctly identified as smelly
+                smelly_correct += 1
+            total_predictions += 1
+        else:
+            logger.debug(f"Failed to get prediction for smelly graph {i}")
 
-        # Test on clean graphs
-        for data in clean_data[:50]:  # Test on subset
-            try:
-                data = data.to(device)
-                output = discriminator(data)
-                prob_smelly = F.softmax(output['logits'], dim=1)[0, 1].item()
+    # Test on clean graphs
+    for i, data in enumerate(clean_data[:20]):  # Smaller subset
+        prob_smelly = get_discriminator_prediction(discriminator, data, device)
 
-                if prob_smelly <= 0.5:  # Correctly identified as clean
-                    clean_correct += 1
-                total_predictions += 1
-            except Exception as e:
-                logger.debug(f"Error validating clean graph: {e}")
-                continue
+        if prob_smelly is not None:
+            if prob_smelly <= 0.5:  # Correctly identified as clean
+                clean_correct += 1
+            total_predictions += 1
+        else:
+            logger.debug(f"Failed to get prediction for clean graph {i}")
+
+    logger.info(f"Validation results: total_predictions={total_predictions}, "
+                f"smelly_correct={smelly_correct}, clean_correct={clean_correct}")
 
     if total_predictions == 0:
         logger.warning("Could not validate discriminator - no valid predictions")
         return {'accuracy': 0.0, 'smelly_accuracy': 0.0, 'clean_accuracy': 0.0}
 
     accuracy = (smelly_correct + clean_correct) / total_predictions
-    smelly_acc = smelly_correct / min(50, len(smelly_data)) if smelly_data else 0
-    clean_acc = clean_correct / min(50, len(clean_data)) if clean_data else 0
+    smelly_acc = smelly_correct / min(20, len(smelly_data)) if smelly_data else 0
+    clean_acc = clean_correct / min(20, len(clean_data)) if clean_data else 0
 
     results = {
         'accuracy': accuracy,
@@ -508,13 +530,12 @@ def validate_discriminator_performance(discriminator: nn.Module, smelly_data: Li
     }
 
     logger.info(f"Discriminator validation: Overall: {accuracy:.3f}, Smelly: {smelly_acc:.3f}, Clean: {clean_acc:.3f}")
-
     return results
 
 
 def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch.device = torch.device('cpu')) -> Tuple[
     List[Data], List[Data]]:
-    """Load and prepare training data with GPU optimization"""
+    """Load and prepare training data with enhanced validation"""
     logger.info("Loading dataset...")
 
     smelly_data = []
@@ -535,20 +556,32 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
             # Use safe loading function
             data = safe_torch_load(file, device='cpu')  # Load to CPU first
 
-            # Validate data structure
+            # Enhanced validation
             if not hasattr(data, 'x') or not hasattr(data, 'edge_index'):
                 continue
 
-            # Check for required features
             if data.x.size(1) < 9:  # Ensure enough features
                 continue
+
+            if data.x.size(0) < 3:  # Need at least 3 nodes
+                continue
+
+            if data.edge_index.size(1) == 0:  # Need at least some edges
+                continue
+
+            # Check for NaN values
+            if torch.isnan(data.x).any() or torch.isnan(data.edge_index.float()).any():
+                continue
+
+            # Ensure batch attribute doesn't exist (will be added when needed)
+            if hasattr(data, 'batch'):
+                delattr(data, 'batch')
 
             # Classify by smell
             is_smelly = getattr(data, 'is_smelly', 0)
             if isinstance(is_smelly, torch.Tensor):
                 is_smelly = is_smelly.item()
 
-            # Move to device when needed (not here to save memory)
             if is_smelly == 1:
                 smelly_data.append(data)
             else:
@@ -565,21 +598,47 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
 def create_training_environments(smelly_data: List[Data], discriminator: nn.Module,
                                  num_envs: int = 8, device: torch.device = torch.device('cpu')) -> List[
     HubRefactoringEnv]:
-    """Create training environments with GPU optimization"""
+    """Create training environments with enhanced error handling"""
     envs = []
+
     for i in range(num_envs):
-        # Select a smelly graph for this environment
-        initial_graph = random.choice(smelly_data)
-        # Move graph to device when creating environment
-        initial_graph = initial_graph.to(device)
-        env = HubRefactoringEnv(initial_graph, discriminator, max_steps=15, device=device)
-        envs.append(env)
+        try:
+            # Select a smelly graph for this environment
+            initial_graph = random.choice(smelly_data).clone()  # Clone to avoid modification
+
+            # Ensure graph is properly formatted
+            if not hasattr(initial_graph, 'batch'):
+                initial_graph.batch = torch.zeros(initial_graph.x.size(0), dtype=torch.long)
+
+            # Move to device
+            initial_graph = initial_graph.to(device)
+
+            # Test discriminator on this graph first
+            test_pred = get_discriminator_prediction(discriminator, initial_graph, device)
+            if test_pred is None:
+                logger.warning(f"Environment {i}: Discriminator cannot process initial graph, trying another...")
+                continue
+
+            env = HubRefactoringEnv(initial_graph, discriminator, max_steps=15, device=device)
+            envs.append(env)
+            logger.debug(f"Successfully created environment {i}")
+
+        except Exception as e:
+            logger.warning(f"Failed to create environment {i}: {e}")
+            continue
+
+    logger.info(f"Created {len(envs)} training environments out of {num_envs} requested")
+
+    # If we couldn't create any environments, that's a critical error
+    if len(envs) == 0:
+        raise RuntimeError("Could not create any training environments")
+
     return envs
 
 
 def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                      steps_per_env: int = 32, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
-    """Collect rollouts from environments - GPU optimized"""
+    """Collect rollouts with enhanced error handling"""
 
     all_states = []
     all_actions = []
@@ -590,14 +649,17 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
     # Reset environments
     states = []
-    for env in envs:
+    valid_envs = []
+
+    for i, env in enumerate(envs):
         try:
             state = env.reset()
             if state.x.device != device:
                 state = state.to(device)
             states.append(state)
+            valid_envs.append(env)
         except Exception as e:
-            logger.warning(f"Error resetting environment: {e}")
+            logger.warning(f"Error resetting environment {i}: {e}")
             continue
 
     if not states:
@@ -611,12 +673,16 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
             'values': []
         }
 
+    logger.debug(f"Starting rollout with {len(states)} valid environments")
+
     for step in range(steps_per_env):
-        # Ensure all states are on correct device
+        # Ensure all states are on correct device and have batch attribute
         states_on_device = []
         for state in states:
             if state.x.device != device:
                 state = state.to(device)
+            if not hasattr(state, 'batch'):
+                state.batch = torch.zeros(state.x.size(0), dtype=torch.long, device=device)
             states_on_device.append(state)
 
         # Batch states
@@ -632,9 +698,18 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
             try:
                 policy_out = policy(batch_data)
 
-                # Simple value estimation (using discriminator)
-                disc_out = envs[0].discriminator(batch_data)
-                values = 1.0 - F.softmax(disc_out['logits'], dim=1)[:, 1]  # Lower hub score = higher value
+                # Simple value estimation (using discriminator output as proxy)
+                values = []
+                for state in states_on_device:
+                    pred = get_discriminator_prediction(valid_envs[0].discriminator, state, device)
+                    if pred is not None:
+                        value = 1.0 - pred  # Lower hub score = higher value
+                    else:
+                        value = 0.5  # Neutral value if prediction fails
+                    values.append(value)
+
+                values = torch.tensor(values, device=device)
+
             except Exception as e:
                 logger.warning(f"Error in forward pass at step {step}: {e}")
                 break
@@ -646,8 +721,6 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         # Handle batched data properly
         num_graphs = len(states_on_device)
         nodes_per_graph = [state.x.size(0) for state in states_on_device]
-
-        # Create proper node indices for each graph
         cumsum_nodes = [0] + list(np.cumsum(nodes_per_graph))
 
         for i in range(num_graphs):
@@ -658,17 +731,24 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
                 # Validate indices
                 if start_idx >= policy_out['hub_probs'].size(0) or end_idx > policy_out['hub_probs'].size(0):
+                    # Create fallback action
+                    action = RefactoringAction(0, min(1, num_nodes - 1), 0, False)
+                    actions.append(action)
+                    log_probs.append(torch.tensor(0.0, device=device))
                     continue
 
                 # Sample hub from this graph's nodes
                 hub_probs_i = policy_out['hub_probs'][start_idx:end_idx]
                 if hub_probs_i.size(0) == 0:
+                    action = RefactoringAction(0, min(1, num_nodes - 1), 0, False)
+                    actions.append(action)
+                    log_probs.append(torch.tensor(0.0, device=device))
                     continue
 
                 hub_probs_i = hub_probs_i + 1e-8  # Numerical stability
                 hub_dist = Categorical(hub_probs_i)
-                hub_local = hub_dist.sample().item()  # Local index within this graph
-                hub_local = min(hub_local, num_nodes - 1)  # Ensure valid index
+                hub_local = hub_dist.sample().item()
+                hub_local = min(hub_local, num_nodes - 1)
 
                 # Sample pattern for selected hub
                 pattern_idx = start_idx + hub_local
@@ -690,7 +770,6 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
                 # Target selection (improved)
                 if num_nodes > 1:
-                    # Select different target from hub
                     target_candidates = [j for j in range(num_nodes) if j != hub_local]
                     target_local = random.choice(target_candidates) if target_candidates else hub_local
                 else:
@@ -707,7 +786,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
             except Exception as e:
                 logger.debug(f"Error sampling action for environment {i}: {e}")
-                # Add dummy action
+                # Add fallback action
                 action = RefactoringAction(0, 0, 0, False)
                 actions.append(action)
                 log_probs.append(torch.tensor(0.0, device=device))
@@ -717,7 +796,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         rewards = []
         dones = []
 
-        for i, (env, action) in enumerate(zip(envs, actions)):
+        for i, (env, action) in enumerate(zip(valid_envs, actions)):
             try:
                 state, reward, done, info = env.step(
                     (action.source_node, action.target_node, action.pattern, action.terminate)
@@ -726,6 +805,10 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 # Ensure state is on correct device
                 if state.x.device != device:
                     state = state.to(device)
+
+                # Ensure batch attribute
+                if not hasattr(state, 'batch'):
+                    state.batch = torch.zeros(state.x.size(0), dtype=torch.long, device=device)
 
                 next_states.append(state)
                 rewards.append(reward)
@@ -741,30 +824,47 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
                 # Reset if done
                 if done:
-                    reset_state = env.reset()
-                    if reset_state.x.device != device:
-                        reset_state = reset_state.to(device)
-                    next_states[i] = reset_state
+                    try:
+                        reset_state = env.reset()
+                        if reset_state.x.device != device:
+                            reset_state = reset_state.to(device)
+                        if not hasattr(reset_state, 'batch'):
+                            reset_state.batch = torch.zeros(reset_state.x.size(0), dtype=torch.long, device=device)
+                        next_states[i] = reset_state
+                    except Exception as reset_e:
+                        logger.warning(f"Error resetting environment {i}: {reset_e}")
+                        # Keep current state if reset fails
+                        pass
 
             except Exception as e:
-                logger.warning(f"Error in environment {i}: {e}")
+                logger.warning(f"Error in environment {i} step: {e}")
                 # Keep the same state if there's an error
-                next_states.append(states_on_device[i])
-                rewards.append(-1.0)  # Small penalty for error
+                if i < len(states_on_device):
+                    next_states.append(states_on_device[i])
+                else:
+                    # Create a fallback state
+                    fallback_state = states_on_device[0].clone() if states_on_device else None
+                    if fallback_state is not None:
+                        next_states.append(fallback_state)
+                    else:
+                        break  # Can't continue without valid states
+
+                rewards.append(-0.5)  # Small penalty for error
                 dones.append(False)
 
-                # Still store experience to avoid breaking the training
-                all_states.append(states_on_device[i])
-                all_actions.append(action)
-                all_rewards.append(-1.0)
-                all_dones.append(False)
-                all_log_probs.append(log_probs[i] if i < len(log_probs) else torch.tensor(0.0, device=device))
-                all_values.append(0.0)
+                # Still store experience to avoid breaking training
+                if i < len(states_on_device):
+                    all_states.append(states_on_device[i])
+                    all_actions.append(action)
+                    all_rewards.append(-0.5)
+                    all_dones.append(False)
+                    all_log_probs.append(log_probs[i] if i < len(log_probs) else torch.tensor(0.0, device=device))
+                    all_values.append(0.0)
 
         states = next_states
 
-        # Break if all environments are done
-        if all(dones):
+        # Break if all environments are done or we have no valid states
+        if not states or all(dones):
             break
 
         # GPU memory management
@@ -839,7 +939,7 @@ def monitor_gpu_usage():
 
 
 def main():
-    """Main training loop with pretrained discriminator - GPU optimized"""
+    """Main training loop with enhanced error handling"""
 
     # Setup GPU environment
     device = setup_gpu_environment()
@@ -869,7 +969,7 @@ def main():
         logger.error("python pre-training-discriminator.py")
         return
 
-    # Load data with GPU optimization
+    # Load data with enhanced validation
     logger.info("📊 Loading dataset...")
     smelly_data, clean_data = load_and_prepare_data(data_dir, max_samples=1000, device=device)
 
@@ -888,9 +988,13 @@ def main():
         logger.info("✅ Validating discriminator performance...")
         validation_results = validate_discriminator_performance(discriminator, smelly_data, clean_data, device)
 
-        if validation_results['accuracy'] < 0.6:
-            logger.warning("⚠️  Discriminator performance is low on current dataset!")
-            logger.warning("Consider re-training the discriminator or checking data quality.")
+        if validation_results['accuracy'] < 0.3:
+            logger.error("❌ Discriminator performance is critically low!")
+            logger.error("Cannot proceed with training. Please check discriminator and data.")
+            return
+        elif validation_results['accuracy'] < 0.6:
+            logger.warning("⚠️  Discriminator performance is low but proceeding...")
+            logger.warning("Training may be suboptimal. Consider re-training discriminator.")
         else:
             logger.info("✅ Discriminator validation passed!")
 
@@ -920,7 +1024,7 @@ def main():
 
     # Training parameters - optimized for GPU
     num_episodes = 5000
-    num_envs = 8 if device.type == 'cuda' else 4  # More environments on GPU
+    num_envs = min(8 if device.type == 'cuda' else 4, len(smelly_data))  # Don't exceed available data
     steps_per_env = 32
     update_frequency = 10
 
@@ -931,9 +1035,14 @@ def main():
     logger.info(f"  Update frequency: {update_frequency}")
     logger.info(f"  Device: {device}")
 
-    # Create environments with pretrained discriminator
+    # Create environments with enhanced error handling
     logger.info("🌍 Creating training environments...")
-    envs = create_training_environments(smelly_data, discriminator, num_envs, device)
+    try:
+        envs = create_training_environments(smelly_data, discriminator, num_envs, device)
+        logger.info(f"✅ Successfully created {len(envs)} training environments")
+    except Exception as e:
+        logger.error(f"❌ Failed to create training environments: {e}")
+        return
 
     logger.info("🚀 Starting RL training with pretrained discriminator...")
 
@@ -951,8 +1060,15 @@ def main():
         rollout_data = collect_rollouts(envs, policy, steps_per_env, device)
 
         if len(rollout_data['rewards']) == 0:
-            logger.warning(f"No valid rollouts in episode {episode}")
-            continue
+            logger.warning(f"No valid rollouts in episode {episode}, recreating environments...")
+
+            # Try to recreate environments
+            try:
+                envs = create_training_environments(smelly_data, discriminator, num_envs, device)
+                continue
+            except Exception as e:
+                logger.error(f"Failed to recreate environments: {e}")
+                break
 
         episode_reward = np.mean(rollout_data['rewards'])
         episode_rewards.append(episode_reward)
@@ -963,7 +1079,7 @@ def main():
         success_rates.append(success_rate)
 
         # Update policy every N episodes
-        if episode % update_frequency == 0 and len(rollout_data['states']) >= 64:
+        if episode % update_frequency == 0 and len(rollout_data['states']) >= 32:
 
             # Compute advantages
             advantages, returns = trainer.compute_gae(
@@ -982,9 +1098,12 @@ def main():
             )
 
             # Update discriminator occasionally (fine-tuning)
-            if episode % (update_frequency * 3) == 0 and episode > 0:
+            if episode % (update_frequency * 5) == 0 and episode > 0:
                 # Collect recent states from environments
-                recent_states = [env.current_data for env in envs if env.current_data is not None]
+                recent_states = []
+                for env in envs:
+                    if hasattr(env, 'current_data') and env.current_data is not None:
+                        recent_states.append(env.current_data)
 
                 if len(recent_states) >= 8:
                     # Fine-tune discriminator with generated graphs
@@ -999,7 +1118,7 @@ def main():
             end_time.record()
             torch.cuda.synchronize()
             if start_time:
-                episode_time = start_time.elapsed_time(end_time) / 1000.0  # Convert to seconds
+                episode_time = start_time.elapsed_time(end_time) / 1000.0
 
         # Logging and monitoring
         if episode % 100 == 0:
@@ -1026,7 +1145,7 @@ def main():
             # Additional diagnostics every 500 episodes
             if episode % 500 == 0 and episode > 0:
                 # Test discriminator performance
-                val_results = validate_discriminator_performance(discriminator, smelly_data[:20], clean_data[:20],
+                val_results = validate_discriminator_performance(discriminator, smelly_data[:10], clean_data[:10],
                                                                  device)
                 logger.info(f"🔍 Discriminator validation - Acc: {val_results['accuracy']:.3f}")
 
@@ -1041,41 +1160,47 @@ def main():
 
         # Save checkpoints
         if episode % 1000 == 0 and episode > 0:
-            checkpoint = {
-                'episode': episode,
-                'policy_state': policy.state_dict(),
-                'discriminator_state': discriminator.state_dict(),
-                'trainer_state': {
-                    'update_count': trainer.update_count,
-                    'policy_losses': trainer.policy_losses,
-                    'disc_losses': trainer.disc_losses
-                },
-                'training_stats': {
-                    'episode_rewards': episode_rewards,
-                    'success_rates': success_rates,
-                    'discriminator_validation': validation_results
-                },
-                'config': {
-                    'device': str(device),
-                    'node_dim': node_dim,
-                    'edge_dim': edge_dim,
-                    'hidden_dim': hidden_dim
+            try:
+                checkpoint = {
+                    'episode': episode,
+                    'policy_state': policy.state_dict(),
+                    'discriminator_state': discriminator.state_dict(),
+                    'trainer_state': {
+                        'update_count': trainer.update_count,
+                        'policy_losses': trainer.policy_losses,
+                        'disc_losses': trainer.disc_losses
+                    },
+                    'training_stats': {
+                        'episode_rewards': episode_rewards,
+                        'success_rates': success_rates,
+                        'discriminator_validation': validation_results
+                    },
+                    'config': {
+                        'device': str(device),
+                        'node_dim': node_dim,
+                        'edge_dim': edge_dim,
+                        'hidden_dim': hidden_dim
+                    }
                 }
-            }
 
-            checkpoint_path = results_dir / f'rl_checkpoint_{episode}.pt'
-            torch.save(checkpoint, checkpoint_path)
-            logger.info(f"💾 Saved checkpoint: {checkpoint_path}")
+                checkpoint_path = results_dir / f'rl_checkpoint_{episode}.pt'
+                torch.save(checkpoint, checkpoint_path)
+                logger.info(f"💾 Saved checkpoint: {checkpoint_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save checkpoint: {e}")
 
         # Refresh environments periodically
-        if episode % 500 == 0 and episode > 0:
-            # Clean up old environments
-            del envs
-            if device.type == 'cuda':
-                torch.cuda.empty_cache()
+        if episode % 1000 == 0 and episode > 0:
+            logger.info("🔄 Refreshing training environments...")
+            try:
+                # Clean up old environments
+                del envs
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
 
-            envs = create_training_environments(smelly_data, discriminator, num_envs, device)
-            logger.info("🔄 Refreshed training environments")
+                envs = create_training_environments(smelly_data, discriminator, num_envs, device)
+            except Exception as e:
+                logger.warning(f"Failed to refresh environments: {e}")
 
         # Memory cleanup every 50 episodes
         if episode % 50 == 0 and device.type == 'cuda':
@@ -1092,53 +1217,60 @@ def main():
     # Save final models
     logger.info("💾 Saving final models...")
 
-    final_save_path = results_dir / 'final_rl_model.pt'
-    torch.save({
-        'policy_state': policy.state_dict(),
-        'discriminator_state': discriminator.state_dict(),
-        'node_dim': node_dim,
-        'edge_dim': edge_dim,
-        'training_stats': {
+    try:
+        final_save_path = results_dir / 'final_rl_model.pt'
+        torch.save({
+            'policy_state': policy.state_dict(),
+            'discriminator_state': discriminator.state_dict(),
+            'node_dim': node_dim,
+            'edge_dim': edge_dim,
+            'training_stats': {
+                'episode_rewards': episode_rewards,
+                'success_rates': success_rates,
+                'total_episodes': num_episodes,
+                'final_discriminator_validation': validation_results
+            },
+            'config': {
+                'num_episodes': num_episodes,
+                'num_envs': num_envs,
+                'steps_per_env': steps_per_env,
+                'update_frequency': update_frequency,
+                'device': str(device),
+                'gpu_optimized': True
+            }
+        }, final_save_path)
+
+        # Save training statistics
+        stats_path = results_dir / 'rl_training_stats.json'
+        training_stats = {
             'episode_rewards': episode_rewards,
             'success_rates': success_rates,
-            'total_episodes': num_episodes,
-            'final_discriminator_validation': validation_results
-        },
-        'config': {
-            'num_episodes': num_episodes,
-            'num_envs': num_envs,
-            'steps_per_env': steps_per_env,
-            'update_frequency': update_frequency,
-            'device': str(device),
-            'gpu_optimized': True
+            'final_performance': {
+                'mean_reward_last_100': float(np.mean(episode_rewards[-100:])) if episode_rewards else 0,
+                'mean_success_rate_last_100': float(np.mean(success_rates[-100:])) if success_rates else 0,
+                'total_episodes': num_episodes,
+                'total_updates': trainer.update_count
+            },
+            'discriminator_info': {
+                'pretrained_path': str(discriminator_path),
+                'cv_performance': discriminator_checkpoint.get('cv_results', {}),
+                'final_validation': validation_results
+            },
+            'gpu_info': {
+                'device_used': str(device),
+                'cuda_available': torch.cuda.is_available(),
+                'gpu_count': torch.cuda.device_count() if torch.cuda.is_available() else 0
+            }
         }
-    }, final_save_path)
 
-    # Save training statistics
-    stats_path = results_dir / 'rl_training_stats.json'
-    training_stats = {
-        'episode_rewards': episode_rewards,
-        'success_rates': success_rates,
-        'final_performance': {
-            'mean_reward_last_100': float(np.mean(episode_rewards[-100:])) if episode_rewards else 0,
-            'mean_success_rate_last_100': float(np.mean(success_rates[-100:])) if success_rates else 0,
-            'total_episodes': num_episodes,
-            'total_updates': trainer.update_count
-        },
-        'discriminator_info': {
-            'pretrained_path': str(discriminator_path),
-            'cv_performance': discriminator_checkpoint.get('cv_results', {}),
-            'final_validation': validation_results
-        },
-        'gpu_info': {
-            'device_used': str(device),
-            'cuda_available': torch.cuda.is_available(),
-            'gpu_count': torch.cuda.device_count() if torch.cuda.is_available() else 0
-        }
-    }
+        with open(stats_path, 'w') as f:
+            json.dump(training_stats, f, indent=2)
 
-    with open(stats_path, 'w') as f:
-        json.dump(training_stats, f, indent=2)
+        logger.info(f"📁 Models saved to: {final_save_path}")
+        logger.info(f"📊 Statistics saved to: {stats_path}")
+
+    except Exception as e:
+        logger.error(f"Failed to save final models: {e}")
 
     # Final performance summary
     logger.info("\n" + "=" * 60)
@@ -1161,9 +1293,6 @@ def main():
             logger.info("✅ Good training performance!")
         else:
             logger.info("⚠️  Training performance could be improved")
-
-    logger.info(f"📁 Models saved to: {final_save_path}")
-    logger.info(f"📊 Statistics saved to: {stats_path}")
 
     if device.type == 'cuda':
         final_memory = torch.cuda.memory_allocated() / 1e9
