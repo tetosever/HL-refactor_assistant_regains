@@ -66,7 +66,7 @@ def get_cache_key(project_dir: Path) -> str:
 
 def load_cached_result(project_dir: Path, cache_key: str) -> Optional[Dict]:
     """Carica risultato dalla cache se disponibile e valido"""
-    cache_file = project_dir / ".smell_map_cache.json"
+    cache_file = project_dir / ".smell_map.json"
 
     if not cache_file.exists():
         return None
@@ -84,7 +84,7 @@ def load_cached_result(project_dir: Path, cache_key: str) -> Optional[Dict]:
 
 def save_to_cache(project_dir: Path, cache_key: str, mapping: Dict, stats: Dict):
     """Salva risultato nella cache"""
-    cache_file = project_dir / ".smell_map_cache.json"
+    cache_file = project_dir / ".smell_map.json"
 
     cache_data = {
         'cache_key': cache_key,

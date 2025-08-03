@@ -1,3 +1,6 @@
 # PyCharm
 .idea/
 *.iml
+
+# Arcan analysis
+arcan_out/
