@@ -1,453 +1,250 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+"""
+Fixed Policy Network for Hub Refactoring with Correct Dimensional Handling
+"""
 
-from typing import NamedTuple, List, Optional
+from dataclasses import dataclass
+from typing import List, Dict, Any
 
+import networkx as nx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import Data
-from torch_geometric.nn import GINEConv, global_add_pool, GraphNorm
+from torch_geometric.nn import (GINEConv, GATConv, GraphNorm,
+                                global_mean_pool, global_max_pool, GCNConv)
 from torch_geometric.utils import softmax
 
 
-class EnhancedGCPNOutput(NamedTuple):
-    pi1: torch.Tensor  # Node selection (source)
-    pi2: torch.Tensor  # Node selection (target/affected)
-    pi3: torch.Tensor  # Refactoring pattern
-    pi4: torch.Tensor  # Termination decision
-    logits1: torch.Tensor
-    logits2: torch.Tensor
-    logits3: torch.Tensor
-    logits4: torch.Tensor
-    hub_scores: torch.Tensor  # Hub probability per node
-    pattern_applicability: torch.Tensor  # Pattern scores per node
-    attention_weights: torch.Tensor  # Attention weights per debugging
+@dataclass
+class HubRefactoringAction:
+    """Enhanced action structure for hub refactoring"""
+    source_node: int
+    target_node: int
+    pattern: int
+    parameters: Dict[str, Any]
+    terminate: int
+    confidence: float = 0.0
 
 
-class HubAwareAttention(nn.Module):
-    """
-    Attention layer che si concentra sui nodi hub usando le features esistenti
-    """
+class HubRefactoringPatterns:
+    """Catalog of hub-specific refactoring patterns"""
 
-    def __init__(self, hidden_dim: int):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.attention_proj = nn.Sequential(
-            nn.Linear(hidden_dim + 1, hidden_dim // 2),  # +1 per hub_score
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, node_embeddings: torch.Tensor, hub_scores: torch.Tensor) -> torch.Tensor:
-        # Concatena embeddings con hub scores
-        attended_input = torch.cat([node_embeddings, hub_scores.unsqueeze(-1)], dim=-1)
-        attention_weights = self.attention_proj(attended_input)
-
-        # Applica attention con bias verso hub nodes
-        attended_embeddings = node_embeddings * (1.0 + attention_weights)
-
-        return attended_embeddings, attention_weights.squeeze(-1)
-
-
-class ActionSequenceMemory(nn.Module):
-    """
-    Modulo per tracciare e apprendere da sequenze di azioni precedenti
-    """
-
-    def __init__(self, hidden_dim: int, max_sequence_length: int = 10):
-        super().__init__()
-        self.max_length = max_sequence_length
-        self.hidden_dim = hidden_dim
-
-        # 6 pattern types + terminate
-        self.action_embedding = nn.Embedding(7, hidden_dim // 4)
-        self.sequence_lstm = nn.LSTM(
-            hidden_dim // 4,
-            hidden_dim // 2,
-            batch_first=True,
-            num_layers=1
-        )
-        self.context_proj = nn.Linear(hidden_dim // 2, hidden_dim)
-
-    def forward(self, action_history: List[int]) -> torch.Tensor:
-        if len(action_history) == 0:
-            return torch.zeros(1, self.hidden_dim, device=next(self.parameters()).device)
-
-        # Prendi solo le ultime azioni
-        recent_actions = action_history[-self.max_length:]
-        actions_tensor = torch.tensor(recent_actions, device=next(self.parameters()).device).unsqueeze(0)
-
-        # Embedding delle azioni
-        action_embs = self.action_embedding(actions_tensor)
-
-        # LSTM per sequence encoding
-        _, (hidden, _) = self.sequence_lstm(action_embs)
-
-        # Proietta a dimensione corretta
-        sequence_context = self.context_proj(hidden.squeeze(0))
-
-        return sequence_context
-
-
-class HierarchicalPooling(nn.Module):
-    """
-    Pooling gerarchico che da più peso ai nodi hub
-    """
-
-    def __init__(self, hidden_dim: int):
-        super().__init__()
-        self.hub_importance_net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x: torch.Tensor, hub_scores: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
-        # Calcola importance weights
-        importance_weights = self.hub_importance_net(x).squeeze(-1)
-
-        # Combina con hub scores (bias verso nodi hub)
-        combined_weights = importance_weights * (1.0 + 2.0 * hub_scores)
-
-        # Weighted pooling
-        weighted_x = x * combined_weights.unsqueeze(-1)
-        graph_emb = global_add_pool(weighted_x, batch)
-
-        return graph_emb
-
-
-class EnhancedGCPNPolicyNetwork(nn.Module):
-    """
-    Enhanced Policy Network per hub-like dependency refactoring con:
-    - Hub-aware attention
-    - Pattern-based actions
-    - Sequence memory
-    - Hierarchical pooling
-    """
-
-    # Mapping delle azioni ai pattern di refactoring
-    ACTION_PATTERNS = {
-        0: "EXTRACT_INTERFACE",  # Per hub con alto fan-out
-        1: "SPLIT_COMPONENT",  # Per componenti troppo grandi
-        2: "INTRODUCE_MEDIATOR",  # Per hub con alta interconnessione
-        3: "INTRODUCE_FACADE",  # Per semplificare interfacce complesse
-        4: "APPLY_DEPENDENCY_INJECTION",  # Per ridurre accoppiamento
-        5: "REMOVE_UNNECESSARY_DEPENDENCY",  # Cleanup semplice
+    PATTERNS = {
+        0: "EXTRACT_INTERFACE",  # Create interface between hub and dependents
+        1: "DEPENDENCY_INJECTION",  # Inject dependencies instead of hub coupling
+        2: "SPLIT_BY_RESPONSIBILITY",  # Split hub by different responsibilities
+        3: "OBSERVER_PATTERN",  # Replace hub with observer pattern
+        4: "STRATEGY_PATTERN",  # Extract strategies from hub
+        5: "REMOVE_MIDDLEMAN"  # Remove unnecessary hub intermediary
     }
 
-    def __init__(
-            self,
-            node_in_dim: int,
-            edge_in_dim: int,
-            hidden_dim: int = 64,
-            num_layers: int = 3,
-            dropout: float = 0.3,
-            device: torch.device = torch.device('cpu'),
-            enable_memory: bool = True,
-            max_sequence_length: int = 10
-    ):
+    @staticmethod
+    def get_applicable_patterns(hub_node: int, graph: nx.DiGraph) -> List[int]:
+        """Determine which patterns are applicable for a given hub"""
+        applicable = []
+
+        in_degree = graph.in_degree(hub_node)
+        out_degree = graph.out_degree(hub_node)
+        total_degree = in_degree + out_degree
+
+        # Pattern applicability rules
+        if out_degree > 3:  # Many dependents
+            applicable.extend([0, 3])  # Interface, Observer
+
+        if in_degree > 3:  # Many dependencies
+            applicable.extend([1])  # DI
+
+        if total_degree > 6:  # Very connected
+            applicable.extend([2])  # Split
+
+        if out_degree > 2 and in_degree > 2:
+            applicable.append(4)  # Strategy
+
+        if HubRefactoringPatterns._is_pure_middleman(hub_node, graph):
+            applicable.append(5)  # Remove middleman
+
+        return list(set(applicable)) if applicable else [0]  # Default to extract interface
+
+    @staticmethod
+    def _is_pure_middleman(node: int, graph: nx.DiGraph) -> bool:
+        """Check if node is just passing through connections"""
+        predecessors = set(graph.predecessors(node))
+        successors = set(graph.successors(node))
+
+        if len(predecessors) == 0 or len(successors) == 0:
+            return False
+
+        # Check if there's significant overlap in connections
+        for pred in predecessors:
+            pred_successors = set(graph.successors(pred))
+            if len(pred_successors & successors) > len(successors) * 0.5:
+                return True
+
+        return False
+
+
+class HubRefactoringPolicy(nn.Module):
+    """Fixed policy network for hub-reducing refactoring patterns"""
+
+    def __init__(self, node_dim: int, edge_dim: int, hidden_dim: int = 128,
+                 num_layers: int = 3, dropout: float = 0.3):
         super().__init__()
-        self.device = device
-        self.dropout = dropout
+
         self.hidden_dim = hidden_dim
-        self.enable_memory = enable_memory
+        self.num_patterns = len(HubRefactoringPatterns.PATTERNS)
 
-        # Embedding layers
-        self.node_embed = nn.Linear(node_in_dim, hidden_dim)
-        self.edge_embed = nn.Linear(edge_in_dim, hidden_dim)
+        # Feature embedding
+        self.node_embed = nn.Linear(node_dim, hidden_dim)
+        self.edge_embed = nn.Linear(edge_dim, hidden_dim) if edge_dim > 0 else None
 
-        # GNN backbone con residual connections
+        # Graph neural network backbone
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
-        for _ in range(num_layers):
-            mlp = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim, hidden_dim)
-            )
-            self.convs.append(GINEConv(mlp, edge_dim=hidden_dim, train_eps=True))
+
+        for i in range(num_layers):
+            if i % 2 == 0:
+                self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            else:
+                self.convs.append(GATConv(hidden_dim, hidden_dim // 8, heads=8, concat=True))
             self.norms.append(GraphNorm(hidden_dim))
 
-        # Enhanced modules
-        self.hub_attention = HubAwareAttention(hidden_dim)
-        self.hierarchical_pool = HierarchicalPooling(hidden_dim)
-
-        if enable_memory:
-            self.action_memory = ActionSequenceMemory(hidden_dim, max_sequence_length)
-
-        # Policy heads
-        mid_dim = hidden_dim // 2
-
-        # Node selection heads (con hub bias)
-        self.node1_head = nn.Sequential(
-            nn.Linear(hidden_dim, mid_dim),
+        # Hub importance computation (fixed dimensions)
+        # Input: node features (hidden_dim) + structural features (6)
+        self.hub_importance_net = nn.Sequential(
+            nn.Linear(hidden_dim + 6, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(mid_dim, 1)
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Sigmoid()
         )
 
-        self.node2_head = nn.Sequential(
-            nn.Linear(hidden_dim, mid_dim),
+        # Action selection heads (fixed dimensions)
+        self.hub_selector = nn.Sequential(
+            nn.Linear(hidden_dim + 1, hidden_dim // 2),  # +1 for importance score
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(mid_dim, 1)
+            nn.Linear(hidden_dim // 2, 1)
         )
 
-        # Pattern action head (6 patterns)
-        self.pattern_head = nn.Sequential(
-            nn.Linear(hidden_dim, mid_dim),
+        # Pattern selector (fixed dimensions)
+        # Input: node features (hidden_dim) + graph features (hidden_dim * 2) + structural (6)
+        pattern_input_dim = hidden_dim + (hidden_dim * 2) + 6
+        self.pattern_selector = nn.Sequential(
+            nn.Linear(pattern_input_dim, hidden_dim * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(mid_dim, len(self.ACTION_PATTERNS))
-        )
-
-        # Termination head
-        self.terminate_head = nn.Sequential(
-            nn.Linear(hidden_dim, mid_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(mid_dim, 2)
+            nn.Linear(hidden_dim, self.num_patterns)
         )
 
-        # Weight initialization
+        self.target_selector = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),  # hub + candidate features
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1)
+        )
+
+        self.termination_head = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 2)  # continue vs terminate
+        )
+
         self._init_weights()
-        self.to(self.device)
 
     def _init_weights(self):
-        """Inizializzazione dei pesi per stabilità del training"""
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.orthogonal_(m.weight)
+                nn.init.orthogonal_(m.weight, gain=0.01)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def compute_hub_indicators(self, node_features: torch.Tensor) -> torch.Tensor:
-        """
-        Calcola hub scores usando le features esistenti:
-        - FanIn, FanOut, PageRank, LinesOfCode, NumberOfChildren,
-          InstabilityMetric, AbstractnessMetric, TotalAmountOfChanges
-        """
-        # Estrai features (assumendo ordine dal config)
-        fan_in = node_features[:, 0]  # FanIn
-        fan_out = node_features[:, 1]  # FanOut
-        pagerank = node_features[:, 2]  # PageRank
-        loc = node_features[:, 3]  # LinesOfCode
-        n_children = node_features[:, 4]  # NumberOfChildren
-        instability = node_features[:, 5]  # InstabilityMetric
-        abstractness = node_features[:, 6]  # AbstractnessMetric
-        changes = node_features[:, 7]  # TotalAmountOfChanges
+    def compute_structural_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract key structural features for hub identification"""
+        # Ensure we have at least 6 features, pad if necessary
+        if x.size(1) < 6:
+            # Pad with zeros if we don't have enough features
+            padding = torch.zeros(x.size(0), 6 - x.size(1), device=x.device)
+            structural = torch.cat([x, padding], dim=1)[:, :6]
+        else:
+            # Take first 6 features: [in_deg, out_deg, total_deg, in_out_ratio, deg_centrality, pagerank]
+            structural = x[:, :6]
 
-        # Normalizza le features
-        eps = 1e-8
-        fan_in_norm = fan_in / (fan_in.max() + eps)
-        fan_out_norm = fan_out / (fan_out.max() + eps)
-        pagerank_norm = pagerank / (pagerank.max() + eps)
-        loc_norm = loc / (loc.max() + eps)
-        children_norm = n_children / (n_children.max() + eps)
-        changes_norm = changes / (changes.max() + eps)
+        return structural
 
-        # Calcola hub score composito
-        # Peso maggiore a fan-in/out e pagerank (indicatori primari di hub)
-        hub_score = (
-                0.25 * fan_in_norm +  # Molte dipendenze in entrata
-                0.25 * fan_out_norm +  # Molte dipendenze in uscita
-                0.20 * pagerank_norm +  # Alta centralità
-                0.15 * loc_norm +  # Componente grande
-                0.10 * children_norm +  # Molti sotto-componenti
-                0.05 * instability  # Instabilità (0-1 già)
-            # Abstractness può essere bassa (implementazione) o alta (interfaccia)
-            # Changes indica attività/problematicità
-        )
+    def forward(self, data: Data) -> Dict[str, torch.Tensor]:
+        x = data.x
+        edge_index = data.edge_index
+        batch = data.batch if hasattr(data, 'batch') else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
-        return torch.clamp(hub_score, 0.0, 1.0)
+        # Extract structural features (fixed size: 6)
+        structural_features = self.compute_structural_features(x)
 
-    def compute_pattern_applicability(self, node_features: torch.Tensor, hub_scores: torch.Tensor) -> torch.Tensor:
-        """
-        Calcola applicabilità dei pattern di refactoring per ogni nodo
-        """
-        fan_in = node_features[:, 0]
-        fan_out = node_features[:, 1]
-        pagerank = node_features[:, 2]
-        loc = node_features[:, 3]
-        instability = node_features[:, 5]
-        abstractness = node_features[:, 6]
-
-        # Soglie dinamiche basate sulla distribuzione
-        fan_out_threshold = fan_out.median() + fan_out.std()
-        loc_threshold = loc.quantile(0.75)
-        fan_in_threshold = fan_in.median() + fan_in.std()
-
-        # Pattern applicability scores
-        extract_interface = (
-                (fan_out > fan_out_threshold) &
-                (instability > 0.7) &
-                (hub_scores > 0.6)
-        ).float()
-
-        split_component = (
-                (loc > loc_threshold) &
-                (hub_scores > 0.5)
-        ).float()
-
-        introduce_mediator = (
-                (fan_in > fan_in_threshold) &
-                (fan_out > fan_out_threshold) &
-                (hub_scores > 0.7)
-        ).float()
-
-        introduce_facade = (
-                (fan_out > fan_out_threshold) &
-                (abstractness < 0.3) &  # Implementazione concreta
-                (hub_scores > 0.6)
-        ).float()
-
-        apply_di = (
-                (fan_out > fan_out.median()) &
-                (instability > 0.5) &
-                (hub_scores > 0.4)
-        ).float()
-
-        remove_dependency = (
-                (fan_out > 0) |  # Ha almeno una dipendenza
-                (fan_in > 0)
-        ).float()
-
-        return torch.stack([
-            extract_interface, split_component, introduce_mediator,
-            introduce_facade, apply_di, remove_dependency
-        ], dim=-1)
-
-    def create_action_mask(self, node_features: torch.Tensor, hub_scores: torch.Tensor,
-                           selected_node_idx: int) -> torch.Tensor:
-        """
-        Crea mask per azioni valide basate sulle features del nodo selezionato
-        """
-        if selected_node_idx >= len(node_features):
-            # Se indice non valido, permetti solo terminate
-            return torch.tensor([False] * len(self.ACTION_PATTERNS), dtype=torch.bool, device=self.device)
-
-        node_feats = node_features[selected_node_idx]
-        hub_score = hub_scores[selected_node_idx]
-
-        # Regole di validità basate sulle features
-        can_extract_interface = node_feats[1] > 2 and hub_score > 0.5  # FanOut > 2 + hub
-        can_split = node_feats[3] > node_features[:, 3].median()  # LOC above median
-        can_mediator = node_feats[0] > 1 and node_feats[1] > 1  # Fan-in > 1 AND Fan-out > 1
-        can_facade = node_feats[1] > 2 and node_feats[6] < 0.5  # FanOut > 2 + low abstractness
-        can_di = node_feats[1] > 1 and node_feats[5] > 0.3  # FanOut > 1 + some instability
-        can_remove = node_feats[0] > 0 or node_feats[1] > 0  # Ha almeno una dipendenza
-
-        mask = torch.tensor([
-            can_extract_interface,
-            can_split,
-            can_mediator,
-            can_facade,
-            can_di,
-            can_remove
-        ], dtype=torch.bool, device=self.device)
-
-        return mask
-
-    def forward(self, data: Data, action_history: Optional[List[int]] = None) -> EnhancedGCPNOutput:
-        """
-        Forward pass con enhanced features
-        """
-        x = data.x.to(self.device)
-        edge_index = data.edge_index.to(self.device)
-        edge_attr = data.edge_attr.to(self.device)
-        batch = data.batch.to(self.device) if data.batch is not None else torch.zeros(
-            x.size(0), dtype=torch.long, device=self.device
-        )
-
-        # Calcola hub indicators dalle features esistenti
-        hub_scores = self.compute_hub_indicators(x)
-
-        # Pattern applicability
-        pattern_applicability = self.compute_pattern_applicability(x, hub_scores)
-
-        # Embedding iniziale
+        # Embed features
         x_emb = self.node_embed(x)
-        edge_attr_emb = self.edge_embed(edge_attr)
 
-        # GNN layers con hub-aware attention
-        attention_weights_list = []
+        # GNN processing
         for conv, norm in zip(self.convs, self.norms):
-            out = conv(x_emb, edge_index, edge_attr_emb)
-            out = norm(out)
-            out = F.relu(out)
-            out = F.dropout(out, p=self.dropout, training=self.training)
+            h = conv(x_emb, edge_index)
+            h = norm(h)
+            x_emb = F.relu(h) + x_emb  # Residual
+            x_emb = F.dropout(x_emb, p=0.3, training=self.training)
 
-            # Applica hub-aware attention
-            out, att_weights = self.hub_attention(out, hub_scores)
-            attention_weights_list.append(att_weights)
+        # Compute hub importance scores
+        hub_input = torch.cat([x_emb, structural_features], dim=-1)
+        hub_importance = self.hub_importance_net(hub_input).squeeze(-1)
 
-            # Skip connection
-            x_emb = x_emb + out
+        # Hub selection (weighted by importance)
+        hub_features = torch.cat([x_emb, hub_importance.unsqueeze(-1)], dim=-1)
+        hub_logits = self.hub_selector(hub_features).squeeze(-1)
+        hub_logits = hub_logits + 2.0 * hub_importance  # Bias toward important hubs
+        hub_probs = softmax(hub_logits, batch)
 
-        # Usa l'ultima layer di attention per il debugging
-        final_attention_weights = attention_weights_list[-1]
+        # Graph-level features for pattern selection
+        graph_mean = global_mean_pool(x_emb, batch)
+        graph_max = global_max_pool(x_emb, batch)
+        graph_features = torch.cat([graph_mean, graph_max], dim=-1)  # Size: hidden_dim * 2
 
-        # Hierarchical pooling per graph-level embedding
-        graph_emb = self.hierarchical_pool(x_emb, hub_scores, batch)
+        # Pattern selection (per node, considering graph context)
+        batch_size = batch.max().item() + 1
+        pattern_logits_list = []
 
-        # Sequence memory (se abilitata)
-        if self.enable_memory and action_history:
-            sequence_context = self.action_memory(action_history)
-            graph_emb = graph_emb + sequence_context
+        for b in range(batch_size):
+            mask = (batch == b)
+            node_features = x_emb[mask]  # Size: [num_nodes_in_graph, hidden_dim]
+            node_structural = structural_features[mask]  # Size: [num_nodes_in_graph, 6]
+            graph_feat = graph_features[b].unsqueeze(0).expand(mask.sum(),
+                                                               -1)  # Size: [num_nodes_in_graph, hidden_dim*2]
 
-        # Policy heads
+            # Combine features (fixed dimensions)
+            pattern_input = torch.cat([node_features, graph_feat, node_structural], dim=-1)
+            # Size: [num_nodes_in_graph, hidden_dim + hidden_dim*2 + 6]
 
-        # π1: Node selection (source) - bias verso hub nodes
-        logits1 = self.node1_head(x_emb).squeeze(-1)
-        # Aggiungi bias per hub nodes
-        hub_bias = hub_scores * 2.0  # Aumenta probabilità di selezione per hub
-        logits1_biased = logits1 + hub_bias
-        pi1 = softmax(logits1_biased, batch)
+            pattern_logits = self.pattern_selector(pattern_input)
+            pattern_logits_list.append(pattern_logits)
 
-        # π2: Node selection (target/affected)
-        logits2 = self.node2_head(x_emb).squeeze(-1)
-        pi2 = softmax(logits2, batch)
+        pattern_logits = torch.cat(pattern_logits_list, dim=0)
+        pattern_probs = F.softmax(pattern_logits, dim=-1)
 
-        # π3: Pattern selection con applicability weighting
-        logits3 = self.pattern_head(graph_emb)
+        # Target selection (simplified for now)
+        target_logits = torch.zeros_like(hub_logits)
 
-        # Weight logits based on pattern applicability
-        # Prendi la media dell'applicability per tutti i nodi nel grafo
-        avg_pattern_applicability = global_add_pool(pattern_applicability, batch)
-        pattern_weighted_logits = logits3 + avg_pattern_applicability * 2.0
+        # Termination decision
+        term_logits = self.termination_head(graph_features)
+        term_probs = F.softmax(term_logits, dim=-1)
 
-        pi3 = F.softmax(pattern_weighted_logits, dim=-1)
-
-        # π4: Termination decision
-        logits4 = self.terminate_head(graph_emb)
-        pi4 = F.softmax(logits4, dim=-1)
-
-        return EnhancedGCPNOutput(
-            pi1=pi1, pi2=pi2, pi3=pi3, pi4=pi4,
-            logits1=logits1_biased, logits2=logits2,
-            logits3=pattern_weighted_logits, logits4=logits4,
-            hub_scores=hub_scores,
-            pattern_applicability=pattern_applicability,
-            attention_weights=final_attention_weights
-        )
-
-    def get_action_name(self, action_idx: int) -> str:
-        """Ottieni nome leggibile dell'azione"""
-        return self.ACTION_PATTERNS.get(action_idx, f"UNKNOWN_{action_idx}")
-
-    def compute_action_mask_for_graph(self, data: Data) -> torch.Tensor:
-        """
-        Calcola action mask per l'intero grafo (per debugging/analysis)
-        """
-        hub_scores = self.compute_hub_indicators(data.x)
-
-        # Calcola mask per ogni nodo
-        masks = []
-        for i in range(len(data.x)):
-            node_mask = self.create_action_mask(data.x, hub_scores, i)
-            masks.append(node_mask)
-
-        return torch.stack(masks, dim=0)  # [num_nodes, num_actions]
+        return {
+            'hub_logits': hub_logits,
+            'hub_probs': hub_probs,
+            'pattern_logits': pattern_logits,
+            'pattern_probs': pattern_probs,
+            'target_logits': target_logits,
+            'term_logits': term_logits,
+            'term_probs': term_probs,
+            'hub_importance': hub_importance,
+            'node_embeddings': x_emb
+        }

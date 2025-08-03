@@ -146,8 +146,8 @@ def build_expert_sequences(data_dir: str):
     return sequences
 
 if __name__ == '__main__':
-    DATA_DIR = 'data/dataset_graph_feature'
+    DATA_DIR = '../data/dataset_graph_feature'
     seqs = build_expert_sequences(DATA_DIR)
-    os.makedirs('data', exist_ok=True)
-    torch.save(seqs, 'data/expert_sequences.pt')
+    os.makedirs('../data', exist_ok=True)
+    torch.save(seqs, '../data/expert_sequences.pt')
     logger.info("Salvato data/expert_sequences.pt con stati e azioni")
