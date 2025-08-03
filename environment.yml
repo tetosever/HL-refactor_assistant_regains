@@ -1,8 +1,18 @@
 name: HL_refactor_assistant_env
 channels:
+  - pytorch
+  - pyg
   - conda-forge
   - defaults
+
 dependencies:
+  - python=3.9.23
+  - cudatoolkit=11.8
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-geometric
+
   - absl-py=2.1.0
   - aom=3.6.0
   - blas=1.0
@@ -71,7 +81,6 @@ dependencies:
   - pixman=0.40.0
   - protobuf=5.29.3
   - pybind11-abi=4
-  - python=3.9.23
   - python-dateutil=2.9.0post0
   - python-tzdata=2025.2
   - python_abi=3.9
@@ -99,34 +108,34 @@ dependencies:
   - yaml=0.2.5
   - zlib=1.2.13
   - zstd=1.5.6
+
   - pip:
-      - aiohappyeyeballs==2.6.1
-      - aiohttp==3.12.15
-      - aiosignal==1.4.0
-      - async-timeout==5.0.1
-      - attrs==25.3.0
-      - certifi==2025.7.14
-      - charset-normalizer==3.4.2
-      - filelock==3.18.0
-      - frozenlist==1.7.0
-      - fsspec==2025.7.0
-      - gym==0.26.2
-      - gym-notices==0.1.0
-      - idna==3.10
-      - importlib-metadata==8.7.0
-      - jinja2==3.1.6
-      - mpmath==1.3.0
-      - multidict==6.6.3
-      - networkx==3.2.1
-      - propcache==0.3.2
-      - psutil==7.0.0
-      - pyparsing==3.2.3
-      - requests==2.32.4
-      - sympy==1.14.0
-      - torch==2.2.2
-      - torch-geometric==2.6.1
-      - tqdm==4.67.1
-      - urllib3==2.5.0
-      - yarl==1.20.1
-      - zipp==3.23.0
+    - aiohappyeyeballs==2.6.1
+    - aiohttp==3.12.15
+    - aiosignal==1.4.0
+    - async-timeout==5.0.1
+    - attrs==25.3.0
+    - certifi==2025.7.14
+    - charset-normalizer==3.4.2
+    - filelock==3.18.0
+    - frozenlist==1.7.0
+    - fsspec==2025.7.0
+    - gym==0.26.2
+    - gym-notices==0.1.0
+    - idna==3.10
+    - importlib-metadata==8.7.0
+    - jinja2==3.1.6
+    - mpmath==1.3.0
+    - multidict==6.6.3
+    - networkx==3.2.1
+    - propcache==0.3.2
+    - psutil==7.0.0
+    - pyparsing==3.2.3
+    - requests==2.32.4
+    - sympy==1.14.0
+    - tqdm==4.67.1
+    - urllib3==2.5.0
+    - yarl==1.20.1
+    - zipp==3.23.0
+
 prefix: /opt/anaconda3/envs/HL_refactor_assistant_env
