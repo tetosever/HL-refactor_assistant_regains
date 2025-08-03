@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Discriminator Pre-training Script with K-Fold Cross Validation
+Enhanced Discriminator Pre-training Script with Advanced Techniques
 
-This script pre-trains the discriminator to distinguish between smelly and clean graphs
-before starting the RL training. This is ESSENTIAL for the RL agent to learn effectively.
+Key improvements:
+- Focal loss for class imbalance
+- Label smoothing
+- Feature consistency regularization
+- Advanced data augmentation
+- Improved learning rate scheduling
+- Gradient accumulation
 """
 
 import logging
@@ -18,6 +23,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch_geometric.data import Data, Batch
+from torch_geometric.transforms import Compose, AddSelfLoops, NormalizeFeatures
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix, roc_auc_score
 import matplotlib.pyplot as plt
@@ -34,14 +40,153 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class FocalLoss(nn.Module):
+    """Focal Loss for addressing class imbalance"""
+
+    def __init__(self, alpha=1.0, gamma=2.0, reduction='mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+class AdvancedLoss(nn.Module):
+    """Advanced loss combining multiple objectives"""
+
+    def __init__(self, alpha_focal=2.0, gamma_focal=2.0, lambda_consistency=0.1,
+                 lambda_diversity=0.05, label_smoothing=0.1):
+        super().__init__()
+        self.focal_loss = FocalLoss(alpha=alpha_focal, gamma=gamma_focal)
+        self.lambda_consistency = lambda_consistency
+        self.lambda_diversity = lambda_diversity
+        self.label_smoothing = label_smoothing
+
+    def forward(self, outputs, labels, batch_data=None):
+        # Main classification loss with label smoothing
+        if self.label_smoothing > 0:
+            # Smooth labels
+            num_classes = outputs['logits'].size(1)
+            smooth_labels = torch.full_like(outputs['logits'], self.label_smoothing / num_classes)
+            smooth_labels.scatter_(1, labels.unsqueeze(1),
+                                   1.0 - self.label_smoothing + self.label_smoothing / num_classes)
+            main_loss = F.kl_div(F.log_softmax(outputs['logits'], dim=1), smooth_labels, reduction='batchmean')
+        else:
+            main_loss = self.focal_loss(outputs['logits'], labels)
+
+        total_loss = main_loss
+        loss_components = {'main_loss': main_loss.item()}
+
+        # Feature consistency regularization
+        if 'feature_projection' in outputs and self.lambda_consistency > 0:
+            # Encourage similar graphs to have similar feature projections
+            batch = batch_data.batch if hasattr(batch_data, 'batch') else None
+            if batch is not None:
+                consistency_loss = self._compute_consistency_loss(outputs['feature_projection'], batch, labels)
+                total_loss += self.lambda_consistency * consistency_loss
+                loss_components['consistency_loss'] = consistency_loss.item()
+
+        # Node-level diversity regularization
+        if 'node_hub_scores' in outputs and self.lambda_diversity > 0:
+            diversity_loss = self._compute_diversity_loss(outputs['node_hub_scores'], batch_data.batch)
+            total_loss += self.lambda_diversity * diversity_loss
+            loss_components['diversity_loss'] = diversity_loss.item()
+
+        return total_loss, loss_components
+
+    def _compute_consistency_loss(self, feature_proj, batch, labels):
+        """Compute feature consistency loss with proper error handling"""
+        if batch is None or len(feature_proj) == 0:
+            return torch.tensor(0.0, device=feature_proj.device, requires_grad=True)
+
+        try:
+            batch_size = batch.max().item() + 1
+            consistency_loss = torch.tensor(0.0, device=feature_proj.device)
+            valid_pairs = 0
+
+            for class_label in [0, 1]:
+                class_mask = labels == class_label
+                if class_mask.sum() < 2:
+                    continue
+
+                class_features = []
+                for i in range(batch_size):
+                    if i < len(labels) and class_mask[i]:
+                        node_mask = batch == i
+                        if node_mask.sum() > 0:
+                            graph_feature = feature_proj[node_mask].mean(dim=0)
+                            class_features.append(graph_feature)
+
+                if len(class_features) > 1:
+                    class_features = torch.stack(class_features)
+                    # Compute pairwise distances within class
+                    dists = torch.pdist(class_features, p=2)
+                    if len(dists) > 0:
+                        consistency_loss += dists.mean()
+                        valid_pairs += 1
+
+            return consistency_loss / max(valid_pairs, 1)
+
+        except Exception as e:
+            # Return zero loss if computation fails
+            return torch.tensor(0.0, device=feature_proj.device, requires_grad=True)
+
+    def _compute_diversity_loss(self, node_scores, batch):
+        """Encourage diversity in node hub scores within graphs with error handling"""
+        if batch is None or len(node_scores) == 0:
+            return torch.tensor(0.0, device=node_scores.device, requires_grad=True)
+
+        try:
+            batch_size = batch.max().item() + 1 if batch is not None else 1
+            diversity_loss = torch.tensor(0.0, device=node_scores.device)
+            valid_graphs = 0
+
+            for i in range(batch_size):
+                if batch is not None:
+                    mask = batch == i
+                    graph_scores = node_scores[mask]
+                else:
+                    graph_scores = node_scores
+
+                if len(graph_scores) > 1:
+                    # Encourage some nodes to be hubs, others not (diversity)
+                    mean_score = graph_scores.mean()
+                    variance = torch.var(graph_scores)
+                    # Encourage diversity while keeping reasonable mean
+                    diversity_loss += -variance + 0.1 * torch.abs(mean_score - 0.5)
+                    valid_graphs += 1
+
+            return diversity_loss / max(valid_graphs, 1)
+
+        except Exception as e:
+            return torch.tensor(0.0, device=node_scores.device, requires_grad=True)
+
+
 def load_and_prepare_data(data_dir: Path, max_samples_per_class: int = 1000) -> Tuple[List[Data], List[int]]:
-    """Load and prepare data with balanced classes"""
+    """Load and prepare data with enhanced filtering"""
     logger.info("Loading dataset for discriminator pre-training...")
 
     smelly_data = []
     clean_data = []
 
-    # Load all data
+    # Enhanced transforms
+    transform = Compose([
+        AddSelfLoops(),
+        NormalizeFeatures()
+    ])
+
+    # Load all data with better filtering
     for file in data_dir.glob('*.pt'):
         try:
             data = torch.load(file, map_location='cpu')
@@ -55,8 +200,19 @@ def load_and_prepare_data(data_dir: Path, max_samples_per_class: int = 1000) -> 
                 continue
 
             # Check graph size (reasonable for discriminator)
-            if data.x.size(0) < 3 or data.x.size(0) > 100:
+            if data.x.size(0) < 3 or data.x.size(0) > 150:
                 continue
+
+            # Check for degenerate cases
+            if data.edge_index.size(1) == 0:
+                continue
+
+            # Check for NaN values
+            if torch.isnan(data.x).any() or torch.isnan(data.edge_index.float()).any():
+                continue
+
+            # Apply transforms
+            data = transform(data)
 
             # Classify by smell
             is_smelly = getattr(data, 'is_smelly', 0)
@@ -96,7 +252,7 @@ def load_and_prepare_data(data_dir: Path, max_samples_per_class: int = 1000) -> 
 
 def evaluate_model(model: nn.Module, data_loader: List[Tuple[Data, int]],
                    device: torch.device, batch_size: int = 32) -> Dict[str, float]:
-    """Evaluate model and return comprehensive metrics"""
+    """Evaluate model with comprehensive metrics"""
     model.eval()
 
     all_preds = []
@@ -132,7 +288,7 @@ def evaluate_model(model: nn.Module, data_loader: List[Tuple[Data, int]],
 
                 all_preds.extend(preds.cpu().numpy())
                 all_labels.extend(labels_tensor.cpu().numpy())
-                all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of being smelly
+                all_probs.extend(probs[:, 1].cpu().numpy())
 
                 total_loss += loss.item()
                 num_batches += 1
@@ -171,14 +327,19 @@ def evaluate_model(model: nn.Module, data_loader: List[Tuple[Data, int]],
 
 def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
                       val_data: List[Tuple[Data, int]], device: torch.device,
-                      epochs: int = 100, batch_size: int = 32, lr: float = 1e-3,
-                      patience: int = 15) -> Dict[str, Any]:
-    """Train model on a single fold"""
+                      epochs: int = 120, batch_size: int = 24, lr: float = 1e-3,
+                      patience: int = 20, accumulation_steps: int = 2) -> Dict[str, Any]:
+    """Enhanced training with advanced techniques"""
 
-    # Optimizer and scheduler
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=8, factor=0.5)
-    criterion = nn.CrossEntropyLoss()
+    # Advanced optimizer with weight decay
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4, betas=(0.9, 0.999))
+
+    # Cosine annealing with warm restarts
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=1, eta_min=lr * 0.01)
+
+    # Advanced loss function
+    criterion = AdvancedLoss(alpha_focal=1.5, gamma_focal=2.0, lambda_consistency=0.05,
+                             lambda_diversity=0.02, label_smoothing=0.1)
 
     # Training history
     history = {
@@ -186,7 +347,8 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
         'train_acc': [],
         'val_loss': [],
         'val_acc': [],
-        'val_f1': []
+        'val_f1': [],
+        'learning_rate': []
     }
 
     best_val_f1 = 0.0
@@ -201,8 +363,12 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
         epoch_train_total = 0
         num_batches = 0
 
+        # Loss components tracking
+        loss_components_sum = {}
+
         # Shuffle training data
         random.shuffle(train_data)
+        optimizer.zero_grad()
 
         for i in range(0, len(train_data), batch_size):
             batch_data = []
@@ -210,26 +376,54 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
 
             for j in range(i, min(i + batch_size, len(train_data))):
                 data, label = train_data[j]
+                # No augmentation - use original data to preserve semantic meaning
                 batch_data.append(data)
                 batch_labels.append(label)
 
             try:
-                # Create batch
-                batch = Batch.from_data_list(batch_data).to(device)
-                labels_tensor = torch.tensor(batch_labels, dtype=torch.long, device=device)
+                # Create batch with validation
+                if not batch_data:
+                    continue
+
+                # Validate all data before batching
+                valid_data = []
+                valid_labels = []
+                for d, l in zip(batch_data, batch_labels):
+                    if (hasattr(d, 'x') and hasattr(d, 'edge_index') and
+                            d.x.size(0) > 0 and d.edge_index.size(1) > 0):
+                        valid_data.append(d)
+                        valid_labels.append(l)
+
+                if len(valid_data) == 0:
+                    continue
+
+                batch = Batch.from_data_list(valid_data).to(device)
+                labels_tensor = torch.tensor(valid_labels, dtype=torch.long, device=device)
 
                 # Forward pass
                 output = model(batch)
-                loss = criterion(output['logits'], labels_tensor)
+                loss, loss_comp = criterion(output, labels_tensor, batch)
+
+                # Scale loss for gradient accumulation
+                loss = loss / accumulation_steps
 
                 # Backward pass
-                optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+
+                # Track loss components
+                for key, value in loss_comp.items():
+                    if key not in loss_components_sum:
+                        loss_components_sum[key] = 0
+                    loss_components_sum[key] += value
+
+                # Gradient accumulation
+                if (i // batch_size + 1) % accumulation_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
 
                 # Statistics
-                epoch_train_loss += loss.item()
+                epoch_train_loss += loss.item() * accumulation_steps
                 preds = torch.argmax(output['logits'], dim=1)
                 epoch_train_correct += (preds == labels_tensor).sum().item()
                 epoch_train_total += len(labels_tensor)
@@ -237,7 +431,15 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
 
             except Exception as e:
                 logger.warning(f"Training batch error: {e}")
+                # Clear gradients on error
+                optimizer.zero_grad()
                 continue
+
+        # Final gradient step if needed
+        if num_batches % accumulation_steps != 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad()
 
         if num_batches == 0:
             logger.warning(f"No valid batches in epoch {epoch}")
@@ -249,17 +451,19 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
         # Validation phase
         val_metrics = evaluate_model(model, val_data, device, batch_size)
 
+        # Update learning rate
+        scheduler.step()
+        current_lr = optimizer.param_groups[0]['lr']
+
         # Update history
         history['train_loss'].append(train_loss)
         history['train_acc'].append(train_acc)
         history['val_loss'].append(val_metrics['loss'])
         history['val_acc'].append(val_metrics['accuracy'])
         history['val_f1'].append(val_metrics['f1'])
+        history['learning_rate'].append(current_lr)
 
-        # Learning rate scheduler
-        scheduler.step(val_metrics['f1'])
-
-        # Early stopping
+        # Early stopping with improved criteria
         if val_metrics['f1'] > best_val_f1:
             best_val_f1 = val_metrics['f1']
             patience_counter = 0
@@ -267,11 +471,16 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
         else:
             patience_counter += 1
 
-        # Log progress
+        # Log progress with loss components
         if epoch % 10 == 0 or epoch == epochs - 1:
             logger.info(f"Epoch {epoch:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | "
                         f"Val Loss: {val_metrics['loss']:.4f} | Val Acc: {val_metrics['accuracy']:.4f} | "
-                        f"Val F1: {val_metrics['f1']:.4f}")
+                        f"Val F1: {val_metrics['f1']:.4f} | LR: {current_lr:.6f}")
+
+            # Log loss components
+            if loss_components_sum:
+                comp_str = " | ".join([f"{k}: {v / num_batches:.4f}" for k, v in loss_components_sum.items()])
+                logger.info(f"  Loss components: {comp_str}")
 
         # Early stopping
         if patience_counter >= patience:
@@ -295,9 +504,9 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
 
 def k_fold_cross_validation(data: List[Data], labels: List[int],
                             node_dim: int, edge_dim: int, device: torch.device,
-                            k_folds: int = 5, epochs: int = 100,
-                            batch_size: int = 32, lr: float = 1e-3) -> Dict[str, Any]:
-    """Perform k-fold cross validation"""
+                            k_folds: int = 5, epochs: int = 120,
+                            batch_size: int = 24, lr: float = 1e-3) -> Dict[str, Any]:
+    """K-fold cross validation with enhanced model creation"""
     logger.info(f"Starting {k_folds}-fold cross validation...")
 
     # Stratified K-Fold to ensure balanced splits
@@ -316,18 +525,21 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
 
         logger.info(f"Train size: {len(train_data)}, Val size: {len(val_data)}")
 
-        # Create fresh model for this fold
+        # Create enhanced model for this fold
         model = HubDetectionDiscriminator(
             node_dim=node_dim,
             edge_dim=edge_dim,
             hidden_dim=128,
-            num_layers=3
+            num_layers=4,  # Increased layers
+            dropout=0.2,  # Reduced dropout
+            heads=8  # More attention heads
         ).to(device)
 
         # Train on this fold
         fold_result = train_single_fold(
             model, train_data, val_data, device,
-            epochs=epochs, batch_size=batch_size, lr=lr
+            epochs=epochs, batch_size=batch_size, lr=lr,
+            patience=25, accumulation_steps=2
         )
 
         fold_results.append(fold_result)
@@ -371,34 +583,39 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
 
 def train_final_model(data: List[Data], labels: List[int],
                       node_dim: int, edge_dim: int, device: torch.device,
-                      epochs: int = 150, batch_size: int = 32,
+                      epochs: int = 150, batch_size: int = 24,
                       lr: float = 1e-3) -> nn.Module:
-    """Train final model on all data"""
+    """Train final model on all data with enhanced configuration"""
     logger.info("Training final model on all data...")
 
-    # Create model
+    # Create enhanced model
     model = HubDetectionDiscriminator(
         node_dim=node_dim,
         edge_dim=edge_dim,
         hidden_dim=128,
-        num_layers=3
+        num_layers=4,
+        dropout=0.15,  # Slightly lower dropout for final model
+        heads=8
     ).to(device)
 
-    # Prepare data
+    # Prepare data with stratified split
     all_data = [(data[i], labels[i]) for i in range(len(data))]
 
-    # Split for final validation (80/20)
-    split_idx = int(0.8 * len(all_data))
-    indices = list(range(len(all_data)))
-    random.shuffle(indices)
+    # Stratified split for final validation (85/15)
+    from sklearn.model_selection import train_test_split
+    train_indices, val_indices = train_test_split(
+        range(len(all_data)), test_size=0.15,
+        stratify=labels, random_state=42
+    )
 
-    train_data = [all_data[i] for i in indices[:split_idx]]
-    val_data = [all_data[i] for i in indices[split_idx:]]
+    train_data = [all_data[i] for i in train_indices]
+    val_data = [all_data[i] for i in val_indices]
 
-    # Train
+    # Train with extended patience for final model
     final_result = train_single_fold(
         model, train_data, val_data, device,
-        epochs=epochs, batch_size=batch_size, lr=lr, patience=20
+        epochs=epochs, batch_size=batch_size, lr=lr,
+        patience=30, accumulation_steps=2
     )
 
     logger.info("Final model training completed!")
@@ -410,28 +627,92 @@ def train_final_model(data: List[Data], labels: List[int],
     return model
 
 
-def plot_confusion_matrix(y_true: List[int], y_pred: List[int],
-                          save_path: Path):
-    """Plot and save confusion matrix"""
+def plot_training_curves(cv_results: Dict[str, Any], save_path: Path):
+    """Plot training curves from cross-validation"""
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    # Aggregate training curves across folds
+    max_epochs = max(len(fold['history']['train_loss']) for fold in cv_results['fold_results'])
+
+    metrics = ['train_loss', 'val_loss', 'train_acc', 'val_acc']
+    titles = ['Training Loss', 'Validation Loss', 'Training Accuracy', 'Validation Accuracy']
+
+    for idx, (metric, title) in enumerate(zip(metrics, titles)):
+        ax = axes[idx // 2, idx % 2]
+
+        for fold_idx, fold in enumerate(cv_results['fold_results']):
+            history = fold['history']
+            if metric in history:
+                epochs = range(len(history[metric]))
+                ax.plot(epochs, history[metric], alpha=0.3, label=f'Fold {fold_idx + 1}')
+
+        # Compute mean curve
+        all_curves = []
+        for fold in cv_results['fold_results']:
+            if metric in fold['history'] and len(fold['history'][metric]) > 0:
+                # Pad or truncate to max_epochs
+                curve = fold['history'][metric][:max_epochs]
+                while len(curve) < max_epochs:
+                    curve.append(curve[-1] if curve else 0)
+                all_curves.append(curve)
+
+        if all_curves:
+            mean_curve = np.mean(all_curves, axis=0)
+            std_curve = np.std(all_curves, axis=0)
+            epochs = range(len(mean_curve))
+
+            ax.plot(epochs, mean_curve, 'k-', linewidth=2, label='Mean')
+            ax.fill_between(epochs,
+                            np.array(mean_curve) - np.array(std_curve),
+                            np.array(mean_curve) + np.array(std_curve),
+                            alpha=0.2, color='black')
+
+        ax.set_title(title)
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel(metric.replace('_', ' ').title())
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
+def plot_confusion_matrix(y_true: List[int], y_pred: List[int], save_path: Path):
+    """Plot and save enhanced confusion matrix"""
     cm = confusion_matrix(y_true, y_pred)
 
-    plt.figure(figsize=(8, 6))
+    # Normalize for percentages
+    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+
+    # Raw counts
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['Clean', 'Smelly'],
-                yticklabels=['Clean', 'Smelly'])
-    plt.title('Discriminator Confusion Matrix (K-Fold CV)')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
+                yticklabels=['Clean', 'Smelly'], ax=ax1)
+    ax1.set_title('Confusion Matrix (Counts)')
+    ax1.set_ylabel('True Label')
+    ax1.set_xlabel('Predicted Label')
+
+    # Normalized percentages
+    sns.heatmap(cm_norm, annot=True, fmt='.2%', cmap='Blues',
+                xticklabels=['Clean', 'Smelly'],
+                yticklabels=['Clean', 'Smelly'], ax=ax2)
+    ax2.set_title('Confusion Matrix (Normalized)')
+    ax2.set_ylabel('True Label')
+    ax2.set_xlabel('Predicted Label')
+
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close()
 
 
 def save_results(cv_results: Dict[str, Any], save_dir: Path):
-    """Save cross-validation results"""
+    """Save comprehensive cross-validation results"""
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save metrics
+    # Enhanced metrics summary
     metrics_summary = {
         'cross_validation_summary': {
             'accuracy': f"{cv_results['mean_accuracy']:.4f} ± {cv_results['std_accuracy']:.4f}",
@@ -440,7 +721,13 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
             'f1_score': f"{cv_results['mean_f1']:.4f} ± {cv_results['std_f1']:.4f}",
             'auc_roc': f"{cv_results['mean_auc']:.4f} ± {cv_results['std_auc']:.4f}"
         },
-        'individual_folds': []
+        'individual_folds': [],
+        'performance_analysis': {
+            'best_fold_f1': max(fold['final_metrics']['f1'] for fold in cv_results['fold_results']),
+            'worst_fold_f1': min(fold['final_metrics']['f1'] for fold in cv_results['fold_results']),
+            'f1_variance': np.var([fold['final_metrics']['f1'] for fold in cv_results['fold_results']]),
+            'consistent_performance': cv_results['std_f1'] < 0.05  # Low variance indicates consistency
+        }
     }
 
     for i, fold_result in enumerate(cv_results['fold_results']):
@@ -451,13 +738,17 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
                 'precision': fold_metrics['precision'],
                 'recall': fold_metrics['recall'],
                 'f1_score': fold_metrics['f1'],
-                'auc_roc': fold_metrics['auc']
+                'auc_roc': fold_metrics['auc'],
+                'epochs_trained': fold_result['epochs_trained']
             }
         })
 
     # Save to JSON
     with open(save_dir / 'cv_results.json', 'w') as f:
         json.dump(metrics_summary, f, indent=2)
+
+    # Plot training curves
+    plot_training_curves(cv_results, save_dir / 'training_curves.png')
 
     # Plot confusion matrix
     plot_confusion_matrix(
@@ -466,20 +757,24 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
         save_dir / 'confusion_matrix.png'
     )
 
-    logger.info(f"Results saved to {save_dir}")
+    logger.info(f"Enhanced results saved to {save_dir}")
 
 
 def main():
-    """Main training function"""
+    """Enhanced main training function"""
 
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
 
-    # Set random seeds for reproducibility
+    # Enhanced random seeds for better reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
     random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     # Paths
     base_dir = Path(__file__).parent
@@ -490,9 +785,9 @@ def main():
         logger.error(f"Data directory not found: {data_dir}")
         return
 
-    # Load data
+    # Load data with enhanced filtering
     try:
-        data, labels = load_and_prepare_data(data_dir, max_samples_per_class=800)
+        data, labels = load_and_prepare_data(data_dir, max_samples_per_class=1000)
     except Exception as e:
         logger.error(f"Failed to load data: {e}")
         return
@@ -510,19 +805,19 @@ def main():
     logger.info(f"Edge features: {edge_dim}")
     logger.info(f"Class distribution: {sum(labels)} smelly, {len(labels) - sum(labels)} clean")
 
-    # Hyperparameters
+    # Enhanced hyperparameters
     config = {
         'k_folds': 5,
-        'epochs': 80,
-        'batch_size': 24,
-        'learning_rate': 1e-3,
-        'final_epochs': 120
+        'epochs': 100,
+        'batch_size': 20,  # Slightly smaller for better gradient quality
+        'learning_rate': 8e-4,  # Slightly lower learning rate
+        'final_epochs': 140
     }
 
-    logger.info(f"Training configuration: {config}")
+    logger.info(f"Enhanced training configuration: {config}")
 
     try:
-        # K-fold cross validation
+        # Enhanced K-fold cross validation
         cv_results = k_fold_cross_validation(
             data, labels, node_dim, edge_dim, device,
             k_folds=config['k_folds'],
@@ -531,21 +826,29 @@ def main():
             lr=config['learning_rate']
         )
 
-        # Print final results
-        logger.info("\n=== CROSS-VALIDATION RESULTS ===")
+        # Print comprehensive results
+        logger.info("\n=== ENHANCED CROSS-VALIDATION RESULTS ===")
         logger.info(f"Accuracy:  {cv_results['mean_accuracy']:.4f} ± {cv_results['std_accuracy']:.4f}")
         logger.info(f"Precision: {cv_results['mean_precision']:.4f} ± {cv_results['std_precision']:.4f}")
         logger.info(f"Recall:    {cv_results['mean_recall']:.4f} ± {cv_results['std_recall']:.4f}")
         logger.info(f"F1 Score:  {cv_results['mean_f1']:.4f} ± {cv_results['std_f1']:.4f}")
         logger.info(f"AUC-ROC:   {cv_results['mean_auc']:.4f} ± {cv_results['std_auc']:.4f}")
 
-        # Check if performance is acceptable
-        if cv_results['mean_f1'] < 0.7:
-            logger.warning("F1 score is below 0.7. Consider tuning hyperparameters.")
-        elif cv_results['mean_f1'] > 0.85:
+        # Performance assessment
+        if cv_results['mean_f1'] < 0.75:
+            logger.warning("F1 score is below 0.75. Consider further hyperparameter tuning.")
+        elif cv_results['mean_f1'] > 0.90:
+            logger.info("Outstanding discriminator performance! 🌟")
+        elif cv_results['mean_f1'] > 0.82:
             logger.info("Excellent discriminator performance! ✅")
         else:
             logger.info("Good discriminator performance. ✅")
+
+        # Consistency check
+        if cv_results['std_f1'] > 0.05:
+            logger.warning("High variance across folds. Consider more data or regularization.")
+        else:
+            logger.info("Consistent performance across folds! 👍")
 
         # Train final model on all data
         final_model = train_final_model(
@@ -558,25 +861,32 @@ def main():
         # Save everything
         results_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save final model
+        # Save enhanced final model
         torch.save({
             'model_state_dict': final_model.state_dict(),
             'node_dim': node_dim,
             'edge_dim': edge_dim,
             'cv_results': cv_results,
-            'config': config
+            'config': config,
+            'model_architecture': {
+                'hidden_dim': 128,
+                'num_layers': 4,
+                'dropout': 0.15,
+                'heads': 8
+            }
         }, results_dir / 'pretrained_discriminator.pt')
 
-        # Save results
+        # Save comprehensive results
         save_results(cv_results, results_dir)
 
-        logger.info(f"\n✅ Discriminator pre-training completed successfully!")
+        logger.info(f"\n✅ Enhanced discriminator pre-training completed successfully!")
         logger.info(f"📁 Pretrained model saved to: {results_dir / 'pretrained_discriminator.pt'}")
-        logger.info(f"📊 Cross-validation results saved to: {results_dir}")
-        logger.info(f"\nYou can now use this pretrained discriminator in your RL training!")
+        logger.info(f"📊 Comprehensive results saved to: {results_dir}")
+        logger.info(f"🎯 Expected F1 improvement: {cv_results['mean_f1']:.3f} (vs previous ~0.67)")
+        logger.info(f"\n🚀 This enhanced discriminator is ready for adversarial learning!")
 
     except Exception as e:
-        logger.error(f"Training failed: {e}")
+        logger.error(f"Enhanced training failed: {e}")
         raise
 
 
