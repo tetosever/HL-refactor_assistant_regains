@@ -1,34 +1,25 @@
-name: HL_refactor_assistant_environment
+name: HL_refactor_assistant_env
 channels:
   - pytorch
+  - nvidia
   - pyg
   - conda-forge
   - defaults
 
 dependencies:
-  # Linguaggio e GPU
   - python=3.9.23
-  - cudatoolkit=11.8
-
-  # PyTorch core + audio/video
   - pytorch=2.1.0
-  - torchvision=0.15.0
+  - pytorch-cuda=11.8
+  - torchvision=0.16.0
   - torchaudio=2.1.0
-
-  # PyTorch Geometric
-  - pytorch-geometric=2.3.0
-
-  # Dipendenze di alto livello del tuo progetto
+  - pyg
   - absl-py=2.1.0
   - protobuf=3.20.3
-
-  # Altri pacchetti top-level
   - scikit-learn=1.6.1
   - pandas=2.3.1
   - matplotlib=3.9.2
   - seaborn=0.13.2
 
-  # Librerie pip
   - pip
   - pip:
       - aiohappyeyeballs==2.6.1
