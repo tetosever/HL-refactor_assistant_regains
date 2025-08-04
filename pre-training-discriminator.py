@@ -749,54 +749,61 @@ def train_final_model(data: List[Data], labels: List[int], device: torch.device,
 
 
 def plot_training_curves(cv_results: Dict[str, Any], save_path: Path):
-    """Plot training curves from cross-validation"""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    """Plot training curves from cross-validation with numpy type handling"""
+    try:
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
 
-    # Aggregate training curves across folds
-    max_epochs = max(len(fold['history']['train_loss']) for fold in cv_results['fold_results'])
+        # Aggregate training curves across folds
+        max_epochs = max(len(fold['history']['train_loss']) for fold in cv_results['fold_results'])
 
-    metrics = ['train_loss', 'val_loss', 'train_acc', 'val_acc']
-    titles = ['Training Loss', 'Validation Loss', 'Training Accuracy', 'Validation Accuracy']
+        metrics = ['train_loss', 'val_loss', 'train_acc', 'val_acc']
+        titles = ['Training Loss', 'Validation Loss', 'Training Accuracy', 'Validation Accuracy']
 
-    for idx, (metric, title) in enumerate(zip(metrics, titles)):
-        ax = axes[idx // 2, idx % 2]
+        for idx, (metric, title) in enumerate(zip(metrics, titles)):
+            ax = axes[idx // 2, idx % 2]
 
-        for fold_idx, fold in enumerate(cv_results['fold_results']):
-            history = fold['history']
-            if metric in history:
-                epochs = range(len(history[metric]))
-                ax.plot(epochs, history[metric], alpha=0.3, label=f'Fold {fold_idx + 1}')
+            for fold_idx, fold in enumerate(cv_results['fold_results']):
+                history = fold['history']
+                if metric in history:
+                    epochs = range(len(history[metric]))
+                    # Convert to native Python types
+                    values = [float(v) for v in history[metric]]
+                    ax.plot(epochs, values, alpha=0.3, label=f'Fold {fold_idx + 1}')
 
-        # Compute mean curve
-        all_curves = []
-        for fold in cv_results['fold_results']:
-            if metric in fold['history'] and len(fold['history'][metric]) > 0:
-                # Pad or truncate to max_epochs
-                curve = fold['history'][metric][:max_epochs]
-                while len(curve) < max_epochs:
-                    curve.append(curve[-1] if curve else 0)
-                all_curves.append(curve)
+            # Compute mean curve with type conversion
+            all_curves = []
+            for fold in cv_results['fold_results']:
+                if metric in fold['history'] and len(fold['history'][metric]) > 0:
+                    # Pad or truncate to max_epochs and convert types
+                    curve = [float(v) for v in fold['history'][metric][:max_epochs]]
+                    while len(curve) < max_epochs:
+                        curve.append(curve[-1] if curve else 0.0)
+                    all_curves.append(curve)
 
-        if all_curves:
-            mean_curve = np.mean(all_curves, axis=0)
-            std_curve = np.std(all_curves, axis=0)
-            epochs = range(len(mean_curve))
+            if all_curves:
+                mean_curve = np.mean(all_curves, axis=0)
+                std_curve = np.std(all_curves, axis=0)
+                epochs = range(len(mean_curve))
 
-            ax.plot(epochs, mean_curve, 'k-', linewidth=2, label='Mean')
-            ax.fill_between(epochs,
-                            np.array(mean_curve) - np.array(std_curve),
-                            np.array(mean_curve) + np.array(std_curve),
-                            alpha=0.2, color='black')
+                ax.plot(epochs, mean_curve, 'k-', linewidth=2, label='Mean')
+                ax.fill_between(epochs,
+                                mean_curve - std_curve,
+                                mean_curve + std_curve,
+                                alpha=0.2, color='black')
 
-        ax.set_title(title)
-        ax.set_xlabel('Epoch')
-        ax.set_ylabel(metric.replace('_', ' ').title())
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+            ax.set_title(title)
+            ax.set_xlabel('Epoch')
+            ax.set_ylabel(metric.replace('_', ' ').title())
+            ax.legend()
+            ax.grid(True, alpha=0.3)
 
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+    except Exception as e:
+        logger.warning(f"Failed to plot training curves: {e}")
+        plt.close('all')  # Clean up any open figures
 
 
 def plot_confusion_matrix(y_true: List[int], y_pred: List[int], save_path: Path):
@@ -830,24 +837,41 @@ def plot_confusion_matrix(y_true: List[int], y_pred: List[int], save_path: Path)
 
 
 def save_results(cv_results: Dict[str, Any], save_dir: Path):
-    """Save comprehensive cross-validation results"""
+    """Save comprehensive cross-validation results with JSON serialization fix"""
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Enhanced metrics summary
+    def convert_numpy_types(obj):
+        """Convert numpy types to native Python types for JSON serialization"""
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {key: convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_numpy_types(item) for item in obj]
+        else:
+            return obj
+
+    # Enhanced metrics summary with type conversion
     metrics_summary = {
         'cross_validation_summary': {
-            'accuracy': f"{cv_results['mean_accuracy']:.4f} ± {cv_results['std_accuracy']:.4f}",
-            'precision': f"{cv_results['mean_precision']:.4f} ± {cv_results['std_precision']:.4f}",
-            'recall': f"{cv_results['mean_recall']:.4f} ± {cv_results['std_recall']:.4f}",
-            'f1_score': f"{cv_results['mean_f1']:.4f} ± {cv_results['std_f1']:.4f}",
-            'auc_roc': f"{cv_results['mean_auc']:.4f} ± {cv_results['std_auc']:.4f}"
+            'accuracy': f"{float(cv_results['mean_accuracy']):.4f} ± {float(cv_results['std_accuracy']):.4f}",
+            'precision': f"{float(cv_results['mean_precision']):.4f} ± {float(cv_results['std_precision']):.4f}",
+            'recall': f"{float(cv_results['mean_recall']):.4f} ± {float(cv_results['std_recall']):.4f}",
+            'f1_score': f"{float(cv_results['mean_f1']):.4f} ± {float(cv_results['std_f1']):.4f}",
+            'auc_roc': f"{float(cv_results['mean_auc']):.4f} ± {float(cv_results['std_auc']):.4f}"
         },
         'individual_folds': [],
         'performance_analysis': {
-            'best_fold_f1': max(fold['final_metrics']['f1'] for fold in cv_results['fold_results']),
-            'worst_fold_f1': min(fold['final_metrics']['f1'] for fold in cv_results['fold_results']),
-            'f1_variance': np.var([fold['final_metrics']['f1'] for fold in cv_results['fold_results']]),
-            'consistent_performance': cv_results['std_f1'] < 0.05
+            'best_fold_f1': float(max(fold['final_metrics']['f1'] for fold in cv_results['fold_results'])),
+            'worst_fold_f1': float(min(fold['final_metrics']['f1'] for fold in cv_results['fold_results'])),
+            'f1_variance': float(np.var([fold['final_metrics']['f1'] for fold in cv_results['fold_results']])),
+            'consistent_performance': bool(cv_results['std_f1'] < 0.05)
         },
         'feature_info': {
             'feature_extraction_method': 'EnhancedStructuralNormalizer',
@@ -864,31 +888,50 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
         fold_metrics = fold_result['final_metrics']
         metrics_summary['individual_folds'].append({
             f'fold_{i + 1}': {
-                'accuracy': fold_metrics['accuracy'],
-                'precision': fold_metrics['precision'],
-                'recall': fold_metrics['recall'],
-                'f1_score': fold_metrics['f1'],
-                'auc_roc': fold_metrics['auc'],
-                'epochs_trained': fold_result['epochs_trained']
+                'accuracy': float(fold_metrics['accuracy']),
+                'precision': float(fold_metrics['precision']),
+                'recall': float(fold_metrics['recall']),
+                'f1_score': float(fold_metrics['f1']),
+                'auc_roc': float(fold_metrics['auc']),
+                'epochs_trained': int(fold_result['epochs_trained'])
             }
         })
 
-    # Save to JSON
-    with open(save_dir / 'cv_results.json', 'w') as f:
-        json.dump(metrics_summary, f, indent=2)
+    # Apply numpy type conversion to the entire structure
+    metrics_summary = convert_numpy_types(metrics_summary)
+
+    # Save to JSON with proper error handling
+    try:
+        with open(save_dir / 'cv_results.json', 'w') as f:
+            json.dump(metrics_summary, f, indent=2, ensure_ascii=False)
+        logger.info(f"✅ Results saved to {save_dir / 'cv_results.json'}")
+    except Exception as e:
+        logger.error(f"Failed to save JSON results: {e}")
+        # Fallback: save as pickle
+        import pickle
+        with open(save_dir / 'cv_results.pkl', 'wb') as f:
+            pickle.dump(metrics_summary, f)
+        logger.info(f"⚠️ Saved as pickle instead: {save_dir / 'cv_results.pkl'}")
 
     # Plot training curves
-    plot_training_curves(cv_results, save_dir / 'training_curves.png')
+    try:
+        plot_training_curves(cv_results, save_dir / 'training_curves.png')
+        logger.info(f"✅ Training curves saved")
+    except Exception as e:
+        logger.warning(f"Failed to save training curves: {e}")
 
     # Plot confusion matrix
-    plot_confusion_matrix(
-        cv_results['all_true_labels'],
-        cv_results['all_predictions'],
-        save_dir / 'confusion_matrix.png'
-    )
+    try:
+        plot_confusion_matrix(
+            cv_results['all_true_labels'],
+            cv_results['all_predictions'],
+            save_dir / 'confusion_matrix.png'
+        )
+        logger.info(f"✅ Confusion matrix saved")
+    except Exception as e:
+        logger.warning(f"Failed to save confusion matrix: {e}")
 
-    logger.info(f"Enhanced results saved to {save_dir}")
-
+    logger.info(f"📊 Enhanced results saved to {save_dir}")
 
 def main():
     """UNIFIED main training function with consistent feature pipeline"""
