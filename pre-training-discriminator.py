@@ -221,6 +221,10 @@ def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1
             if data.edge_index.max() >= data.x.size(0):
                 continue
 
+            # Remove any stale batch attribute
+            if hasattr(data, 'batch'):
+                delattr(data, 'batch')
+
             # Get label
             is_smelly = getattr(data, 'is_smelly', 0)
             if isinstance(is_smelly, torch.Tensor):
