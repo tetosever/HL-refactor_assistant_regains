@@ -3,7 +3,7 @@
 FIXED: Enhanced Discriminator Pre-training Script with Unified Feature Pipeline
 
 Key improvements:
-- Uses EXACT same 14 structural features as training RL
+- Uses EXACT same 7 structural features as training RL
 - Unified preprocessing with EnhancedStructuralNormalizer
 - Consistent feature extraction pipeline
 - Enhanced validation and monitoring
@@ -183,9 +183,9 @@ def safe_torch_load(file_path: Path, device: torch.device):
 def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1000) -> Tuple[List[Data], List[int]]:
     """
     UNIFIED data loading with EXACT same features as training RL
-    Uses EnhancedStructuralNormalizer for consistent 14-feature extraction
+    Uses EnhancedStructuralNormalizer for consistent 7-feature extraction
     """
-    logger.info("Loading dataset with UNIFIED feature extraction (14 structural features)...")
+    logger.info("Loading dataset with UNIFIED feature extraction (7 structural features)...")
 
     all_raw_data = []
     all_labels = []
@@ -262,12 +262,12 @@ def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1
 
     for i, (data, label) in enumerate(zip(all_raw_data, all_labels)):
         try:
-            # Apply unified feature extraction (creates 14 features)
+            # Apply unified feature extraction (creates 7 features)
             processed_data_item = normalizer(data)
 
-            # Validate that we got exactly 14 features
-            if processed_data_item.x.size(1) != 14:
-                logger.warning(f"Graph {i}: Expected 14 features, got {processed_data_item.x.size(1)}")
+            # Validate that we got exactly 7 features
+            if processed_data_item.x.size(1) != 7:
+                logger.warning(f"Graph {i}: Expected 7 features, got {processed_data_item.x.size(1)}")
                 continue
 
             # Check for NaN/inf values
@@ -329,15 +329,15 @@ def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1
     logger.info(f"  Total graphs: {len(final_data)}")
     logger.info(f"  Smelly graphs: {smelly_added}")
     logger.info(f"  Clean graphs: {clean_added}")
-    logger.info(f"  Features per node: 14 (unified structural features)")
+    logger.info(f"  Features per node: 7 (unified structural features)")
 
     # Validate feature consistency
     if final_data:
         sample_features = final_data[0].x.size(1)
         logger.info(f"  ✅ Feature dimension verification: {sample_features} features per node")
 
-        if sample_features != 14:
-            raise ValueError(f"CRITICAL: Expected 14 features, got {sample_features}")
+        if sample_features != 7:
+            raise ValueError(f"CRITICAL: Expected 7 features, got {sample_features}")
 
     return final_data, final_labels
 
@@ -481,7 +481,7 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
                 valid_labels = []
                 for d, l in zip(batch_data, batch_labels):
                     if (hasattr(d, 'x') and hasattr(d, 'edge_index') and
-                            d.x.size(0) > 0 and d.edge_index.size(1) > 0 and d.x.size(1) == 14):
+                            d.x.size(0) > 0 and d.edge_index.size(1) > 0 and d.x.size(1) == 7):
                         valid_data.append(d)
                         valid_labels.append(l)
 
@@ -598,10 +598,10 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
                             epochs: int = 120, batch_size: int = 24,
                             lr: float = 1e-3) -> Dict[str, Any]:
     """K-fold cross validation with unified features"""
-    logger.info(f"Starting {k_folds}-fold cross validation with UNIFIED 14 features...")
+    logger.info(f"Starting {k_folds}-fold cross validation with UNIFIED 7 features...")
 
-    # All graphs should have exactly 14 features now
-    node_dim = 14  # FIXED: always 14 structural features
+    # All graphs should have exactly 7 features now
+    node_dim = 7  # FIXED: always 7 structural features
     edge_dim = 1  # Basic edge features
 
     # Stratified K-Fold to ensure balanced splits
@@ -622,7 +622,7 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
 
         # Create enhanced model for this fold with FIXED dimensions
         model = HubDetectionDiscriminator(
-            node_dim=node_dim,  # Always 14
+            node_dim=node_dim,  # Always 7
             edge_dim=edge_dim,  # Always 1
             hidden_dim=128,
             num_layers=4,
@@ -680,10 +680,10 @@ def train_final_model(data: List[Data], labels: List[int], device: torch.device,
                       epochs: int = 150, batch_size: int = 24,
                       lr: float = 1e-3) -> nn.Module:
     """Train final model on all data with unified features"""
-    logger.info("Training final model on all data with UNIFIED 14 features...")
+    logger.info("Training final model on all data with UNIFIED 7 features...")
 
     # FIXED dimensions
-    node_dim = 14  # Always 14 structural features
+    node_dim = 7  # Always 7 structural features
     edge_dim = 1  # Basic edge features
 
     # Create enhanced model with FIXED dimensions
@@ -828,13 +828,10 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
         },
         'feature_info': {
             'feature_extraction_method': 'EnhancedStructuralNormalizer',
-            'num_features': 14,
+            'num_features': 7,
             'feature_names': [
-                'in_degree', 'out_degree', 'total_degree', 'in_out_ratio',
-                'degree_centrality', 'pagerank', 'betweenness_centrality',
-                'closeness_centrality', 'hub_score', 'authority_score',
-                'clustering_coefficient', 'k_core_number', 'eccentricity',
-                'load_centrality'
+                'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
+                'pagerank', 'betweenness_centrality', 'closeness_centrality'
             ],
             'unified_pipeline': True
         }
@@ -895,7 +892,7 @@ def main():
         logger.error(f"Data directory not found: {data_dir}")
         return
 
-    # Load data with UNIFIED feature extraction (14 structural features)
+    # Load data with UNIFIED feature extraction (7 structural features)
     try:
         logger.info("🔧 Loading data with UNIFIED feature pipeline...")
         data, labels = load_and_prepare_data_unified(data_dir, max_samples_per_class=1000)
@@ -907,15 +904,15 @@ def main():
         logger.error("No valid data found!")
         return
 
-    # Verify all data has exactly 14 features
+    # Verify all data has exactly 7 features
     feature_dims = set([d.x.size(1) for d in data])
-    if len(feature_dims) > 1 or 14 not in feature_dims:
+    if len(feature_dims) > 1 or 7 not in feature_dims:
         logger.error(f"❌ CRITICAL: Inconsistent feature dimensions: {feature_dims}")
-        logger.error("All graphs must have exactly 14 structural features!")
+        logger.error("All graphs must have exactly 7 structural features!")
         return
 
     logger.info("✅ UNIFIED feature consistency verified!")
-    logger.info(f"📊 Dataset: {len(data)} graphs with 14 structural features each")
+    logger.info(f"📊 Dataset: {len(data)} graphs with 7 structural features each")
     logger.info(f"🏷️ Class distribution: {sum(labels)} smelly, {len(labels) - sum(labels)} clean")
 
     # Enhanced hyperparameters
@@ -925,7 +922,7 @@ def main():
         'batch_size': 20,
         'learning_rate': 8e-4,
         'final_epochs': 140,
-        'feature_pipeline': 'unified_structural_14_features'
+        'feature_pipeline': 'unified_structural_7_features'
     }
 
     logger.info(f"🔧 UNIFIED training configuration: {config}")
@@ -981,7 +978,7 @@ def main():
         # Save UNIFIED final model
         torch.save({
             'model_state_dict': final_model.state_dict(),
-            'node_dim': 14,  # FIXED: always 14 unified structural features
+            'node_dim': 7,  # FIXED: always 7 unified structural features
             'edge_dim': 1,  # Basic edge features
             'cv_results': cv_results,
             'config': config,
@@ -993,13 +990,10 @@ def main():
             },
             'feature_pipeline': {
                 'method': 'EnhancedStructuralNormalizer',
-                'num_features': 14,
+                'num_features': 7,
                 'feature_names': [
-                    'in_degree', 'out_degree', 'total_degree', 'in_out_ratio',
-                    'degree_centrality', 'pagerank', 'betweenness_centrality',
-                    'closeness_centrality', 'hub_score', 'authority_score',
-                    'clustering_coefficient', 'k_core_number', 'eccentricity',
-                    'load_centrality'
+                    'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
+                    'pagerank', 'betweenness_centrality', 'closeness_centrality'
                 ],
                 'unified_with_training_rl': True
             }
@@ -1013,7 +1007,7 @@ def main():
         logger.info("=" * 60)
         logger.info(f"📁 Pretrained model: {results_dir / 'pretrained_discriminator.pt'}")
         logger.info(f"📊 Results: {results_dir}")
-        logger.info(f"🔧 Features used: 14 unified structural features")
+        logger.info(f"🔧 Features used: 7 unified structural features")
         logger.info(f"🎯 Expected F1: {cv_results['mean_f1']:.3f}")
         logger.info(f"✅ Consistency with training RL: GUARANTEED")
         logger.info("=" * 60)
