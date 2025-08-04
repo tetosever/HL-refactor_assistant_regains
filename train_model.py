@@ -294,7 +294,7 @@ class PPOTrainer:
     """PPO trainer with adversarial discriminator training - GPU optimized"""
 
     def __init__(self, policy: nn.Module, discriminator: nn.Module,
-                 lr_policy: float = 1e-3, lr_disc: float = 1e-4,
+                 lr_policy: float = 5e-4, lr_disc: float = 1e-4,
                  device: torch.device = torch.device('cpu')):
         self.device = device
 
@@ -307,12 +307,12 @@ class PPOTrainer:
         self.opt_disc = optim.AdamW(discriminator.parameters(), lr=lr_disc, eps=1e-5, weight_decay=1e-4)
 
         # PPO parameters
-        self.clip_eps = 0.2
-        self.gamma = 0.99
+        self.clip_eps = 0.1
+        self.gamma = 0.9
         self.lam = 0.95
         self.value_coef = 0.5
-        self.entropy_coef = 0.01
-        self.max_grad_norm = 0.5
+        self.entropy_coef = 0.02
+        self.max_grad_norm = 0.8
 
         # Training statistics
         self.update_count = 0
@@ -1314,7 +1314,7 @@ def main():
     # ENHANCED training parameters - optimized for diversity and incremental updates
     num_episodes = 5000
     num_envs = min(8 if device.type == 'cuda' else 4, stats['label_distribution']['smelly'])
-    steps_per_env = 16
+    steps_per_env = 32
     update_frequency = 4
     environment_refresh_frequency = 100  # NEW: Refresh environments every 100 episodes
 
