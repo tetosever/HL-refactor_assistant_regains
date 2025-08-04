@@ -261,23 +261,6 @@ def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1
 
     logger.info(f"Phase 1 complete: {len(all_raw_data)} raw graphs loaded")
 
-    # Phase 2: Feature extraction with unified normalizer
-    logger.info("Phase 2: Extracting unified structural features...")
-
-    # Create and fit normalizer on subset for efficiency
-    normalizer = EnhancedStructuralNormalizer()
-    fit_data = all_raw_data[:min(500, len(all_raw_data))]
-
-    try:
-        normalizer.fit(fit_data)
-        logger.info("✅ Normalizer fitted successfully")
-    except Exception as e:
-        logger.error(f"Failed to fit normalizer: {e}")
-        raise
-
-    # Phase 3: Apply feature extraction and create final dataset
-    logger.info("Phase 3: Creating final dataset with normalized features...")
-
     processed_data = []
     processed_labels = []
     smelly_count = 0
@@ -286,7 +269,7 @@ def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1
     for i, (data, label) in enumerate(zip(all_raw_data, all_labels)):
         try:
             # Apply unified feature extraction (creates 7 features)
-            processed_data_item = normalizer(data)
+            processed_data_item = data
 
             # Validate that we got exactly 7 features
             if processed_data_item.x.size(1) != 7:
