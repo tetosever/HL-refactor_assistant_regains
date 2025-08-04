@@ -294,7 +294,7 @@ class PPOTrainer:
     """PPO trainer with adversarial discriminator training - GPU optimized"""
 
     def __init__(self, policy: nn.Module, discriminator: nn.Module,
-                 lr_policy: float = 3e-4, lr_disc: float = 1e-4,
+                 lr_policy: float = 1e-3, lr_disc: float = 1e-4,
                  device: torch.device = torch.device('cpu')):
         self.device = device
 
@@ -1314,8 +1314,8 @@ def main():
     # ENHANCED training parameters - optimized for diversity and incremental updates
     num_episodes = 5000
     num_envs = min(8 if device.type == 'cuda' else 4, stats['label_distribution']['smelly'])
-    steps_per_env = 32
-    update_frequency = 10
+    steps_per_env = 16
+    update_frequency = 4
     environment_refresh_frequency = 100  # NEW: Refresh environments every 100 episodes
 
     logger.info("⚙️ ENHANCED training configuration:")
