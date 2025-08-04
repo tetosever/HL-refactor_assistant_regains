@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Fixed RL Environment for Hub Refactoring with Enhanced Error Handling and 7-Feature Compatibility
+Updated RL Environment with Incremental Feature Computation
+
+Key changes:
+- Incremental feature updates instead of full reconstruction
+- Direct computation of affected node features
+- No dependency on UnifiedDataLoader for intermediate graphs
+- Eliminates the "Failed to recompute features" warning
 """
 
 import copy
 from dataclasses import dataclass
-from typing import Dict, Tuple, Any, Optional, List
+from typing import Dict, Tuple, Any, Optional, List, Set
+import math
 
 import networkx as nx
 import numpy as np
@@ -28,16 +35,196 @@ class RefactoringResult:
     info: Dict[str, Any]
 
 
+class IncrementalFeatureComputer:
+    """
+    Incremental feature computation that updates only affected nodes
+    Uses the same algorithms as UnifiedFeatureComputer but more efficiently
+    """
+
+    @staticmethod
+    def compute_single_node_features(node_id: int, G: nx.Graph,
+                                     global_centrality: Optional[Dict] = None) -> List[float]:
+        """
+        Compute the 7 structural features for a single node
+
+        Args:
+            node_id: ID of the node to compute features for
+            G: NetworkX graph
+            global_centrality: Pre-computed global centrality measures (optional)
+
+        Returns:
+            List of 7 feature values
+        """
+        if node_id not in G:
+            return [0.0] * 7
+
+        try:
+            # Basic degree metrics
+            fan_in = float(G.in_degree(node_id))
+            fan_out = float(G.out_degree(node_id))
+            total_degree = fan_in + fan_out
+
+            num_nodes = len(G)
+            eps = 1e-8
+
+            # Degree centrality
+            degree_centrality = total_degree / (num_nodes - 1 + eps)
+
+            # In-out ratio
+            in_out_ratio = fan_in / (fan_out + eps)
+
+            # Get global centrality measures
+            if global_centrality is None:
+                global_centrality = IncrementalFeatureComputer._compute_global_centrality(G)
+
+            pagerank = float(global_centrality['pagerank'].get(node_id, 0))
+            betweenness = float(global_centrality['betweenness'].get(node_id, 0))
+            closeness = float(global_centrality['closeness'].get(node_id, 0))
+
+            return [fan_in, fan_out, degree_centrality, in_out_ratio,
+                    pagerank, betweenness, closeness]
+
+        except Exception as e:
+            logger.warning(f"Failed to compute features for node {node_id}: {e}")
+            return [0.0] * 7
+
+    @staticmethod
+    def _compute_global_centrality(G: nx.Graph) -> Dict[str, Dict]:
+        """Compute global centrality measures efficiently"""
+        try:
+            num_nodes = len(G)
+
+            if num_nodes <= 100:  # Same threshold as UnifiedFeatureComputer
+                pagerank = nx.pagerank(G, alpha=0.85, max_iter=100, tol=1e-4)
+                betweenness = nx.betweenness_centrality(G, normalized=True)
+                closeness = nx.closeness_centrality(G, distance=None, wf_improved=True)
+            else:
+                # Simplified computation for large graphs
+                total_edges = G.number_of_edges()
+                pagerank = {n: float(G.degree(n)) / (2 * total_edges + 1e-8) for n in G.nodes()}
+                betweenness = {n: 0.0 for n in G.nodes()}
+                closeness = {n: 1.0 / (num_nodes - 1 + 1e-8) for n in G.nodes()}
+
+            return {
+                'pagerank': pagerank,
+                'betweenness': betweenness,
+                'closeness': closeness
+            }
+        except Exception as e:
+            logger.warning(f"Failed to compute global centrality: {e}")
+            # Return empty dicts with fallback
+            empty_dict = {n: 0.0 for n in G.nodes()}
+            return {
+                'pagerank': empty_dict,
+                'betweenness': empty_dict,
+                'closeness': empty_dict
+            }
+
+    @staticmethod
+    def get_affected_nodes(modification_type: str, source_node: int, target_node: int,
+                           G: nx.Graph, radius: int = 2) -> Set[int]:
+        """
+        Determine which nodes need feature updates based on modification type
+
+        Args:
+            modification_type: Type of modification applied
+            source_node: Source node of modification
+            target_node: Target node of modification
+            G: Current graph state
+            radius: Radius for neighborhood updates
+
+        Returns:
+            Set of node IDs that need feature updates
+        """
+        affected = {source_node, target_node}
+
+        # For most centrality measures, we need to update neighbors too
+        try:
+            # Add direct neighbors of modified nodes
+            if source_node in G:
+                predecessors = set(G.predecessors(source_node))
+                successors = set(G.successors(source_node))
+                affected.update(predecessors)
+                affected.update(successors)
+
+            if target_node in G and target_node != source_node:
+                predecessors = set(G.predecessors(target_node))
+                successors = set(G.successors(target_node))
+                affected.update(predecessors)
+                affected.update(successors)
+
+            # For certain modifications, expand the radius
+            if modification_type in ['node_addition', 'node_removal', 'major_restructuring']:
+                # Expand to 2-hop neighborhood for significant changes
+                expanded = set(affected)
+                for node in list(affected):
+                    if node in G:
+                        expanded.update(set(G.neighbors(node)))
+                affected = expanded
+
+        except Exception as e:
+            logger.warning(f"Error determining affected nodes: {e}")
+
+        return affected
+
+    @staticmethod
+    def update_features_incremental(data: Data, affected_nodes: Set[int],
+                                    modification_info: Dict = None) -> Data:
+        """
+        Update features for affected nodes incrementally
+
+        Args:
+            data: PyG Data object to update
+            affected_nodes: Set of node indices to update
+            modification_info: Information about the modification applied
+
+        Returns:
+            Updated Data object
+        """
+        try:
+            # Convert to NetworkX for feature computation
+            G = to_networkx(data, to_undirected=False)
+
+            # Filter affected nodes to only those that exist in the graph
+            valid_affected = {node for node in affected_nodes if node < data.x.size(0) and node in G}
+
+            if not valid_affected:
+                logger.debug("No valid affected nodes to update")
+                return data
+
+            # Compute global centrality once for efficiency
+            global_centrality = IncrementalFeatureComputer._compute_global_centrality(G)
+
+            # Update features for each affected node
+            for node_idx in valid_affected:
+                try:
+                    new_features = IncrementalFeatureComputer.compute_single_node_features(
+                        node_idx, G, global_centrality
+                    )
+
+                    # Update the tensor in-place
+                    data.x[node_idx] = torch.tensor(new_features, dtype=torch.float32, device=data.x.device)
+
+                except Exception as e:
+                    logger.warning(f"Failed to update features for node {node_idx}: {e}")
+                    continue
+
+            logger.debug(f"Successfully updated features for {len(valid_affected)} nodes")
+            return data
+
+        except Exception as e:
+            logger.error(f"Incremental feature update failed: {e}")
+            return data  # Return original data if update fails
+
+
 class HubRefactoringEnv:
-    """Fixed environment for hub refactoring with 7-feature compatibility"""
+    """RL Environment with incremental feature computation for intermediate graphs"""
 
     def __init__(self, initial_data: Data, discriminator: nn.Module,
-                 max_steps: int = 20, device: torch.device = torch.device('cpu'),
-                 lazy_feature_update: bool = True):
+                 max_steps: int = 20, device: torch.device = torch.device('cpu')):
         self.device = device
         self.discriminator = discriminator
         self.max_steps = max_steps
-        self.lazy_feature_update = lazy_feature_update
 
         # Store initial graph
         self.initial_data = initial_data.to(device)
@@ -61,20 +248,21 @@ class HubRefactoringEnv:
         self.initial_hub_score = None
 
     def _ensure_data_consistency(self, data: Data) -> Data:
-        """Ensure batch and edge_attr sizes match graph structure."""
+        """Ensure batch and edge_attr consistency with unified format"""
         num_nodes = data.x.size(0)
         num_edges = data.edge_index.size(1)
 
         if not hasattr(data, 'batch') or data.batch is None or data.batch.size(0) != num_nodes:
             data.batch = torch.zeros(num_nodes, dtype=torch.long, device=data.x.device)
 
+        # Ensure edge_attr exists with correct format (weight=1.0 as in dataset creation)
         if not hasattr(data, 'edge_attr') or data.edge_attr is None or data.edge_attr.size(0) != num_edges:
             data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
 
         return data
 
     def reset(self) -> Data:
-        """Reset environment"""
+        """Reset environment with unified data format"""
         self.current_data = copy.deepcopy(self.initial_data)
         self._ensure_data_consistency(self.current_data)
         self.steps = 0
@@ -129,67 +317,8 @@ class HubRefactoringEnv:
             logger.warning(f"Failed to compute hub score: {e}")
             return 0.5  # Fallback to neutral score
 
-    def _update_graph_features_7_unified(self, data: Data) -> Data:
-        """Update graph features for 7-feature unified format"""
-        try:
-            # Convert to NetworkX for metric computation
-            G = to_networkx(data, to_undirected=False)
-
-            # Recompute the 7 unified structural features
-            in_degrees = dict(G.in_degree())
-            out_degrees = dict(G.out_degree())
-
-            # Recompute centrality metrics efficiently
-            try:
-                if len(G) > 2 and len(G) <= 100:  # Only for reasonable sizes
-                    pagerank = nx.pagerank(G, alpha=0.85, max_iter=50)
-                    betweenness = nx.betweenness_centrality(G) if len(G) < 50 else {n: 0.0 for n in G.nodes()}
-                    closeness = nx.closeness_centrality(G) if len(G) < 50 else {n: 1.0 for n in G.nodes()}
-                else:
-                    # Fallback for disconnected or very large graphs
-                    pagerank = {n: 1.0 / max(len(G), 1) for n in G.nodes()}
-                    betweenness = {n: 0.0 for n in G.nodes()}
-                    closeness = {n: 1.0 for n in G.nodes()}
-            except:
-                # Ultimate fallback
-                pagerank = {n: 1.0 / max(len(G), 1) for n in G.nodes()}
-                betweenness = {n: 0.0 for n in G.nodes()}
-                closeness = {n: 1.0 for n in G.nodes()}
-
-            # Update node features - EXACTLY 7 features as in normalizer
-            num_nodes = data.x.size(0)
-            new_features = torch.zeros(num_nodes, 7, device=data.x.device, dtype=torch.float32)
-
-            for i in range(num_nodes):
-                if i in G.nodes():
-                    # Extract the 7 unified structural features
-                    fan_in = float(in_degrees.get(i, 0))
-                    fan_out = float(out_degrees.get(i, 0))
-                    total_degree = fan_in + fan_out
-
-                    # Compute exactly the same 7 features as in EnhancedStructuralNormalizer
-                    eps = 1e-8
-                    new_features[i, 0] = fan_in  # fan_in
-                    new_features[i, 1] = fan_out  # fan_out
-                    new_features[i, 2] = total_degree / (len(G) - 1 + eps)  # degree_centrality
-                    new_features[i, 3] = fan_in / (fan_out + eps)  # in_out_ratio
-                    new_features[i, 4] = float(pagerank.get(i, 0))  # pagerank
-                    new_features[i, 5] = float(betweenness.get(i, 0))  # betweenness_centrality
-                    new_features[i, 6] = float(closeness.get(i, 0))  # closeness_centrality
-                else:
-                    # Node was removed, keep minimal features
-                    new_features[i] = torch.zeros(7, device=data.x.device)
-
-            data.x = new_features
-            return self._ensure_data_consistency(data)
-
-        except Exception as e:
-            logger.warning(f"Failed to update graph features: {e}")
-            # Return original data if update fails
-            return self._ensure_data_consistency(data)
-
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
-        """Execute refactoring action with robust error handling"""
+        """Execute refactoring action with incremental feature computation"""
         source, target, pattern, terminate = action
         self.steps += 1
 
@@ -212,26 +341,15 @@ class HubRefactoringEnv:
                 info['error'] = 'invalid_node_index'
                 return self.current_data, reward, done, info
 
-            # Apply refactoring pattern
+            # Apply refactoring pattern with incremental feature update
             old_hub_score = self._get_current_hub_score()
-            success, new_data, pattern_info = self._apply_pattern(pattern, source, target)
+            success, new_data, pattern_info = self._apply_pattern_incremental(pattern, source, target)
 
             if success and new_data is not None:
-                # Update graph features after modification with 7-feature format
-                if self.lazy_feature_update:
-                    # Only update if the structural change is significant
-                    structural_change = (new_data.edge_index.size(1) != self.current_data.edge_index.size(1) or
-                                         new_data.x.size(0) != self.current_data.x.size(0))
-                    if structural_change:
-                        self.current_data = self._update_graph_features_7_unified(new_data)
-                    else:
-                        self.current_data = new_data
-                else:
-                    self.current_data = self._update_graph_features_7_unified(new_data)
+                # Update current data with incrementally updated features
+                self.current_data = new_data
 
-                self._ensure_data_consistency(self.current_data)
-
-                # Invalidate cache
+                # Invalidate cache after graph modification
                 self._cached_hub_score = None
                 self._graph_hash = None
 
@@ -252,7 +370,9 @@ class HubRefactoringEnv:
                     'valid': True,
                     'success': True,
                     'hub_improvement': hub_improvement,
-                    'pattern_info': pattern_info
+                    'pattern_info': pattern_info,
+                    'features_updated_incrementally': True,
+                    'affected_nodes': pattern_info.get('affected_nodes', [])
                 })
             else:
                 reward += self.REWARD_INVALID
@@ -265,15 +385,15 @@ class HubRefactoringEnv:
 
         return self.current_data, reward, done, info
 
-    def _apply_pattern(self, pattern: int, source: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply specific refactoring pattern with error handling"""
+    def _apply_pattern_incremental(self, pattern: int, source: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Apply specific refactoring pattern with incremental feature computation"""
         patterns = {
-            0: self._extract_interface,
-            1: self._dependency_injection,
-            2: self._split_by_responsibility,
-            3: self._observer_pattern,
-            4: self._strategy_pattern,
-            5: self._remove_middleman
+            0: self._extract_interface_incremental,
+            1: self._dependency_injection_incremental,
+            2: self._split_by_responsibility_incremental,
+            3: self._observer_pattern_incremental,
+            4: self._strategy_pattern_incremental,
+            5: self._remove_middleman_incremental
         }
 
         if pattern not in patterns:
@@ -285,8 +405,8 @@ class HubRefactoringEnv:
             logger.warning(f"Pattern {pattern} failed: {e}")
             return False, None, {'error': f'pattern_exception: {str(e)}'}
 
-    def _extract_interface(self, hub: int, client: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Extract interface to decouple hub from clients - 7-feature compatible"""
+    def _extract_interface_incremental(self, hub: int, client: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Extract interface to decouple hub from clients with incremental updates"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -295,35 +415,55 @@ class HubRefactoringEnv:
             if not edge_mask.any():
                 return False, None, {'error': 'no_edge_to_decouple'}
 
-            # Add interface node with 7 features
+            # Add interface node
             n_nodes = data.x.size(0)
-            interface_features = (data.x[hub] + data.x[client]) / 2.0
 
-            # Ensure exactly 7 features for interface
-            if interface_features.size(0) != 7:
-                interface_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
-                # Set reasonable defaults for interface node
-                interface_features[0] = 1.0  # fan_in
-                interface_features[1] = 2.0  # fan_out
-                interface_features[2] = 0.1  # degree_centrality
-                interface_features[3] = 0.5  # in_out_ratio
-                interface_features[4] = 0.1  # pagerank
-                interface_features[5] = 0.0  # betweenness_centrality
-                interface_features[6] = 0.5  # closeness_centrality
+            # Create placeholder features for new node (will be computed incrementally)
+            interface_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
+            data.x = torch.cat([data.x, interface_features], dim=0)
 
-            data.x = torch.cat([data.x, interface_features.unsqueeze(0)], dim=0)
+            # Update node mappings if they exist
+            if hasattr(data, 'original_node_ids'):
+                interface_id = f"interface_{n_nodes}"
+                data.original_node_ids.append(interface_id)
+
+                if hasattr(data, 'node_id_to_index'):
+                    data.node_id_to_index[interface_id] = n_nodes
+                if hasattr(data, 'index_to_node_id'):
+                    data.index_to_node_id[n_nodes] = interface_id
 
             # Redirect edge through interface
             edge_mask = ~((data.edge_index[0] == hub) & (data.edge_index[1] == client))
             new_edges = torch.tensor([[hub, n_nodes], [n_nodes, client]], device=self.device).t()
             data.edge_index = torch.cat([data.edge_index[:, edge_mask], new_edges], dim=1)
 
-            return True, data, {'interface_node': n_nodes, 'decoupled': (hub, client)}
+            # Update edge attributes
+            if hasattr(data, 'edge_attr'):
+                data.edge_attr = data.edge_attr[edge_mask]
+                new_edge_attr = torch.ones(2, 1, device=self.device, dtype=torch.float32)
+                data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'interface_extraction', hub, client, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.add(n_nodes)  # Include the new interface node
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'extract_interface', 'interface_node': n_nodes}
+            )
+
+            return True, data, {
+                'interface_node': n_nodes,
+                'decoupled': (hub, client),
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'interface_extraction'
+            }
         except Exception as e:
             return False, None, {'error': f'extract_interface_failed: {str(e)}'}
 
-    def _dependency_injection(self, dependent: int, dependency: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply dependency injection to reduce coupling"""
+    def _dependency_injection_incremental(self, dependent: int, dependency: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Apply dependency injection to reduce coupling with incremental updates"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -331,21 +471,33 @@ class HubRefactoringEnv:
             if not edge_mask.any():
                 return False, None, {'error': 'no_dependency_to_inject'}
 
-            # Remove direct dependency (simulating injection)
-            edge_mask = ~edge_mask
-            data.edge_index = data.edge_index[:, edge_mask]
+            # Remove direct dependency edge
+            keep_mask = ~edge_mask
+            data.edge_index = data.edge_index[:, keep_mask]
 
-            # Reduce coupling metrics in node features (fan_out and fan_in)
-            if data.x.size(1) >= 2:
-                data.x[dependent, 1] = max(0, data.x[dependent, 1] - 1)  # Reduce fan_out
-                data.x[dependency, 0] = max(0, data.x[dependency, 0] - 1)  # Reduce fan_in
+            # Update edge attributes
+            if hasattr(data, 'edge_attr'):
+                data.edge_attr = data.edge_attr[keep_mask]
 
-            return True, data, {'injected_dependency': (dependent, dependency)}
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'dependency_injection', dependent, dependency, to_networkx(data, to_undirected=False)
+            )
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'dependency_injection'}
+            )
+
+            return True, data, {
+                'injected_dependency': (dependent, dependency),
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'dependency_injection'
+            }
         except Exception as e:
             return False, None, {'error': f'dependency_injection_failed: {str(e)}'}
 
-    def _split_by_responsibility(self, large_node: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Split node by responsibilities - 7-feature compatible"""
+    def _split_by_responsibility_incremental(self, large_node: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Split node by responsibilities with incremental updates"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -359,36 +511,30 @@ class HubRefactoringEnv:
             if out_degree + in_degree < 4:
                 return False, None, {'error': 'insufficient_connections_to_split'}
 
-            # Add two responsibility nodes with 7 features each
+            # Add two responsibility nodes
             n_nodes = data.x.size(0)
 
-            # Create features for split nodes (reduced responsibility)
-            resp1_features = data.x[large_node] * 0.6
-            resp2_features = data.x[large_node] * 0.4
+            # Create placeholder features (will be computed incrementally)
+            resp_features = torch.zeros(2, 7, device=data.x.device, dtype=torch.float32)
+            data.x = torch.cat([data.x, resp_features], dim=0)
 
-            # Ensure exactly 7 features
-            if resp1_features.size(0) != 7:
-                resp1_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
-                resp2_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+            # Update node mappings
+            if hasattr(data, 'original_node_ids'):
+                resp1_id = f"resp1_{n_nodes}"
+                resp2_id = f"resp2_{n_nodes + 1}"
+                data.original_node_ids.extend([resp1_id, resp2_id])
 
-                # Copy original features if available
-                orig_features = data.x[large_node]
-                copy_size = min(7, orig_features.size(0))
-                resp1_features[:copy_size] = orig_features[:copy_size] * 0.6
-                resp2_features[:copy_size] = orig_features[:copy_size] * 0.4
+                if hasattr(data, 'node_id_to_index'):
+                    data.node_id_to_index[resp1_id] = n_nodes
+                    data.node_id_to_index[resp2_id] = n_nodes + 1
+                if hasattr(data, 'index_to_node_id'):
+                    data.index_to_node_id[n_nodes] = resp1_id
+                    data.index_to_node_id[n_nodes + 1] = resp2_id
 
-            # Reduce fan_out for split nodes
-            if resp1_features.size(0) >= 2:
-                resp1_features[1] = resp1_features[1] * 0.5  # Reduce fan_out
-                resp2_features[1] = resp2_features[1] * 0.5
-
-            data.x = torch.cat([data.x, resp1_features.unsqueeze(0), resp2_features.unsqueeze(0)], dim=0)
-
-            # Redistribute some outgoing edges
+            # Redistribute outgoing edges
             out_edges = data.edge_index[:, out_mask]
 
             if out_edges.size(1) > 2:
-                # Split outgoing edges between new nodes
                 mid = out_edges.size(1) // 2
 
                 # Create new edges to responsibility nodes
@@ -408,12 +554,34 @@ class HubRefactoringEnv:
                 new_edges = torch.cat([edges_to_resp1, edges_to_resp2], dim=1)
                 data.edge_index = torch.cat([data.edge_index[:, keep_mask], coord_edges, new_edges], dim=1)
 
-            return True, data, {'split_nodes': [n_nodes, n_nodes + 1], 'original': large_node}
+                # Update edge attributes
+                if hasattr(data, 'edge_attr'):
+                    data.edge_attr = data.edge_attr[keep_mask]
+                    num_new_edges = coord_edges.size(1) + new_edges.size(1)
+                    new_edge_attr = torch.ones(num_new_edges, 1, device=self.device, dtype=torch.float32)
+                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'node_splitting', large_node, large_node, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.update([n_nodes, n_nodes + 1])  # Include new responsibility nodes
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'split_responsibility', 'split_nodes': [n_nodes, n_nodes + 1]}
+            )
+
+            return True, data, {
+                'split_nodes': [n_nodes, n_nodes + 1],
+                'original': large_node,
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'node_splitting'
+            }
         except Exception as e:
             return False, None, {'error': f'split_responsibility_failed: {str(e)}'}
 
-    def _observer_pattern(self, subject: int, observer: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply observer pattern to reduce direct coupling - 7-feature compatible"""
+    def _observer_pattern_incremental(self, subject: int, observer: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Apply observer pattern to reduce direct coupling with incremental updates"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -424,20 +592,22 @@ class HubRefactoringEnv:
             if len(observers) < 2:
                 return False, None, {'error': 'insufficient_observers'}
 
-            # Add notification hub (lightweight coordinator) with 7 features
+            # Add notification hub
             n_nodes = data.x.size(0)
 
-            # Create lightweight notification features (7 features)
-            notif_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
-            notif_features[0] = 1.0  # fan_in
-            notif_features[1] = float(len(observers))  # fan_out = number of observers
-            notif_features[2] = 0.1  # degree_centrality
-            notif_features[3] = notif_features[0] / (notif_features[1] + 1e-8)  # in_out_ratio
-            notif_features[4] = 0.05  # pagerank
-            notif_features[5] = 0.0  # betweenness_centrality
-            notif_features[6] = 0.5  # closeness_centrality
+            # Create placeholder features (will be computed incrementally)
+            notif_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
+            data.x = torch.cat([data.x, notif_features], dim=0)
 
-            data.x = torch.cat([data.x, notif_features.unsqueeze(0)], dim=0)
+            # Update node mappings
+            if hasattr(data, 'original_node_ids'):
+                notif_id = f"notif_hub_{n_nodes}"
+                data.original_node_ids.append(notif_id)
+
+                if hasattr(data, 'node_id_to_index'):
+                    data.node_id_to_index[notif_id] = n_nodes
+                if hasattr(data, 'index_to_node_id'):
+                    data.index_to_node_id[n_nodes] = notif_id
 
             # Replace direct edges with observer pattern
             keep_mask = ~observer_mask
@@ -450,12 +620,34 @@ class HubRefactoringEnv:
             new_edges = torch.cat([subj_to_notif, notif_to_obs], dim=1)
             data.edge_index = torch.cat([data.edge_index, new_edges], dim=1)
 
-            return True, data, {'notification_hub': n_nodes, 'observers': observers.tolist()}
+            # Update edge attributes
+            if hasattr(data, 'edge_attr'):
+                data.edge_attr = data.edge_attr[keep_mask]
+                new_edge_attr = torch.ones(new_edges.size(1), 1, device=self.device, dtype=torch.float32)
+                data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'observer_pattern', subject, subject, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.add(n_nodes)  # Include notification hub
+            affected_nodes.update(observers.tolist())  # Include all observers
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'observer', 'notification_hub': n_nodes}
+            )
+
+            return True, data, {
+                'notification_hub': n_nodes,
+                'observers': observers.tolist(),
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'observer_pattern'
+            }
         except Exception as e:
             return False, None, {'error': f'observer_pattern_failed: {str(e)}'}
 
-    def _strategy_pattern(self, context: int, strategy: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Extract strategy pattern to reduce coupling - 7-feature compatible"""
+    def _strategy_pattern_incremental(self, context: int, strategy: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Extract strategy pattern to reduce coupling with incremental updates"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -469,27 +661,19 @@ class HubRefactoringEnv:
             # Add strategy interface
             n_nodes = data.x.size(0)
 
-            # Create interface features (7 features)
-            interface_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+            # Create placeholder features (will be computed incrementally)
+            interface_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
+            data.x = torch.cat([data.x, interface_features], dim=0)
 
-            # Average of strategies features if available
-            if len(strategies) > 0 and data.x.size(0) > max(strategies):
-                valid_strategies = [s for s in strategies if s < data.x.size(0)]
-                if valid_strategies:
-                    strategy_features = data.x[valid_strategies]
-                    interface_features = strategy_features.mean(dim=0)
-                    # Ensure exactly 7 features
-                    if interface_features.size(0) > 7:
-                        interface_features = interface_features[:7]
-                    elif interface_features.size(0) < 7:
-                        padding = torch.zeros(7 - interface_features.size(0), device=data.x.device)
-                        interface_features = torch.cat([interface_features, padding])
+            # Update node mappings
+            if hasattr(data, 'original_node_ids'):
+                interface_id = f"strategy_iface_{n_nodes}"
+                data.original_node_ids.append(interface_id)
 
-            # Set reasonable defaults if needed
-            interface_features[0] = max(interface_features[0], 1.0)  # fan_in
-            interface_features[1] = max(interface_features[1], 1.0)  # fan_out
-
-            data.x = torch.cat([data.x, interface_features.unsqueeze(0)], dim=0)
+                if hasattr(data, 'node_id_to_index'):
+                    data.node_id_to_index[interface_id] = n_nodes
+                if hasattr(data, 'index_to_node_id'):
+                    data.index_to_node_id[n_nodes] = interface_id
 
             # Redirect through strategy interface
             keep_mask = ~out_mask
@@ -502,12 +686,34 @@ class HubRefactoringEnv:
             new_edges = torch.cat([ctx_to_iface, iface_to_strat], dim=1)
             data.edge_index = torch.cat([data.edge_index, new_edges], dim=1)
 
-            return True, data, {'strategy_interface': n_nodes, 'strategies': strategies.tolist()}
+            # Update edge attributes
+            if hasattr(data, 'edge_attr'):
+                data.edge_attr = data.edge_attr[keep_mask]
+                new_edge_attr = torch.ones(new_edges.size(1), 1, device=self.device, dtype=torch.float32)
+                data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'strategy_pattern', context, context, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.add(n_nodes)  # Include strategy interface
+            affected_nodes.update(strategies.tolist())  # Include all strategies
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'strategy', 'strategy_interface': n_nodes}
+            )
+
+            return True, data, {
+                'strategy_interface': n_nodes,
+                'strategies': strategies.tolist(),
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'strategy_pattern'
+            }
         except Exception as e:
             return False, None, {'error': f'strategy_pattern_failed: {str(e)}'}
 
-    def _remove_middleman(self, middleman: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Remove unnecessary middleman to reduce indirection"""
+    def _remove_middleman_incremental(self, middleman: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
+        """Remove unnecessary middleman to reduce indirection with incremental updates"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -538,8 +744,29 @@ class HubRefactoringEnv:
                 direct_edges = torch.tensor(direct_edges, device=self.device).t()
                 data.edge_index = torch.cat([data.edge_index, direct_edges], dim=1)
 
-            return True, data, {'removed_middleman': middleman,
-                                'direct_connections': len(direct_edges[0]) if direct_edges else 0}
+                # Update edge attributes
+                if hasattr(data, 'edge_attr'):
+                    data.edge_attr = data.edge_attr[~remove_mask]
+                    new_edge_attr = torch.ones(direct_edges.size(1), 1, device=self.device, dtype=torch.float32)
+                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'middleman_removal', middleman, middleman, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.update(predecessors.tolist())
+            affected_nodes.update(successors.tolist())
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'remove_middleman', 'removed_node': middleman}
+            )
+
+            return True, data, {
+                'removed_middleman': middleman,
+                'direct_connections': direct_edges.size(1) if direct_edges else 0,
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'middleman_removal'
+            }
         except Exception as e:
             return False, None, {'error': f'remove_middleman_failed: {str(e)}'}
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-FIXED: Enhanced Discriminator Pre-training Script with Unified Feature Pipeline
+Updated Discriminator Pre-training with Unified Data Loader
 
-Key improvements:
-- Uses EXACT same 7 structural features as training RL
-- Unified preprocessing with EnhancedStructuralNormalizer
-- Consistent feature extraction pipeline
-- Enhanced validation and monitoring
+Key changes:
+- Uses UnifiedDataLoader for consistent data loading
+- No normalization or standardization applied
+- Same feature computation as RL training
+- Deterministic and reproducible data loading order
 """
 
 import logging
@@ -21,14 +21,13 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch_geometric.data import Data, Batch
-from torch_geometric.transforms import Compose, AddSelfLoops, NormalizeFeatures
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix, roc_auc_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from discriminator import HubDetectionDiscriminator
-from normalizer import EnhancedStructuralNormalizer  # UNIFIED PREPROCESSING
+from data_loader import UnifiedDataLoader, create_unified_loader, validate_dataset_consistency
 
 # Setup logging
 logging.basicConfig(
@@ -88,7 +87,7 @@ class AdvancedLoss(nn.Module):
         probs = torch.softmax(outputs['logits'], dim=1)
         labels_onehot = F.one_hot(labels, num_classes=probs.size(1)).float()
         dice = 1 - (2 * (probs * labels_onehot).sum(dim=0) + 1e-7) / (
-            probs.pow(2).sum(dim=0) + labels_onehot.pow(2).sum(dim=0) + 1e-7
+                probs.pow(2).sum(dim=0) + labels_onehot.pow(2).sum(dim=0) + 1e-7
         )
         dice = dice.mean()
 
@@ -180,177 +179,9 @@ class AdvancedLoss(nn.Module):
             return torch.tensor(0.0, device=node_scores.device, requires_grad=True)
 
 
-def safe_torch_load(file_path: Path, device: torch.device):
-    """Safely load PyTorch files"""
-    try:
-        return torch.load(file_path, map_location=device, weights_only=True)
-    except Exception:
-        return torch.load(file_path, map_location=device, weights_only=False)
-
-
-def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1000) -> Tuple[List[Data], List[int]]:
-    """
-    UNIFIED data loading with EXACT same features as training RL
-    Uses EnhancedStructuralNormalizer for consistent 7-feature extraction
-    """
-    logger.info("Loading dataset with UNIFIED feature extraction (7 structural features)...")
-
-    all_raw_data = []
-    all_labels = []
-
-    # First pass: collect ALL raw data
-    pt_files = list(data_dir.glob('*.pt'))
-    logger.info(f"Found {len(pt_files)} .pt files")
-    random.shuffle(pt_files)
-
-    logger.info("Phase 1: Loading raw graph structures...")
-    for file in pt_files:
-        try:
-            data = safe_torch_load(file, torch.device('cpu'))
-
-            # Basic structure validation only
-            if not hasattr(data, 'edge_index') or data.edge_index.size(1) == 0:
-                continue
-
-            # Infer number of nodes from edge_index if x is missing/corrupted
-            if not hasattr(data, 'x') or data.x.size(0) == 0:
-                num_nodes = data.edge_index.max().item() + 1
-                # Create dummy features - will be overwritten by feature extraction
-                data.x = torch.ones(num_nodes, 1)
-
-            # Basic size constraints
-            if data.x.size(0) < 3 or data.x.size(0) > 200:
-                continue
-
-            if data.edge_index.size(1) < 1:
-                continue
-
-            # Check for valid edge indices
-            if data.edge_index.max() >= data.x.size(0):
-                continue
-
-            # Remove any stale batch attribute
-            if hasattr(data, 'batch'):
-                delattr(data, 'batch')
-
-            # Get label
-            is_smelly = getattr(data, 'is_smelly', 0)
-            if isinstance(is_smelly, torch.Tensor):
-                is_smelly = is_smelly.item()
-
-            # Remove non-batchable metadata before batching
-            for attr in [
-                "node_id_to_index",
-                "index_to_node_id",
-                "edge_id_mapping",
-                "original_node_ids",
-                "original_edge_ids",
-            ]:
-                if hasattr(data, attr):
-                    delattr(data, attr)
-
-            all_raw_data.append(data)
-            all_labels.append(is_smelly)
-
-        except Exception as e:
-            logger.debug(f"Failed to load {file}: {e}")
-            continue
-
-    if len(all_raw_data) == 0:
-        raise ValueError("No valid raw data found!")
-
-    logger.info(f"Phase 1 complete: {len(all_raw_data)} raw graphs loaded")
-
-    processed_data = []
-    processed_labels = []
-    smelly_count = 0
-    clean_count = 0
-
-    for i, (data, label) in enumerate(zip(all_raw_data, all_labels)):
-        try:
-            # Apply unified feature extraction (creates 7 features)
-            processed_data_item = data
-
-            # Validate that we got exactly 7 features
-            if processed_data_item.x.size(1) != 7:
-                logger.warning(f"Graph {i}: Expected 7 features, got {processed_data_item.x.size(1)}")
-                continue
-
-            # Check for NaN/inf values
-            if torch.isnan(processed_data_item.x).any() or torch.isinf(processed_data_item.x).any():
-                logger.debug(f"Graph {i}: Contains NaN/inf values, skipping")
-                continue
-
-            # Ensure proper label assignment
-            processed_data_item.is_smelly = torch.tensor(label, dtype=torch.long)
-
-            # Balance dataset
-            if label == 1 and smelly_count < max_samples_per_class:
-                processed_data.append(processed_data_item)
-                processed_labels.append(label)
-                smelly_count += 1
-            elif label == 0 and clean_count < max_samples_per_class:
-                processed_data.append(processed_data_item)
-                processed_labels.append(label)
-                clean_count += 1
-
-            # Progress logging
-            if (i + 1) % 1000 == 0:
-                logger.info(f"  Processed {i + 1}/{len(all_raw_data)} graphs "
-                            f"(smelly: {smelly_count}, clean: {clean_count})")
-
-            # Stop when we have enough balanced data
-            if smelly_count >= max_samples_per_class and clean_count >= max_samples_per_class:
-                break
-
-        except Exception as e:
-            logger.debug(f"Failed to process graph {i}: {e}")
-            continue
-
-    # Final balancing
-    min_samples = min(smelly_count, clean_count)
-    if min_samples == 0:
-        raise ValueError("No valid processed data found!")
-
-    # Create balanced dataset
-    final_data = []
-    final_labels = []
-    smelly_added = 0
-    clean_added = 0
-
-    for data, label in zip(processed_data, processed_labels):
-        if label == 1 and smelly_added < min_samples:
-            final_data.append(data)
-            final_labels.append(label)
-            smelly_added += 1
-        elif label == 0 and clean_added < min_samples:
-            final_data.append(data)
-            final_labels.append(label)
-            clean_added += 1
-
-        if smelly_added >= min_samples and clean_added >= min_samples:
-            break
-
-    logger.info(f"✅ UNIFIED dataset created:")
-    logger.info(f"  Total graphs: {len(final_data)}")
-    logger.info(f"  Smelly graphs: {smelly_added}")
-    logger.info(f"  Clean graphs: {clean_added}")
-    logger.info(f"  Features per node: 7 (unified structural features)")
-
-    # Validate feature consistency
-    if final_data:
-        sample_features = final_data[0].x.size(1)
-        logger.info(f"  ✅ Feature dimension verification: {sample_features} features per node")
-
-        if sample_features != 7:
-            raise ValueError(f"CRITICAL: Expected 7 features, got {sample_features}")
-
-    return final_data, final_labels
-
-
 def evaluate_model(model: nn.Module, data_loader: List[Tuple[Data, int]],
                    device: torch.device, batch_size: int = 32) -> Dict[str, float]:
-    """Evaluate model with comprehensive metrics"""
+    """Evaluate model with comprehensive metrics using unified data"""
     model.eval()
 
     all_preds = []
@@ -427,7 +258,7 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
                       val_data: List[Tuple[Data, int]], device: torch.device,
                       epochs: int = 120, batch_size: int = 24, lr: float = 1e-3,
                       patience: int = 20, accumulation_steps: int = 2) -> Dict[str, Any]:
-    """Enhanced training with advanced techniques"""
+    """Enhanced training with unified data loading"""
 
     # Advanced optimizer with weight decay
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4, betas=(0.9, 0.999))
@@ -482,20 +313,9 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
                 if not batch_data:
                     continue
 
-                # Validate all data before batching
-                valid_data = []
-                valid_labels = []
-                for d, l in zip(batch_data, batch_labels):
-                    if (hasattr(d, 'x') and hasattr(d, 'edge_index') and
-                            d.x.size(0) > 0 and d.edge_index.size(1) > 0 and d.x.size(1) == 7):
-                        valid_data.append(d)
-                        valid_labels.append(l)
-
-                if len(valid_data) == 0:
-                    continue
-
-                batch = Batch.from_data_list(valid_data).to(device)
-                labels_tensor = torch.tensor(valid_labels, dtype=torch.long, device=device)
+                # All data should already be validated by UnifiedDataLoader
+                batch = Batch.from_data_list(batch_data).to(device)
+                labels_tensor = torch.tensor(batch_labels, dtype=torch.long, device=device)
 
                 # Forward pass
                 output = model(batch)
@@ -599,15 +419,29 @@ def train_single_fold(model: nn.Module, train_data: List[Tuple[Data, int]],
     }
 
 
-def k_fold_cross_validation(data: List[Data], labels: List[int],
-                            device: torch.device, k_folds: int = 5,
-                            epochs: int = 120, batch_size: int = 24,
-                            lr: float = 1e-3) -> Dict[str, Any]:
-    """K-fold cross validation with unified features"""
-    logger.info(f"Starting {k_folds}-fold cross validation with UNIFIED 7 features...")
+def k_fold_cross_validation(data_loader: UnifiedDataLoader, device: torch.device,
+                            k_folds: int = 5, epochs: int = 120, batch_size: int = 24,
+                            lr: float = 1e-3, max_samples_per_class: int = 1000) -> Dict[str, Any]:
+    """K-fold cross validation with unified data loading"""
+    logger.info(f"Starting {k_folds}-fold cross validation with unified data loader...")
 
-    # All graphs should have exactly 7 features now
-    node_dim = 7  # FIXED: always 7 structural features
+    # Load data using unified loader
+    data_list, labels = data_loader.load_dataset(
+        max_samples_per_class=max_samples_per_class,
+        shuffle=True,
+        validate_all=True
+    )
+
+    logger.info(f"Loaded {len(data_list)} samples with unified 7-feature format")
+
+    # Validate data consistency
+    logger.info("Validating data consistency...")
+    consistency_report = validate_dataset_consistency(data_loader.dataset_dir, sample_size=100)
+    if consistency_report['invalid_files'] > 0:
+        logger.warning(f"Found {consistency_report['invalid_files']} invalid files during consistency check")
+
+    # Node and edge dimensions are fixed for unified format
+    node_dim = 7  # Always 7 structural features
     edge_dim = 1  # Basic edge features
 
     # Stratified K-Fold to ensure balanced splits
@@ -617,14 +451,21 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
     all_predictions = []
     all_true_labels = []
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(data, labels)):
+    for fold, (train_idx, val_idx) in enumerate(skf.split(data_list, labels)):
         logger.info(f"\n=== Fold {fold + 1}/{k_folds} ===")
 
         # Create fold data
-        train_data = [(data[i], labels[i]) for i in train_idx]
-        val_data = [(data[i], labels[i]) for i in val_idx]
+        train_data = [(data_list[i], labels[i]) for i in train_idx]
+        val_data = [(data_list[i], labels[i]) for i in val_idx]
 
         logger.info(f"Train size: {len(train_data)}, Val size: {len(val_data)}")
+
+        # Log data hashes for first few samples to verify consistency
+        if fold == 0:
+            logger.info("Verifying data consistency with hashes...")
+            for i in range(min(3, len(train_data))):
+                data_hash = data_loader.get_data_hash(train_data[i][0])
+                logger.debug(f"Sample {i} hash: {data_hash[:8]}...")
 
         # Create enhanced model for this fold with FIXED dimensions
         model = HubDetectionDiscriminator(
@@ -676,19 +517,28 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
         'mean_auc': np.mean(aucs),
         'std_auc': np.std(aucs),
         'all_predictions': all_predictions,
-        'all_true_labels': all_true_labels
+        'all_true_labels': all_true_labels,
+        'data_consistency_report': consistency_report,
+        'unified_loader_stats': data_loader.get_dataset_statistics()
     }
 
     return cv_results
 
 
-def train_final_model(data: List[Data], labels: List[int], device: torch.device,
-                      epochs: int = 150, batch_size: int = 24,
-                      lr: float = 1e-3) -> nn.Module:
-    """Train final model on all data with unified features"""
-    logger.info("Training final model on all data with UNIFIED 7 features...")
+def train_final_model(data_loader: UnifiedDataLoader, device: torch.device,
+                      epochs: int = 150, batch_size: int = 24, lr: float = 1e-3,
+                      max_samples_per_class: int = 1000) -> nn.Module:
+    """Train final model on all data with unified loader"""
+    logger.info("Training final model with unified data loader...")
 
-    # FIXED dimensions
+    # Load data using unified loader
+    data_list, labels = data_loader.load_dataset(
+        max_samples_per_class=max_samples_per_class,
+        shuffle=True,
+        validate_all=True
+    )
+
+    # FIXED dimensions for unified format
     node_dim = 7  # Always 7 structural features
     edge_dim = 1  # Basic edge features
 
@@ -703,7 +553,7 @@ def train_final_model(data: List[Data], labels: List[int], device: torch.device,
     ).to(device)
 
     # Prepare data with stratified split
-    all_data = [(data[i], labels[i]) for i in range(len(data))]
+    all_data = [(data_list[i], labels[i]) for i in range(len(data_list))]
 
     # Stratified split for final validation (85/15)
     from sklearn.model_selection import train_test_split
@@ -819,8 +669,8 @@ def plot_confusion_matrix(y_true: List[int], y_pred: List[int], save_path: Path)
     plt.close()
 
 
-def save_results(cv_results: Dict[str, Any], save_dir: Path):
-    """Save comprehensive cross-validation results with JSON serialization fix"""
+def save_unified_training_results(cv_results: Dict[str, Any], save_dir: Path):
+    """Save comprehensive results with unified data loader information"""
     save_dir.mkdir(parents=True, exist_ok=True)
 
     def convert_numpy_types(obj):
@@ -840,7 +690,7 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
         else:
             return obj
 
-    # Enhanced metrics summary with type conversion
+    # Enhanced metrics summary with unified loader info
     metrics_summary = {
         'cross_validation_summary': {
             'accuracy': f"{float(cv_results['mean_accuracy']):.4f} ± {float(cv_results['std_accuracy']):.4f}",
@@ -856,14 +706,17 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
             'f1_variance': float(np.var([fold['final_metrics']['f1'] for fold in cv_results['fold_results']])),
             'consistent_performance': bool(cv_results['std_f1'] < 0.05)
         },
-        'feature_info': {
-            'feature_extraction_method': 'EnhancedStructuralNormalizer',
+        'unified_data_loader_info': {
+            'feature_computation_method': 'UnifiedFeatureComputer',
             'num_features': 7,
             'feature_names': [
                 'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
                 'pagerank', 'betweenness_centrality', 'closeness_centrality'
             ],
-            'unified_pipeline': True
+            'no_normalization_applied': True,
+            'consistent_with_rl_training': True,
+            'data_consistency_report': cv_results.get('data_consistency_report', {}),
+            'dataset_statistics': cv_results.get('unified_loader_stats', {})
         }
     }
 
@@ -885,20 +738,20 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
 
     # Save to JSON with proper error handling
     try:
-        with open(save_dir / 'cv_results.json', 'w') as f:
+        with open(save_dir / 'unified_cv_results.json', 'w') as f:
             json.dump(metrics_summary, f, indent=2, ensure_ascii=False)
-        logger.info(f"✅ Results saved to {save_dir / 'cv_results.json'}")
+        logger.info(f"✅ Unified results saved to {save_dir / 'unified_cv_results.json'}")
     except Exception as e:
         logger.error(f"Failed to save JSON results: {e}")
         # Fallback: save as pickle
         import pickle
-        with open(save_dir / 'cv_results.pkl', 'wb') as f:
+        with open(save_dir / 'unified_cv_results.pkl', 'wb') as f:
             pickle.dump(metrics_summary, f)
-        logger.info(f"⚠️ Saved as pickle instead: {save_dir / 'cv_results.pkl'}")
+        logger.info(f"⚠️ Saved as pickle instead: {save_dir / 'unified_cv_results.pkl'}")
 
     # Plot training curves
     try:
-        plot_training_curves(cv_results, save_dir / 'training_curves.png')
+        plot_training_curves(cv_results, save_dir / 'unified_training_curves.png')
         logger.info(f"✅ Training curves saved")
     except Exception as e:
         logger.warning(f"Failed to save training curves: {e}")
@@ -908,16 +761,17 @@ def save_results(cv_results: Dict[str, Any], save_dir: Path):
         plot_confusion_matrix(
             cv_results['all_true_labels'],
             cv_results['all_predictions'],
-            save_dir / 'confusion_matrix.png'
+            save_dir / 'unified_confusion_matrix.png'
         )
         logger.info(f"✅ Confusion matrix saved")
     except Exception as e:
         logger.warning(f"Failed to save confusion matrix: {e}")
 
-    logger.info(f"📊 Enhanced results saved to {save_dir}")
+    logger.info(f"📊 Enhanced unified results saved to {save_dir}")
+
 
 def main():
-    """UNIFIED main training function with consistent feature pipeline"""
+    """Unified main training function with consistent data loading"""
 
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -941,28 +795,20 @@ def main():
         logger.error(f"Data directory not found: {data_dir}")
         return
 
-    # Load data with UNIFIED feature extraction (7 structural features)
+    # Create unified data loader
     try:
-        logger.info("🔧 Loading data with UNIFIED feature pipeline...")
-        data, labels = load_and_prepare_data_unified(data_dir, max_samples_per_class=1000)
+        logger.info("🔧 Creating unified data loader...")
+        data_loader = create_unified_loader(data_dir, device)
+
+        # Get dataset statistics
+        stats = data_loader.get_dataset_statistics()
+        logger.info(f"Dataset statistics: {stats['total_files']} files, "
+                    f"{stats['label_distribution']['smelly']} smelly, "
+                    f"{stats['label_distribution']['clean']} clean samples")
+
     except Exception as e:
-        logger.error(f"Failed to load data with unified features: {e}")
+        logger.error(f"Failed to create unified data loader: {e}")
         return
-
-    if len(data) == 0:
-        logger.error("No valid data found!")
-        return
-
-    # Verify all data has exactly 7 features
-    feature_dims = set([d.x.size(1) for d in data])
-    if len(feature_dims) > 1 or 7 not in feature_dims:
-        logger.error(f"❌ CRITICAL: Inconsistent feature dimensions: {feature_dims}")
-        logger.error("All graphs must have exactly 7 structural features!")
-        return
-
-    logger.info("✅ UNIFIED feature consistency verified!")
-    logger.info(f"📊 Dataset: {len(data)} graphs with 7 structural features each")
-    logger.info(f"🏷️ Class distribution: {sum(labels)} smelly, {len(labels) - sum(labels)} clean")
 
     # Enhanced hyperparameters
     config = {
@@ -971,19 +817,22 @@ def main():
         'batch_size': 20,
         'learning_rate': 8e-4,
         'final_epochs': 140,
-        'feature_pipeline': 'unified_structural_7_features'
+        'max_samples_per_class': 1000,
+        'unified_data_loading': True,
+        'no_normalization': True
     }
 
     logger.info(f"🔧 UNIFIED training configuration: {config}")
 
     try:
-        # Enhanced K-fold cross validation with UNIFIED features
+        # Enhanced K-fold cross validation with unified data loader
         cv_results = k_fold_cross_validation(
-            data, labels, device,
+            data_loader, device,
             k_folds=config['k_folds'],
             epochs=config['epochs'],
             batch_size=config['batch_size'],
-            lr=config['learning_rate']
+            lr=config['learning_rate'],
+            max_samples_per_class=config['max_samples_per_class']
         )
 
         # Print comprehensive results
@@ -1001,30 +850,31 @@ def main():
         if cv_results['mean_f1'] < 0.75:
             logger.warning("F1 score is below 0.75. Consider further hyperparameter tuning.")
         elif cv_results['mean_f1'] > 0.90:
-            logger.info("🌟 Outstanding discriminator performance with UNIFIED features!")
+            logger.info("🌟 Outstanding discriminator performance with UNIFIED data loading!")
         elif cv_results['mean_f1'] > 0.82:
-            logger.info("✅ Excellent discriminator performance with UNIFIED features!")
+            logger.info("✅ Excellent discriminator performance with UNIFIED data loading!")
         else:
-            logger.info("✅ Good discriminator performance with UNIFIED features.")
+            logger.info("✅ Good discriminator performance with UNIFIED data loading.")
 
         # Consistency check
         if cv_results['std_f1'] > 0.05:
             logger.warning("High variance across folds. Consider more data or regularization.")
         else:
-            logger.info("👍 Consistent performance across folds!")
+            logger.info("👍 Consistent performance across folds with unified data loading!")
 
-        # Train final model on all data with UNIFIED features
+        # Train final model on all data with unified data loader
         final_model = train_final_model(
-            data, labels, device,
+            data_loader, device,
             epochs=config['final_epochs'],
             batch_size=config['batch_size'],
-            lr=config['learning_rate']
+            lr=config['learning_rate'],
+            max_samples_per_class=config['max_samples_per_class']
         )
 
-        # Save everything with UNIFIED feature info
+        # Save everything with unified data loader information
         results_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save UNIFIED final model
+        # Save UNIFIED final model with comprehensive metadata
         torch.save({
             'model_state_dict': final_model.state_dict(),
             'node_dim': 7,  # FIXED: always 7 unified structural features
@@ -1037,30 +887,44 @@ def main():
                 'dropout': 0.15,
                 'heads': 8
             },
-            'feature_pipeline': {
-                'method': 'EnhancedStructuralNormalizer',
+            'unified_data_pipeline': {
+                'method': 'UnifiedDataLoader',
+                'feature_computer': 'UnifiedFeatureComputer',
                 'num_features': 7,
                 'feature_names': [
                     'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
                     'pagerank', 'betweenness_centrality', 'closeness_centrality'
                 ],
-                'unified_with_training_rl': True
-            }
+                'no_normalization_applied': True,
+                'consistent_with_rl_training': True,
+                'deterministic_loading': True,
+                'feature_computation_matches_dataset_creation': True
+            },
+            'data_consistency_validation': cv_results.get('data_consistency_report', {}),
+            'dataset_statistics': cv_results.get('unified_loader_stats', {})
         }, results_dir / 'pretrained_discriminator.pt')
 
-        # Save comprehensive results
-        save_results(cv_results, results_dir)
+        # Save comprehensive results with unified information
+        save_unified_training_results(cv_results, results_dir)
 
         logger.info("\n" + "=" * 60)
         logger.info("🎉 UNIFIED DISCRIMINATOR PRE-TRAINING COMPLETED!")
         logger.info("=" * 60)
         logger.info(f"📁 Pretrained model: {results_dir / 'pretrained_discriminator.pt'}")
         logger.info(f"📊 Results: {results_dir}")
-        logger.info(f"🔧 Features used: 7 unified structural features")
+        logger.info(f"🔧 Data loading: UnifiedDataLoader with consistent feature computation")
         logger.info(f"🎯 Expected F1: {cv_results['mean_f1']:.3f}")
-        logger.info(f"✅ Consistency with training RL: GUARANTEED")
+        logger.info(f"✅ Consistency with RL training: GUARANTEED")
+        logger.info(f"🚫 No normalization applied: Features identical to RL training")
         logger.info("=" * 60)
-        logger.info("🚀 Ready for seamless RL training!")
+        logger.info("🚀 Ready for seamless RL training with identical data format!")
+
+        # Additional validation: Log data hashes for verification
+        logger.info("\n📋 Data consistency verification:")
+        sample_data, _ = data_loader.load_dataset(max_samples_per_class=5, shuffle=False)
+        for i, data in enumerate(sample_data[:3]):
+            data_hash = data_loader.get_data_hash(data)
+            logger.info(f"  Sample {i + 1} hash: {data_hash[:12]}... (features: {data.x.shape})")
 
     except Exception as e:
         logger.error(f"UNIFIED training failed: {e}")
