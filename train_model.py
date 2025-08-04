@@ -498,7 +498,7 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
 
 
 def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: torch.device) -> Optional[float]:
-    """Get discriminator prediction for a single graph with enhanced debugging"""
+    """Get discriminator prediction for a single graph with enhanced batch handling"""
     try:
         discriminator.eval()
 
@@ -517,11 +517,18 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
         data = validate_7_feature_format(data)
         logger.debug(f"After validation - features: {data.x.size(1)}")
 
-        # Ensure batch attribute exists and is correct
-        if not hasattr(data, 'batch'):
+        # CRITICAL FIX: Assicura che batch sia sempre presente e valido
+        if not hasattr(data, 'batch') or data.batch is None:
             data.batch = torch.zeros(data.x.size(0), dtype=torch.long, device=device)
+            logger.debug(f"Created batch attribute: {data.batch.shape}")
         elif data.batch.device != device:
             data.batch = data.batch.to(device)
+            logger.debug(f"Moved batch to device: {data.batch.device}")
+
+        # Validate batch attribute
+        if data.batch.size(0) != data.x.size(0):
+            logger.warning(f"Batch size mismatch: batch={data.batch.size(0)}, nodes={data.x.size(0)}, fixing...")
+            data.batch = torch.zeros(data.x.size(0), dtype=torch.long, device=device)
 
         # Validate edge_index bounds
         if data.edge_index.size(1) > 0 and data.edge_index.max() >= data.x.size(0):
@@ -537,6 +544,7 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
         if not hasattr(data, 'edge_attr') or data.edge_attr is None:
             num_edges = data.edge_index.size(1)
             data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=device)
+            logger.debug(f"Created edge_attr: {data.edge_attr.shape}")
 
         logger.debug(
             f"Data prepared - x: {data.x.shape}, edge_index: {data.edge_index.shape}, batch: {data.batch.shape}")
@@ -566,7 +574,8 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
 
             except Exception as forward_e:
                 logger.warning(f"Forward pass failed: {forward_e}")
-                logger.debug(f"Data shapes at forward: x={data.x.shape}, edge_index={data.edge_index.shape}")
+                logger.debug(
+                    f"Data shapes at forward: x={data.x.shape}, edge_index={data.edge_index.shape}, batch={data.batch.shape}")
                 logger.debug(f"Full traceback: {traceback.format_exc()}")
                 return None
 
@@ -694,7 +703,7 @@ def validate_discriminator_performance_enhanced(discriminator: nn.Module, smelly
 
 
 def debug_discriminator_architecture(discriminator: nn.Module, sample_data: Data, device: torch.device):
-    """Debug discriminator architecture compatibility"""
+    """Debug discriminator architecture compatibility with enhanced batch handling"""
     logger.info("🔧 Debugging discriminator architecture...")
 
     try:
@@ -702,13 +711,23 @@ def debug_discriminator_architecture(discriminator: nn.Module, sample_data: Data
         test_data = sample_data.clone().to(device)
         test_data = validate_7_feature_format(test_data)
 
-        if not hasattr(test_data, 'batch'):
+        # CRITICAL FIX: Gestione robusta del batch
+        if not hasattr(test_data, 'batch') or test_data.batch is None:
             test_data.batch = torch.zeros(test_data.x.size(0), dtype=torch.long, device=device)
+            logger.info(f"Created batch attribute for debugging")
+        elif test_data.batch.device != device:
+            test_data.batch = test_data.batch.to(device)
+
+        # Validate batch
+        if test_data.batch.size(0) != test_data.x.size(0):
+            test_data.batch = torch.zeros(test_data.x.size(0), dtype=torch.long, device=device)
+            logger.info(f"Fixed batch size mismatch")
 
         logger.info(f"Test data prepared:")
         logger.info(f"  - Nodes: {test_data.x.size(0)}")
         logger.info(f"  - Features: {test_data.x.size(1)}")
         logger.info(f"  - Edges: {test_data.edge_index.size(1)}")
+        logger.info(f"  - Batch: {test_data.batch.shape}")
         logger.info(f"  - Device: {test_data.x.device}")
 
         # Test discriminator layers step by step
@@ -817,20 +836,21 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
 def create_training_environments(smelly_data: List[Data], discriminator: nn.Module,
                                  num_envs: int = 8, device: torch.device = torch.device('cpu')) -> List[
     HubRefactoringEnv]:
-    """Create training environments with enhanced error handling and 7-feature validation"""
+    """Create training environments with enhanced batch handling"""
     envs = []
 
     for i in range(num_envs):
         try:
             # Select a smelly graph for this environment
-            initial_graph = random.choice(smelly_data).clone()  # Clone to avoid modification
+            initial_graph = random.choice(smelly_data).clone()
 
             # CRITICAL: Validate 7-feature format
             initial_graph = validate_7_feature_format(initial_graph)
 
-            # Ensure graph is properly formatted
-            if not hasattr(initial_graph, 'batch'):
-                initial_graph.batch = torch.zeros(initial_graph.x.size(0), dtype=torch.long)
+            # CRITICAL FIX: Gestione robusta del batch
+            if not hasattr(initial_graph, 'batch') or initial_graph.batch is None:
+                initial_graph.batch = torch.zeros(initial_graph.x.size(0), dtype=torch.long, device='cpu')
+                logger.debug(f"Environment {i}: Created batch attribute")
 
             # Move to device
             initial_graph = initial_graph.to(device)
@@ -841,6 +861,7 @@ def create_training_environments(smelly_data: List[Data], discriminator: nn.Modu
                 logger.warning(f"Environment {i}: Discriminator cannot process initial graph, trying another...")
                 continue
 
+            logger.info(f"Environment {i}: Initial hub score = {test_pred:.4f}")
             env = HubRefactoringEnv(initial_graph, discriminator, max_steps=15, device=device)
             envs.append(env)
             logger.debug(f"Successfully created environment {i} with 7-feature graph")
@@ -851,7 +872,6 @@ def create_training_environments(smelly_data: List[Data], discriminator: nn.Modu
 
     logger.info(f"Created {len(envs)} training environments out of {num_envs} requested")
 
-    # If we couldn't create any environments, that's a critical error
     if len(envs) == 0:
         raise RuntimeError("Could not create any training environments")
 

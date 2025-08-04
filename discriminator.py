@@ -120,7 +120,13 @@ class HubDetectionDiscriminator(nn.Module):
         x = data.x
         edge_index = data.edge_index
         edge_attr = getattr(data, 'edge_attr', None)
-        batch = data.batch if hasattr(data, 'batch') else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+
+        # FIX CRITICO: Gestione robusta dell'attributo batch
+        if hasattr(data, 'batch') and data.batch is not None:
+            batch = data.batch
+        else:
+            # Crea batch attribute se mancante (singolo grafo)
+            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
         # Enhanced input projection
         x = self.node_projection(x)
@@ -157,7 +163,12 @@ class HubDetectionDiscriminator(nn.Module):
 
         # Enhanced node-level hub scoring with context
         # Get graph-level context for each node
-        batch_size = batch.max().item() + 1
+        # FIX CRITICO: Gestione sicura del batch size
+        try:
+            batch_size = batch.max().item() + 1
+        except Exception:
+            batch_size = 1  # Fallback per singolo grafo
+
         graph_context = []
 
         for i in range(batch_size):
