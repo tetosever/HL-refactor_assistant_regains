@@ -622,7 +622,7 @@ def k_fold_cross_validation(data: List[Data], labels: List[int],
 
         # Create enhanced model for this fold with FIXED dimensions
         model = HubDetectionDiscriminator(
-            node_dim=node_dim,  # Always 14
+            node_dim=7,
             edge_dim=edge_dim,  # Always 1
             hidden_dim=128,
             num_layers=4,
@@ -688,7 +688,7 @@ def train_final_model(data: List[Data], labels: List[int], device: torch.device,
 
     # Create enhanced model with FIXED dimensions
     model = HubDetectionDiscriminator(
-        node_dim=node_dim,
+        node_dim=7,
         edge_dim=edge_dim,
         hidden_dim=128,
         num_layers=4,
