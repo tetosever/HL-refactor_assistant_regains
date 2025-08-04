@@ -6,26 +6,28 @@ from sklearn.preprocessing import RobustScaler
 from torch_geometric.data import Data
 from torch_geometric.transforms import BaseTransform
 
-from data_builder.graph_feature_extraction import EnhancedGraphFeatureExtractor
+from data_builder.graph_feature_extraction import HubFocusedFeatureExtractor
 
 
 class EnhancedStructuralNormalizer(BaseTransform):
-    """Normalize structural features with robust scaling and feature selection"""
+    """Normalize the 7 hub-focused structural features using robust scaling."""
 
     def __init__(self):
         self.node_scaler = RobustScaler()
         self.edge_scaler = RobustScaler()
-        self.feature_extractor = EnhancedGraphFeatureExtractor()
+        # HubFocusedFeatureExtractor kept for compatibility with hub-centric data
+        self.feature_extractor = HubFocusedFeatureExtractor()
         self.fitted = False
 
     def fit(self, data_list: List[Data]):
-        """Fit normalizers on a list of graphs"""
+        """Fit normalizers on a list of graphs using 7 hub-focused features."""
         all_node_features = []
         all_edge_features = []
 
         for data in data_list:
-            node_features = self.feature_extractor.extract_node_features(data)
-            all_node_features.append(node_features.numpy())
+            if data.x is None:
+                raise ValueError("Data object must contain node features")
+            all_node_features.append(data.x.numpy())
 
             if hasattr(data, 'edge_attr') and data.edge_attr is not None:
                 all_edge_features.append(data.edge_attr.numpy())
@@ -42,21 +44,18 @@ class EnhancedStructuralNormalizer(BaseTransform):
         return self
 
     def __call__(self, data: Data) -> Data:
-        """Transform a single graph"""
+        """Normalize a single graph with 7 hub-focused features."""
         data = data.clone()
 
-        # Extract and normalize node features
-        node_features = self.feature_extractor.extract_node_features(data)
+        # Normalize existing node features
+        if data.x is None:
+            raise ValueError("Data object must contain node features")
+
         if self.fitted:
-            node_features_norm = self.node_scaler.transform(node_features.numpy())
+            node_features_norm = self.node_scaler.transform(data.x.numpy())
             data.x = torch.from_numpy(node_features_norm).float()
         else:
-            data.x = node_features
-
-        # Extract hub-specific features
-        hub_features = self.feature_extractor.extract_hub_specific_features(data)
-        for key, value in hub_features.items():
-            setattr(data, key, value)
+            data.x = data.x.float()
 
         # Handle edge features
         if hasattr(data, 'edge_attr') and data.edge_attr is not None and self.fitted:
