@@ -10,9 +10,14 @@ import torch.nn.functional as F
 
 
 class HubDetectionDiscriminator(nn.Module):
-    """Enhanced discriminator for hub detection with improved architecture"""
+    """Enhanced discriminator for hub detection with improved architecture.
 
-    def __init__(self, node_dim: int, edge_dim: int, hidden_dim: int = 128,
+    The model now defaults to graphs that provide only node features (no edge
+    attributes) which matches the new 1-hop subgraph dataset with seven node
+    features per node.
+    """
+
+    def __init__(self, node_dim: int, edge_dim: int = 0, hidden_dim: int = 128,
                  num_layers: int = 4, dropout: float = 0.2, heads: int = 8):
         super().__init__()
 
