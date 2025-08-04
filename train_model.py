@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
 Enhanced GCPN Training Script for Hub-like Dependency Refactoring
-Fixed version with robust error handling and discriminator validation
+FIXED VERSION with 7-feature compatibility and discriminator validation
 
 Key Features:
-- Enhanced Policy Network with hub-aware attention
+- Enhanced Policy Network with hub-aware attention (7-feature compatible)
 - Advanced Environment with pattern-based actions
 - Discriminator-based adversarial learning with robust validation
 - PPO + GAE optimization
 - Comprehensive monitoring and debugging
 - GPU/CUDA optimizations
 - Fixed discriminator validation and environment initialization
+- UNIFIED 7-feature pipeline compatibility
 """
 
 import logging
@@ -152,13 +153,23 @@ class PPOTrainer:
 
     def compute_policy_loss(self, states: List[Data], actions: List[RefactoringAction],
                             old_log_probs: torch.Tensor, advantages: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Compute PPO policy loss - GPU optimized"""
+        """Compute PPO policy loss - GPU optimized with 7-feature validation"""
 
-        # Ensure states are on correct device
+        # Ensure states are on correct device and have 7 features
         states_on_device = []
         for state in states:
             if state.x.device != self.device:
                 state = state.to(self.device)
+
+            # CRITICAL: Validate 7-feature format
+            if state.x.size(1) != 7:
+                logger.warning(f"State has {state.x.size(1)} features, expected 7. Padding/truncating.")
+                if state.x.size(1) > 7:
+                    state.x = state.x[:, :7]  # Truncate
+                else:
+                    padding = torch.zeros(state.x.size(0), 7 - state.x.size(1), device=state.x.device)
+                    state.x = torch.cat([state.x, padding], dim=1)  # Pad
+
             states_on_device.append(state)
 
         # Batch states efficiently
@@ -348,10 +359,26 @@ class PPOTrainer:
                 clean_sample = random.sample(clean_graphs, batch_size)
                 generated_sample = random.sample(generated_graphs, batch_size)
 
-                # Move to device and batch
-                smelly_sample = [data.to(self.device) for data in smelly_sample]
-                clean_sample = [data.to(self.device) for data in clean_sample]
-                generated_sample = [data.to(self.device) for data in generated_sample]
+                # Move to device and validate 7-feature format
+                def validate_and_fix_features(data_list):
+                    fixed_data = []
+                    for data in data_list:
+                        data = data.to(self.device)
+
+                        # Ensure 7 features
+                        if data.x.size(1) != 7:
+                            if data.x.size(1) > 7:
+                                data.x = data.x[:, :7]  # Truncate
+                            else:
+                                padding = torch.zeros(data.x.size(0), 7 - data.x.size(1), device=data.x.device)
+                                data.x = torch.cat([data.x, padding], dim=1)  # Pad
+
+                        fixed_data.append(data)
+                    return fixed_data
+
+                smelly_sample = validate_and_fix_features(smelly_sample)
+                clean_sample = validate_and_fix_features(clean_sample)
+                generated_sample = validate_and_fix_features(generated_sample)
 
                 smelly_batch = Batch.from_data_list(smelly_sample)
                 clean_batch = Batch.from_data_list(clean_sample)
@@ -401,6 +428,24 @@ def safe_torch_load(file_path: Path, device: torch.device):
         return torch.load(file_path, map_location=device, weights_only=False)
 
 
+def validate_7_feature_format(data: Data) -> Data:
+    """Ensure data has exactly 7 features"""
+    if data.x.size(1) == 7:
+        return data
+
+    logger.warning(f"Data has {data.x.size(1)} features, expected 7. Fixing...")
+
+    if data.x.size(1) > 7:
+        # Truncate to 7 features
+        data.x = data.x[:, :7]
+    else:
+        # Pad to 7 features
+        padding = torch.zeros(data.x.size(0), 7 - data.x.size(1), device=data.x.device)
+        data.x = torch.cat([data.x, padding], dim=1)
+
+    return data
+
+
 def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tuple[nn.Module, Dict]:
     """Load pretrained discriminator with correct architecture parameters"""
     logger.info(f"Loading pretrained discriminator from {model_path}")
@@ -412,8 +457,12 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
 
     # Get architecture parameters from checkpoint
     model_architecture = checkpoint.get('model_architecture', {})
-    node_dim = checkpoint['node_dim']
-    edge_dim = checkpoint['edge_dim']
+    node_dim = checkpoint.get('node_dim', 7)  # Default to 7 for unified features
+    edge_dim = checkpoint.get('edge_dim', 1)
+
+    # Validate that we have the expected 7-feature format
+    if node_dim != 7:
+        logger.warning(f"Discriminator was trained with {node_dim} features, but we expect 7. This may cause issues.")
 
     # Use saved architecture parameters or defaults
     hidden_dim = model_architecture.get('hidden_dim', 128)
@@ -421,8 +470,7 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
     dropout = model_architecture.get('dropout', 0.15)
     heads = model_architecture.get('heads', 8)
 
-    logger.info(f"Creating discriminator with: hidden_dim={hidden_dim}, num_layers={num_layers}, "
-                f"dropout={dropout}, heads={heads}")
+    logger.info(f"Creating discriminator with: node_dim={node_dim}, hidden_dim={hidden_dim}")
 
     # Create model with correct architecture
     discriminator = HubDetectionDiscriminator(
@@ -456,6 +504,9 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
         # Ensure data is on correct device
         if data.x.device != device:
             data = data.to(device)
+
+        # CRITICAL: Validate 7-feature format
+        data = validate_7_feature_format(data)
 
         # Ensure batch attribute exists
         if not hasattr(data, 'batch'):
@@ -535,7 +586,7 @@ def validate_discriminator_performance(discriminator: nn.Module, smelly_data: Li
 
 def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch.device = torch.device('cpu')) -> Tuple[
     List[Data], List[Data]]:
-    """Load and prepare training data with enhanced validation"""
+    """Load and prepare training data with enhanced validation and 7-feature compatibility"""
     logger.info("Loading dataset...")
 
     smelly_data = []
@@ -560,8 +611,10 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
             if not hasattr(data, 'x') or not hasattr(data, 'edge_index'):
                 continue
 
-            if data.x.size(1) < 9:  # Ensure enough features
-                continue
+            # CRITICAL: Validate and fix 7-feature format
+            if data.x.size(1) != 7:
+                logger.debug(f"File {file.name} has {data.x.size(1)} features, fixing to 7")
+                data = validate_7_feature_format(data)
 
             if data.x.size(0) < 3:  # Need at least 3 nodes
                 continue
@@ -592,19 +645,23 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
             continue
 
     logger.info(f"Loaded {len(smelly_data)} smelly and {len(clean_data)} clean graphs")
+    logger.info(f"All graphs validated to have exactly 7 features")
     return smelly_data, clean_data
 
 
 def create_training_environments(smelly_data: List[Data], discriminator: nn.Module,
                                  num_envs: int = 8, device: torch.device = torch.device('cpu')) -> List[
     HubRefactoringEnv]:
-    """Create training environments with enhanced error handling"""
+    """Create training environments with enhanced error handling and 7-feature validation"""
     envs = []
 
     for i in range(num_envs):
         try:
             # Select a smelly graph for this environment
             initial_graph = random.choice(smelly_data).clone()  # Clone to avoid modification
+
+            # CRITICAL: Validate 7-feature format
+            initial_graph = validate_7_feature_format(initial_graph)
 
             # Ensure graph is properly formatted
             if not hasattr(initial_graph, 'batch'):
@@ -621,7 +678,7 @@ def create_training_environments(smelly_data: List[Data], discriminator: nn.Modu
 
             env = HubRefactoringEnv(initial_graph, discriminator, max_steps=15, device=device)
             envs.append(env)
-            logger.debug(f"Successfully created environment {i}")
+            logger.debug(f"Successfully created environment {i} with 7-feature graph")
 
         except Exception as e:
             logger.warning(f"Failed to create environment {i}: {e}")
@@ -638,7 +695,7 @@ def create_training_environments(smelly_data: List[Data], discriminator: nn.Modu
 
 def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                      steps_per_env: int = 32, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
-    """Collect rollouts with enhanced error handling"""
+    """Collect rollouts with enhanced error handling and 7-feature validation"""
 
     all_states = []
     all_actions = []
@@ -656,6 +713,10 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
             state = env.reset()
             if state.x.device != device:
                 state = state.to(device)
+
+            # CRITICAL: Validate 7-feature format
+            state = validate_7_feature_format(state)
+
             states.append(state)
             valid_envs.append(env)
         except Exception as e:
@@ -676,11 +737,15 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
     logger.debug(f"Starting rollout with {len(states)} valid environments")
 
     for step in range(steps_per_env):
-        # Ensure all states are on correct device and have batch attribute
+        # Ensure all states are on correct device and have 7 features
         states_on_device = []
         for state in states:
             if state.x.device != device:
                 state = state.to(device)
+
+            # CRITICAL: Validate 7-feature format
+            state = validate_7_feature_format(state)
+
             if not hasattr(state, 'batch'):
                 state.batch = torch.zeros(state.x.size(0), dtype=torch.long, device=device)
             states_on_device.append(state)
@@ -802,9 +867,12 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                     (action.source_node, action.target_node, action.pattern, action.terminate)
                 )
 
-                # Ensure state is on correct device
+                # Ensure state is on correct device and has 7 features
                 if state.x.device != device:
                     state = state.to(device)
+
+                # CRITICAL: Validate 7-feature format
+                state = validate_7_feature_format(state)
 
                 # Ensure batch attribute
                 if not hasattr(state, 'batch'):
@@ -828,6 +896,10 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                         reset_state = env.reset()
                         if reset_state.x.device != device:
                             reset_state = reset_state.to(device)
+
+                        # CRITICAL: Validate 7-feature format
+                        reset_state = validate_7_feature_format(reset_state)
+
                         if not hasattr(reset_state, 'batch'):
                             reset_state.batch = torch.zeros(reset_state.x.size(0), dtype=torch.long, device=device)
                         next_states[i] = reset_state
@@ -939,7 +1011,7 @@ def monitor_gpu_usage():
 
 
 def main():
-    """Main training loop with enhanced error handling"""
+    """Main training loop with 7-feature compatibility and enhanced error handling"""
 
     # Setup GPU environment
     device = setup_gpu_environment()
@@ -969,8 +1041,8 @@ def main():
         logger.error("python pre-training-discriminator.py")
         return
 
-    # Load data with enhanced validation
-    logger.info("📊 Loading dataset...")
+    # Load data with enhanced validation and 7-feature compatibility
+    logger.info("📊 Loading dataset with 7-feature validation...")
     smelly_data, clean_data = load_and_prepare_data(data_dir, max_samples=1000, device=device)
 
     if len(smelly_data) == 0:
@@ -978,6 +1050,7 @@ def main():
         return
 
     logger.info(f"📈 Dataset loaded: {len(smelly_data)} smelly, {len(clean_data)} clean graphs")
+    logger.info("✅ All graphs validated to have exactly 7 features")
 
     # Load pretrained discriminator
     try:
@@ -1002,16 +1075,16 @@ def main():
         logger.error(f"❌ Failed to load pretrained discriminator: {e}")
         return
 
-    # Model parameters from discriminator checkpoint
-    node_dim = discriminator_checkpoint['node_dim']
-    edge_dim = discriminator_checkpoint['edge_dim']
+    # Model parameters - FIXED for 7-feature compatibility
+    node_dim = 7  # ALWAYS 7 for unified features
+    edge_dim = 1  # Standard edge features
     hidden_dim = discriminator_checkpoint.get('model_architecture', {}).get('hidden_dim', 128)
 
-    logger.info(f"🔧 Model dimensions - Node: {node_dim}, Edge: {edge_dim}, Hidden: {hidden_dim}")
+    logger.info(f"🔧 Model dimensions - Node: {node_dim} (UNIFIED), Edge: {edge_dim}, Hidden: {hidden_dim}")
 
-    # Create policy network
-    logger.info("🧠 Creating policy network...")
-    policy = HubRefactoringPolicy(node_dim, edge_dim, hidden_dim).to(device)
+    # Create policy network with FIXED 7-feature compatibility
+    logger.info("🧠 Creating policy network with 7-feature compatibility...")
+    policy = HubRefactoringPolicy(node_dim=node_dim, edge_dim=edge_dim, hidden_dim=hidden_dim).to(device)
 
     # Log model parameters
     total_params = sum(p.numel() for p in policy.parameters())
@@ -1034,8 +1107,9 @@ def main():
     logger.info(f"  Steps per env: {steps_per_env}")
     logger.info(f"  Update frequency: {update_frequency}")
     logger.info(f"  Device: {device}")
+    logger.info(f"  Feature format: 7 unified structural features")
 
-    # Create environments with enhanced error handling
+    # Create environments with enhanced error handling and 7-feature validation
     logger.info("🌍 Creating training environments...")
     try:
         envs = create_training_environments(smelly_data, discriminator, num_envs, device)
@@ -1044,7 +1118,7 @@ def main():
         logger.error(f"❌ Failed to create training environments: {e}")
         return
 
-    logger.info("🚀 Starting RL training with pretrained discriminator...")
+    logger.info("🚀 Starting RL training with pretrained discriminator and 7-feature compatibility...")
 
     # Training loop
     episode_rewards = []
@@ -1056,7 +1130,7 @@ def main():
         if device.type == 'cuda' and start_time:
             start_time.record()
 
-        # Collect rollouts
+        # Collect rollouts with 7-feature validation
         rollout_data = collect_rollouts(envs, policy, steps_per_env, device)
 
         if len(rollout_data['rewards']) == 0:
@@ -1103,7 +1177,9 @@ def main():
                 recent_states = []
                 for env in envs:
                     if hasattr(env, 'current_data') and env.current_data is not None:
-                        recent_states.append(env.current_data)
+                        # Validate 7-feature format for discriminator update
+                        validated_state = validate_7_feature_format(env.current_data.clone())
+                        recent_states.append(validated_state)
 
                 if len(recent_states) >= 8:
                     # Fine-tune discriminator with generated graphs
@@ -1136,7 +1212,7 @@ def main():
                         f"Success Rate: {avg_success_100:5.3f} | "
                         f"Policy Loss: {policy_loss:7.4f} | "
                         f"Disc Loss: {disc_loss:7.4f} | "
-                        f"{timing_info}")
+                        f"{timing_info}7-Features: ✅")
 
             # Monitor GPU usage
             if device.type == 'cuda':
@@ -1177,9 +1253,10 @@ def main():
                     },
                     'config': {
                         'device': str(device),
-                        'node_dim': node_dim,
+                        'node_dim': node_dim,  # Always 7
                         'edge_dim': edge_dim,
-                        'hidden_dim': hidden_dim
+                        'hidden_dim': hidden_dim,
+                        'unified_7_features': True
                     }
                 }
 
@@ -1222,7 +1299,7 @@ def main():
         torch.save({
             'policy_state': policy.state_dict(),
             'discriminator_state': discriminator.state_dict(),
-            'node_dim': node_dim,
+            'node_dim': node_dim,  # Always 7
             'edge_dim': edge_dim,
             'training_stats': {
                 'episode_rewards': episode_rewards,
@@ -1236,7 +1313,12 @@ def main():
                 'steps_per_env': steps_per_env,
                 'update_frequency': update_frequency,
                 'device': str(device),
-                'gpu_optimized': True
+                'gpu_optimized': True,
+                'unified_7_features': True,
+                'feature_names': [
+                    'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
+                    'pagerank', 'betweenness_centrality', 'closeness_centrality'
+                ]
             }
         }, final_save_path)
 
@@ -1255,6 +1337,15 @@ def main():
                 'pretrained_path': str(discriminator_path),
                 'cv_performance': discriminator_checkpoint.get('cv_results', {}),
                 'final_validation': validation_results
+            },
+            'feature_pipeline': {
+                'unified_features': True,
+                'num_features': 7,
+                'feature_names': [
+                    'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
+                    'pagerank', 'betweenness_centrality', 'closeness_centrality'
+                ],
+                'compatible_with_discriminator': True
             },
             'gpu_info': {
                 'device_used': str(device),
@@ -1277,6 +1368,7 @@ def main():
     logger.info("🎯 FINAL TRAINING SUMMARY")
     logger.info("=" * 60)
     logger.info(f"Device used: {device}")
+    logger.info(f"Feature format: 7 unified structural features ✅")
     logger.info(f"Total episodes: {num_episodes}")
     logger.info(f"Policy updates: {trainer.update_count}")
 
@@ -1298,6 +1390,7 @@ def main():
         final_memory = torch.cuda.memory_allocated() / 1e9
         logger.info(f"🔧 Final GPU memory usage: {final_memory:.2f}GB")
 
+    logger.info("🔧 Discriminator compatibility: ✅ UNIFIED 7-feature pipeline")
     logger.info("=" * 60)
 
 

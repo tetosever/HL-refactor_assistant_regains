@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Fixed RL Environment for Hub Refactoring with Error Handling
+Fixed RL Environment for Hub Refactoring with Enhanced Error Handling and 7-Feature Compatibility
 """
 
 import copy
 from dataclasses import dataclass
-from typing import Dict, Tuple, Any, Optional
+from typing import Dict, Tuple, Any, Optional, List
 
 import networkx as nx
 import numpy as np
@@ -29,7 +29,7 @@ class RefactoringResult:
 
 
 class HubRefactoringEnv:
-    """Fixed environment for hub refactoring with realistic actions"""
+    """Fixed environment for hub refactoring with 7-feature compatibility"""
 
     def __init__(self, initial_data: Data, discriminator: nn.Module,
                  max_steps: int = 20, device: torch.device = torch.device('cpu'),
@@ -114,16 +114,15 @@ class HubRefactoringEnv:
             logger.warning(f"Failed to compute hub score: {e}")
             return 0.5  # Fallback to neutral score
 
-    def _update_graph_features(self, data: Data) -> Data:
-        """Update graph features after modification with robust error handling"""
+    def _update_graph_features_7_unified(self, data: Data) -> Data:
+        """Update graph features for 7-feature unified format"""
         try:
             # Convert to NetworkX for metric computation
             G = to_networkx(data, to_undirected=False)
 
-            # Recompute basic metrics
+            # Recompute the 7 unified structural features
             in_degrees = dict(G.in_degree())
             out_degrees = dict(G.out_degree())
-            total_degrees = {n: in_degrees[n] + out_degrees[n] for n in G.nodes()}
 
             # Recompute centrality metrics efficiently
             try:
@@ -142,44 +141,29 @@ class HubRefactoringEnv:
                 betweenness = {n: 0.0 for n in G.nodes()}
                 closeness = {n: 1.0 for n in G.nodes()}
 
-            # Update node features
+            # Update node features - EXACTLY 7 features as in normalizer
             num_nodes = data.x.size(0)
-            new_features = torch.zeros_like(data.x)
+            new_features = torch.zeros(num_nodes, 7, device=data.x.device, dtype=torch.float32)
 
             for i in range(num_nodes):
                 if i in G.nodes():
-                    # Basic degree features
-                    new_features[i, 0] = float(in_degrees.get(i, 0))  # in_degree
-                    new_features[i, 1] = float(out_degrees.get(i, 0))  # out_degree
-                    new_features[i, 2] = float(total_degrees.get(i, 0))  # total_degree
+                    # Extract the 7 unified structural features
+                    fan_in = float(in_degrees.get(i, 0))
+                    fan_out = float(out_degrees.get(i, 0))
+                    total_degree = fan_in + fan_out
 
-                    # Ratios and normalized metrics
+                    # Compute exactly the same 7 features as in EnhancedStructuralNormalizer
                     eps = 1e-8
-                    in_deg = float(new_features[i, 0])
-                    out_deg = float(new_features[i, 1])
-                    total_deg = float(new_features[i, 2])
-
-                    new_features[i, 3] = in_deg / (out_deg + eps)  # in_out_ratio
-                    new_features[i, 4] = total_deg / (num_nodes - 1 + eps)  # degree_centrality
-
-                    # Advanced centrality metrics
-                    new_features[i, 5] = float(pagerank.get(i, 0))  # pagerank
-                    if data.x.size(1) > 6:
-                        new_features[i, 6] = float(betweenness.get(i, 0))  # betweenness
-                    if data.x.size(1) > 7:
-                        new_features[i, 7] = float(closeness.get(i, 0))  # closeness
-
-                    # Hub score (simple heuristic based on degree and centrality)
-                    if data.x.size(1) > 8:
-                        hub_score = float(new_features[i, 4]) * 0.4 + float(new_features[i, 5]) * 0.6
-                        new_features[i, 8] = min(max(hub_score, 0.0), 1.0)  # Clamp to [0,1]
-
-                    # Copy any additional features from original
-                    if data.x.size(1) > 9:
-                        new_features[i, 9:] = data.x[i, 9:]
+                    new_features[i, 0] = fan_in  # fan_in
+                    new_features[i, 1] = fan_out  # fan_out
+                    new_features[i, 2] = total_degree / (len(G) - 1 + eps)  # degree_centrality
+                    new_features[i, 3] = fan_in / (fan_out + eps)  # in_out_ratio
+                    new_features[i, 4] = float(pagerank.get(i, 0))  # pagerank
+                    new_features[i, 5] = float(betweenness.get(i, 0))  # betweenness_centrality
+                    new_features[i, 6] = float(closeness.get(i, 0))  # closeness_centrality
                 else:
                     # Node was removed, keep minimal features
-                    new_features[i] = data.x[i] * 0.1
+                    new_features[i] = torch.zeros(7, device=data.x.device)
 
             data.x = new_features
             return data
@@ -218,17 +202,17 @@ class HubRefactoringEnv:
             success, new_data, pattern_info = self._apply_pattern(pattern, source, target)
 
             if success and new_data is not None:
-                # Update graph features after modification
+                # Update graph features after modification with 7-feature format
                 if self.lazy_feature_update:
                     # Only update if the structural change is significant
                     structural_change = (new_data.edge_index.size(1) != self.current_data.edge_index.size(1) or
                                          new_data.x.size(0) != self.current_data.x.size(0))
                     if structural_change:
-                        self.current_data = self._update_graph_features(new_data)
+                        self.current_data = self._update_graph_features_7_unified(new_data)
                     else:
                         self.current_data = new_data
                 else:
-                    self.current_data = self._update_graph_features(new_data)
+                    self.current_data = self._update_graph_features_7_unified(new_data)
 
                 # Invalidate cache
                 self._cached_hub_score = None
@@ -285,7 +269,7 @@ class HubRefactoringEnv:
             return False, None, {'error': f'pattern_exception: {str(e)}'}
 
     def _extract_interface(self, hub: int, client: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Extract interface to decouple hub from clients"""
+        """Extract interface to decouple hub from clients - 7-feature compatible"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -294,15 +278,21 @@ class HubRefactoringEnv:
             if not edge_mask.any():
                 return False, None, {'error': 'no_edge_to_decouple'}
 
-            # Add interface node
+            # Add interface node with 7 features
             n_nodes = data.x.size(0)
             interface_features = (data.x[hub] + data.x[client]) / 2.0
 
-            # Safely set interface features
-            if data.x.size(1) > 0:
-                interface_features[0] = 1.0  # Low in-degree
-            if data.x.size(1) > 1:
-                interface_features[1] = 2.0  # Moderate out-degree
+            # Ensure exactly 7 features for interface
+            if interface_features.size(0) != 7:
+                interface_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+                # Set reasonable defaults for interface node
+                interface_features[0] = 1.0  # fan_in
+                interface_features[1] = 2.0  # fan_out
+                interface_features[2] = 0.1  # degree_centrality
+                interface_features[3] = 0.5  # in_out_ratio
+                interface_features[4] = 0.1  # pagerank
+                interface_features[5] = 0.0  # betweenness_centrality
+                interface_features[6] = 0.5  # closeness_centrality
 
             data.x = torch.cat([data.x, interface_features.unsqueeze(0)], dim=0)
 
@@ -328,17 +318,17 @@ class HubRefactoringEnv:
             edge_mask = ~edge_mask
             data.edge_index = data.edge_index[:, edge_mask]
 
-            # Reduce coupling metrics in dependent node
-            if data.x.size(1) > 1:
-                data.x[dependent, 1] = max(0, data.x[dependent, 1] - 1)  # Reduce out-degree
-                data.x[dependency, 0] = max(0, data.x[dependency, 0] - 1)  # Reduce in-degree
+            # Reduce coupling metrics in node features (fan_out and fan_in)
+            if data.x.size(1) >= 2:
+                data.x[dependent, 1] = max(0, data.x[dependent, 1] - 1)  # Reduce fan_out
+                data.x[dependency, 0] = max(0, data.x[dependency, 0] - 1)  # Reduce fan_in
 
             return True, data, {'injected_dependency': (dependent, dependency)}
         except Exception as e:
             return False, None, {'error': f'dependency_injection_failed: {str(e)}'}
 
     def _split_by_responsibility(self, large_node: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Split node by responsibilities"""
+        """Split node by responsibilities - 7-feature compatible"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -352,15 +342,27 @@ class HubRefactoringEnv:
             if out_degree + in_degree < 4:
                 return False, None, {'error': 'insufficient_connections_to_split'}
 
-            # Add two responsibility nodes
+            # Add two responsibility nodes with 7 features each
             n_nodes = data.x.size(0)
 
             # Create features for split nodes (reduced responsibility)
             resp1_features = data.x[large_node] * 0.6
             resp2_features = data.x[large_node] * 0.4
 
-            if data.x.size(1) > 1:
-                resp1_features[1] = resp1_features[1] * 0.5  # Reduce out-degree
+            # Ensure exactly 7 features
+            if resp1_features.size(0) != 7:
+                resp1_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+                resp2_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+
+                # Copy original features if available
+                orig_features = data.x[large_node]
+                copy_size = min(7, orig_features.size(0))
+                resp1_features[:copy_size] = orig_features[:copy_size] * 0.6
+                resp2_features[:copy_size] = orig_features[:copy_size] * 0.4
+
+            # Reduce fan_out for split nodes
+            if resp1_features.size(0) >= 2:
+                resp1_features[1] = resp1_features[1] * 0.5  # Reduce fan_out
                 resp2_features[1] = resp2_features[1] * 0.5
 
             data.x = torch.cat([data.x, resp1_features.unsqueeze(0), resp2_features.unsqueeze(0)], dim=0)
@@ -394,7 +396,7 @@ class HubRefactoringEnv:
             return False, None, {'error': f'split_responsibility_failed: {str(e)}'}
 
     def _observer_pattern(self, subject: int, observer: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply observer pattern to reduce direct coupling"""
+        """Apply observer pattern to reduce direct coupling - 7-feature compatible"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -405,15 +407,18 @@ class HubRefactoringEnv:
             if len(observers) < 2:
                 return False, None, {'error': 'insufficient_observers'}
 
-            # Add notification hub (lightweight coordinator)
+            # Add notification hub (lightweight coordinator) with 7 features
             n_nodes = data.x.size(0)
 
-            # Create lightweight notification features
-            notif_features = torch.zeros_like(data.x[0])
-            if data.x.size(1) > 0:
-                notif_features[0] = 1.0  # Low in-degree
-            if data.x.size(1) > 1:
-                notif_features[1] = float(len(observers))  # Out-degree = number of observers
+            # Create lightweight notification features (7 features)
+            notif_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+            notif_features[0] = 1.0  # fan_in
+            notif_features[1] = float(len(observers))  # fan_out = number of observers
+            notif_features[2] = 0.1  # degree_centrality
+            notif_features[3] = notif_features[0] / (notif_features[1] + 1e-8)  # in_out_ratio
+            notif_features[4] = 0.05  # pagerank
+            notif_features[5] = 0.0  # betweenness_centrality
+            notif_features[6] = 0.5  # closeness_centrality
 
             data.x = torch.cat([data.x, notif_features.unsqueeze(0)], dim=0)
 
@@ -433,7 +438,7 @@ class HubRefactoringEnv:
             return False, None, {'error': f'observer_pattern_failed: {str(e)}'}
 
     def _strategy_pattern(self, context: int, strategy: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Extract strategy pattern to reduce coupling"""
+        """Extract strategy pattern to reduce coupling - 7-feature compatible"""
         try:
             data = copy.deepcopy(self.current_data)
 
@@ -447,12 +452,25 @@ class HubRefactoringEnv:
             # Add strategy interface
             n_nodes = data.x.size(0)
 
-            # Create interface features
-            interface_features = data.x[strategies].mean(dim=0)  # Average of strategies
-            if data.x.size(1) > 0:
-                interface_features[0] = 1.0  # Low in-degree
-            if data.x.size(1) > 1:
-                interface_features[1] = 1.0  # Single out-degree
+            # Create interface features (7 features)
+            interface_features = torch.zeros(7, device=data.x.device, dtype=torch.float32)
+
+            # Average of strategies features if available
+            if len(strategies) > 0 and data.x.size(0) > max(strategies):
+                valid_strategies = [s for s in strategies if s < data.x.size(0)]
+                if valid_strategies:
+                    strategy_features = data.x[valid_strategies]
+                    interface_features = strategy_features.mean(dim=0)
+                    # Ensure exactly 7 features
+                    if interface_features.size(0) > 7:
+                        interface_features = interface_features[:7]
+                    elif interface_features.size(0) < 7:
+                        padding = torch.zeros(7 - interface_features.size(0), device=data.x.device)
+                        interface_features = torch.cat([interface_features, padding])
+
+            # Set reasonable defaults if needed
+            interface_features[0] = max(interface_features[0], 1.0)  # fan_in
+            interface_features[1] = max(interface_features[1], 1.0)  # fan_out
 
             data.x = torch.cat([data.x, interface_features.unsqueeze(0)], dim=0)
 

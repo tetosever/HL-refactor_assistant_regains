@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fixed Policy Network for Hub Refactoring with Correct Dimensional Handling
+Fixed Policy Network for Hub Refactoring with 7-Feature Compatibility
 """
 
 from dataclasses import dataclass
@@ -85,16 +85,17 @@ class HubRefactoringPatterns:
 
 
 class HubRefactoringPolicy(nn.Module):
-    """Fixed policy network for hub-reducing refactoring patterns"""
+    """Fixed policy network for hub-reducing refactoring patterns with 7-feature compatibility"""
 
-    def __init__(self, node_dim: int, edge_dim: int, hidden_dim: int = 128,
+    def __init__(self, node_dim: int = 7, edge_dim: int = 1, hidden_dim: int = 128,
                  num_layers: int = 3, dropout: float = 0.3):
         super().__init__()
 
         self.hidden_dim = hidden_dim
         self.num_patterns = len(HubRefactoringPatterns.PATTERNS)
+        self.node_dim = node_dim  # Should be 7 for unified features
 
-        # Feature embedding
+        # Feature embedding - fixed for 7 features
         self.node_embed = nn.Linear(node_dim, hidden_dim)
         self.edge_embed = nn.Linear(edge_dim, hidden_dim) if edge_dim > 0 else None
 
@@ -109,10 +110,10 @@ class HubRefactoringPolicy(nn.Module):
                 self.convs.append(GATConv(hidden_dim, hidden_dim // 8, heads=8, concat=True))
             self.norms.append(GraphNorm(hidden_dim))
 
-        # Hub importance computation (fixed dimensions)
-        # Input: node features (hidden_dim) + structural features (6)
+        # Hub importance computation - FIXED for 7 structural features
+        # Input: node features (hidden_dim) + all 7 structural features
         self.hub_importance_net = nn.Sequential(
-            nn.Linear(hidden_dim + 6, hidden_dim // 2),
+            nn.Linear(hidden_dim + 7, hidden_dim // 2),  # Changed from 6 to 7
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, 1),
@@ -127,9 +128,9 @@ class HubRefactoringPolicy(nn.Module):
             nn.Linear(hidden_dim // 2, 1)
         )
 
-        # Pattern selector (fixed dimensions)
-        # Input: node features (hidden_dim) + graph features (hidden_dim * 2) + structural (6)
-        pattern_input_dim = hidden_dim + (hidden_dim * 2) + 6
+        # Pattern selector - FIXED for 7 features
+        # Input: node features (hidden_dim) + graph features (hidden_dim * 2) + structural (7)
+        pattern_input_dim = hidden_dim + (hidden_dim * 2) + 7  # Changed from 6 to 7
         self.pattern_selector = nn.Sequential(
             nn.Linear(pattern_input_dim, hidden_dim * 2),
             nn.ReLU(),
@@ -164,15 +165,15 @@ class HubRefactoringPolicy(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def compute_structural_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Extract key structural features for hub identification"""
-        # Ensure we have at least 6 features, pad if necessary
-        if x.size(1) < 6:
-            # Pad with zeros if we don't have enough features
-            padding = torch.zeros(x.size(0), 6 - x.size(1), device=x.device)
-            structural = torch.cat([x, padding], dim=1)[:, :6]
+        """Extract all 7 structural features for hub identification"""
+        # For the unified 7-feature format, we use ALL features
+        if x.size(1) >= 7:
+            # Use all 7 features: [fan_in, fan_out, degree_centrality, in_out_ratio, pagerank, betweenness, closeness]
+            structural = x[:, :7]
         else:
-            # Take first 6 features: [in_deg, out_deg, total_deg, in_out_ratio, deg_centrality, pagerank]
-            structural = x[:, :6]
+            # Pad with zeros if we don't have enough features
+            padding = torch.zeros(x.size(0), 7 - x.size(1), device=x.device)
+            structural = torch.cat([x, padding], dim=1)
 
         return structural
 
@@ -181,7 +182,11 @@ class HubRefactoringPolicy(nn.Module):
         edge_index = data.edge_index
         batch = data.batch if hasattr(data, 'batch') else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
-        # Extract structural features (fixed size: 6)
+        # Validate input dimensions
+        if x.size(1) != self.node_dim:
+            raise ValueError(f"Expected {self.node_dim} node features, got {x.size(1)}")
+
+        # Extract structural features (all 7 features)
         structural_features = self.compute_structural_features(x)
 
         # Embed features
@@ -194,7 +199,7 @@ class HubRefactoringPolicy(nn.Module):
             x_emb = F.relu(h) + x_emb  # Residual
             x_emb = F.dropout(x_emb, p=0.3, training=self.training)
 
-        # Compute hub importance scores
+        # Compute hub importance scores using all 7 features
         hub_input = torch.cat([x_emb, structural_features], dim=-1)
         hub_importance = self.hub_importance_net(hub_input).squeeze(-1)
 
@@ -216,13 +221,13 @@ class HubRefactoringPolicy(nn.Module):
         for b in range(batch_size):
             mask = (batch == b)
             node_features = x_emb[mask]  # Size: [num_nodes_in_graph, hidden_dim]
-            node_structural = structural_features[mask]  # Size: [num_nodes_in_graph, 6]
+            node_structural = structural_features[mask]  # Size: [num_nodes_in_graph, 7]
             graph_feat = graph_features[b].unsqueeze(0).expand(mask.sum(),
                                                                -1)  # Size: [num_nodes_in_graph, hidden_dim*2]
 
-            # Combine features (fixed dimensions)
+            # Combine features (fixed dimensions for 7 features)
             pattern_input = torch.cat([node_features, graph_feat, node_structural], dim=-1)
-            # Size: [num_nodes_in_graph, hidden_dim + hidden_dim*2 + 6]
+            # Size: [num_nodes_in_graph, hidden_dim + hidden_dim*2 + 7]
 
             pattern_logits = self.pattern_selector(pattern_input)
             pattern_logits_list.append(pattern_logits)
