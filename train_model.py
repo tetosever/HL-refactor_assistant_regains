@@ -111,6 +111,8 @@ class PPOTrainer:
         self.update_count = 0
         self.policy_losses = []
         self.disc_losses = []
+        # Track discriminator validation metrics
+        self.disc_metrics = []
 
         # GPU optimization settings
         if device.type == 'cuda':
@@ -344,7 +346,10 @@ class PPOTrainer:
             torch.cuda.empty_cache()
 
     def update_discriminator(self, smelly_graphs: List[Data], clean_graphs: List[Data],
-                             generated_graphs: List[Data], epochs: int = 2):
+                             generated_graphs: List[Data], epochs: int = 5,
+                             early_stop_threshold: float = 0.6,
+                             label_smoothing: float = 0.1,
+                             gp_lambda: float = 10.0):
         """Update discriminator with adversarial training - GPU optimized"""
 
         for epoch in range(epochs):
@@ -385,6 +390,11 @@ class PPOTrainer:
                 clean_batch = Batch.from_data_list(clean_sample)
                 generated_batch = Batch.from_data_list(generated_sample)
 
+                # Enable gradient for gradient penalty
+                smelly_batch.x.requires_grad_(True)
+                clean_batch.x.requires_grad_(True)
+                generated_batch.x.requires_grad_(True)
+
                 # Forward pass
                 smelly_out = self.discriminator(smelly_batch)
                 clean_out = self.discriminator(clean_batch)
@@ -395,13 +405,25 @@ class PPOTrainer:
                 clean_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
                 gen_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
 
-                # Compute losses
-                loss_smelly = F.cross_entropy(smelly_out['logits'], smelly_labels)
-                loss_clean = F.cross_entropy(clean_out['logits'], clean_labels)
-                loss_gen = F.cross_entropy(gen_out['logits'], gen_labels)
+                # Compute losses with label smoothing
+                loss_smelly = F.cross_entropy(smelly_out['logits'], smelly_labels,
+                                              label_smoothing=label_smoothing)
+                loss_clean = F.cross_entropy(clean_out['logits'], clean_labels,
+                                             label_smoothing=label_smoothing)
+                loss_gen = F.cross_entropy(gen_out['logits'], gen_labels,
+                                           label_smoothing=label_smoothing)
+
+                # Gradient penalty
+                gp_loss = 0.0
+                for batch, out in [(smelly_batch, smelly_out),
+                                   (clean_batch, clean_out),
+                                   (generated_batch, gen_out)]:
+                    grad = torch.autograd.grad(out['logits'].sum(), batch.x,
+                                               create_graph=True)[0]
+                    gp_loss += grad.pow(2).mean()
 
                 # Total discriminator loss
-                disc_loss = loss_smelly + loss_clean + loss_gen
+                disc_loss = loss_smelly + loss_clean + loss_gen + gp_lambda * gp_loss
 
                 # Backward pass
                 self.opt_disc.zero_grad()
@@ -409,7 +431,30 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.max_grad_norm)
                 self.opt_disc.step()
 
+                # Validation metrics
+                with torch.no_grad():
+                    preds = torch.cat([
+                        smelly_out['logits'].argmax(dim=1),
+                        clean_out['logits'].argmax(dim=1),
+                        gen_out['logits'].argmax(dim=1)
+                    ])
+                    labels = torch.cat([smelly_labels, clean_labels, gen_labels])
+                    accuracy = (preds == labels).float().mean().item()
+                    tp = ((preds == 1) & (labels == 1)).sum().item()
+                    fp = ((preds == 1) & (labels == 0)).sum().item()
+                    fn = ((preds == 0) & (labels == 1)).sum().item()
+                    precision = tp / (tp + fp + 1e-8)
+                    recall = tp / (tp + fn + 1e-8)
+                    f1 = 2 * precision * recall / (precision + recall + 1e-8)
+                    self.disc_metrics.append({'accuracy': accuracy, 'f1': f1})
+
                 self.disc_losses.append(disc_loss.item())
+
+                # Early stopping if performance drops below threshold
+                if accuracy < early_stop_threshold or f1 < early_stop_threshold:
+                    logger.debug(
+                        f"Early stopping discriminator at epoch {epoch}: acc={accuracy:.4f}, F1={f1:.4f}")
+                    break
 
             except Exception as e:
                 logger.debug(f"Error in discriminator update: {e}")
