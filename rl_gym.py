@@ -60,9 +60,23 @@ class HubRefactoringEnv:
         self.action_history = []
         self.initial_hub_score = None
 
+    def _ensure_data_consistency(self, data: Data) -> Data:
+        """Ensure batch and edge_attr sizes match graph structure."""
+        num_nodes = data.x.size(0)
+        num_edges = data.edge_index.size(1)
+
+        if not hasattr(data, 'batch') or data.batch is None or data.batch.size(0) != num_nodes:
+            data.batch = torch.zeros(num_nodes, dtype=torch.long, device=data.x.device)
+
+        if not hasattr(data, 'edge_attr') or data.edge_attr is None or data.edge_attr.size(0) != num_edges:
+            data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
+
+        return data
+
     def reset(self) -> Data:
         """Reset environment"""
         self.current_data = copy.deepcopy(self.initial_data)
+        self._ensure_data_consistency(self.current_data)
         self.steps = 0
         self.action_history.clear()
 
@@ -94,6 +108,7 @@ class HubRefactoringEnv:
     def _get_current_hub_score(self) -> float:
         """Get current hub-like score from discriminator with caching"""
         try:
+            self._ensure_data_consistency(self.current_data)
             current_hash = self._get_graph_hash(self.current_data)
 
             # Return cached score if graph hasn't changed
@@ -166,12 +181,12 @@ class HubRefactoringEnv:
                     new_features[i] = torch.zeros(7, device=data.x.device)
 
             data.x = new_features
-            return data
+            return self._ensure_data_consistency(data)
 
         except Exception as e:
             logger.warning(f"Failed to update graph features: {e}")
             # Return original data if update fails
-            return data
+            return self._ensure_data_consistency(data)
 
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
         """Execute refactoring action with robust error handling"""
@@ -213,6 +228,8 @@ class HubRefactoringEnv:
                         self.current_data = new_data
                 else:
                     self.current_data = self._update_graph_features_7_unified(new_data)
+
+                self._ensure_data_consistency(self.current_data)
 
                 # Invalidate cache
                 self._cached_hub_score = None
