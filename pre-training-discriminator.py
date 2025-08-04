@@ -230,6 +230,17 @@ def load_and_prepare_data_unified(data_dir: Path, max_samples_per_class: int = 1
             if isinstance(is_smelly, torch.Tensor):
                 is_smelly = is_smelly.item()
 
+            # Remove non-batchable metadata before batching
+            for attr in [
+                "node_id_to_index",
+                "index_to_node_id",
+                "edge_id_mapping",
+                "original_node_ids",
+                "original_edge_ids",
+            ]:
+                if hasattr(data, attr):
+                    delattr(data, attr)
+
             all_raw_data.append(data)
             all_labels.append(is_smelly)
 
