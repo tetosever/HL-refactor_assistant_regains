@@ -1,347 +1,280 @@
 #!/usr/bin/env python3
 """
-Simplified Data Pipeline with Smart Skipping
+LOGICA CORRETTA: Dynamic Component Detection
 
-Maintains the original data/ folder structure with .pt files
-but adds intelligent skipping when files haven't changed.
+Il problema era che il codice:
+1. Predeterminava i center_nodes dai characteristics CSV
+2. Li cercava nei GraphML
+3. Ma dovrebbe fare l'OPPOSTO:
+   - Per ogni GraphML, trova TUTTE le componenti
+   - Per ogni componente, verifica se versionId è in smell_map[component]
+   - Etichetta di conseguenza
 """
 
-import hashlib
-import json
 import logging
+import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 import networkx as nx
 import pandas as pd
 import torch
-import yaml
-from torch_geometric.data import Data
-from torch_geometric.utils import from_networkx
+import json
 
-from comp2smelly import extract_smell_maps
-from extract_subgraphs import load_feature_config, collect_dataset_stats
+from graph_feature_extraction import create_hub_focused_data, validate_extracted_features
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%H:%M:%S'
-)
 logger = logging.getLogger(__name__)
 
-# Configuration paths (same as before)
-ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.yaml"
-ARCAN_DIR = ROOT / "arcan_out" / "intervalDays7"
-OUTPUT_DIR = ROOT / "dataset_builder" / "data"
-OUTPUT_DIR_SUBGRAPH = OUTPUT_DIR / "dataset_graph_feature"  # Your .pt files go here
-PIPELINE_STATS_FILE = OUTPUT_DIR / "pipeline_stats.json"
 
+def extract_features_with_correct_logic(
+        graphml_path: Path,
+        smell_map: Dict[str, List[str]],
+        config: dict
+) -> List:
+    """
+    🚨 LOGICA CORRETTA:
+    1. Carica GraphML e estrae versionId dal nome file
+    2. Per OGNI nodo nel grafo, verifica se è nella smell_map
+    3. Se è nella smell_map, controlla se versionId è nelle sue versioni smelly
+    4. Etichetta di conseguenza
+    """
+    extracted_data = []
 
-def get_project_source_hash(project_dir: Path) -> str:
-    """Generate hash of all source files for change detection"""
+    # Estrai versionId dal nome file
+    match = re.search(r"dependency-graph-(\d+)_([0-9a-fA-F]+)\.graphml", graphml_path.name)
+    if not match:
+        logger.warning(f"Cannot parse version from {graphml_path.name}")
+        return extracted_data
 
-    source_patterns = [
-        "dependency-graph-*.graphml",
-        "smell-characteristics.csv",
-        "smell-affects.csv"
-    ]
+    version_index, version_id = match.groups()
 
-    file_info = []
-    for pattern in source_patterns:
-        for file_path in sorted(project_dir.glob(pattern)):
-            if file_path.exists():
-                stat = file_path.stat()
-                file_info.append(f"{file_path.name}:{stat.st_mtime}:{stat.st_size}")
-
-    combined = "|".join(file_info)
-    return hashlib.md5(combined.encode()).hexdigest()
-
-
-def load_processing_history() -> Dict:
-    """Load history of processed projects"""
-    history_file = OUTPUT_DIR / "processing_history.json"
-
-    if history_file.exists():
-        try:
-            return json.loads(history_file.read_text())
-        except Exception as e:
-            logger.warning(f"Failed to load processing history: {e}")
-
-    return {}
-
-
-def save_processing_history(history: Dict):
-    """Save history of processed projects"""
-    history_file = OUTPUT_DIR / "processing_history.json"
+    logger.debug(f"Processing {graphml_path.name}: versionId = {version_id}")
 
     try:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        with open(history_file, 'w') as f:
-            json.dump(history, f, indent=2)
-    except Exception as e:
-        logger.warning(f"Failed to save processing history: {e}")
+        # Carica il grafo
+        G = nx.read_graphml(graphml_path)
+        logger.debug(f"Loaded graph: {len(G)} nodes, {G.number_of_edges()} edges")
 
+        # Check graph size limits
+        max_graph_size = config.get('max_graph_size', 10000)
+        if len(G) > max_graph_size:
+            logger.warning(f"Graph too large ({len(G)} nodes), skipping")
+            return extracted_data
 
-def should_skip_project(project: str, arcan_dir: Path, output_dir: Path,
-                        force_refresh: bool = False) -> Tuple[bool, str]:
-    """Determine if project should be skipped based on existing files and changes"""
+        # 🚨 LOGICA CORRETTA: Per ogni nodo nel grafo
+        all_nodes = [str(node_id) for node_id in G.nodes()]
+        logger.debug(f"Graph contains {len(all_nodes)} nodes")
 
-    if force_refresh:
-        return False, "Force refresh requested"
+        smelly_processed = 0
+        clean_processed = 0
+        components_in_smell_map = 0
 
-    project_dir = arcan_dir / project
+        # Statistiche per debug
+        nodes_checked = 0
+        nodes_in_smell_map = 0
 
-    # Check if source directory exists
-    if not project_dir.exists():
-        return True, f"Project directory not found: {project_dir}"
+        for node_id in all_nodes:
+            nodes_checked += 1
 
-    # Check if required files exist
-    required_files = [
-        "smell-characteristics.csv",
-        "smell-affects.csv"
-    ]
+            # 🚨 STEP 1: Verifica se questo nodo è nella smell_map
+            if node_id not in smell_map:
+                # Questo nodo non è mai stato rilevato come smell in nessuna versione
+                # Potremmo volerlo includere come campione clean, ma per ora skippiamo
+                # per ridurre il rumore (troppi nodi non-hub)
+                continue
 
-    for req_file in required_files:
-        if not (project_dir / req_file).exists():
-            return True, f"Missing required file: {req_file}"
+            nodes_in_smell_map += 1
+            components_in_smell_map += 1
 
-    # Check if any graphml files exist
-    graphml_files = list(project_dir.glob("dependency-graph-*.graphml"))
-    if not graphml_files:
-        return True, "No graphml files found"
+            # 🚨 STEP 2: Questo nodo è nella smell_map, verifica se è smelly in questa versione
+            smelly_versions = smell_map[node_id]
+            is_smelly = version_id in smelly_versions
 
-    # Check if .pt files exist for this project
-    existing_pt_files = list(output_dir.glob(f"{project}_*.pt"))
-    if not existing_pt_files:
-        return False, "No existing .pt files found, need to process"
+            logger.debug(
+                f"  Node {node_id}: {len(smelly_versions)} smelly versions, current={version_id}, is_smelly={is_smelly}")
 
-    # Check if source files have changed since last processing
-    history = load_processing_history()
-    current_hash = get_project_source_hash(project_dir)
+            # 🚨 STEP 3: Decidi se processare questo nodo
+            should_process = False
 
-    if project in history:
-        last_hash = history[project].get('source_hash', '')
-        if current_hash == last_hash:
-            return True, f"Files unchanged, {len(existing_pt_files)} .pt files exist"
+            if is_smelly:
+                # SEMPRE processa nodi smelly
+                should_process = True
+                logger.debug(f"    → Processing SMELLY node {node_id}")
+            elif config.get('include_non_smelly', False):
+                # Processa nodi clean solo se configurato
+                should_process = True
+                logger.debug(f"    → Processing CLEAN node {node_id}")
+            else:
+                logger.debug(f"    → Skipping CLEAN node {node_id} (not configured)")
 
-    return False, "Source files changed, need to reprocess"
+            if not should_process:
+                continue
 
+            # 🚨 STEP 4: Estrai features per questo nodo come centro
+            data = create_hub_focused_data(G, node_id, is_smelly, config)
 
-def compute_graph_features_optimized(G: nx.Graph, center_node: str,
-                                     is_smelly: bool, config: dict) -> Optional[Data]:
-    """Compute features directly without depending on Arcan original features"""
+            if data is not None and validate_extracted_features(data):
+                # Add metadata
+                data.version_hash = version_id
+                data.version_index = int(version_index)
+                data.graphml_path = str(graphml_path)
+                data.smelly_version_count = len(smelly_versions)
 
-    try:
-        # Validate center node exists
-        if center_node not in G:
-            return None
+                extracted_data.append(data)
 
-        # Extract ego graph
-        ego_graph = nx.ego_graph(G, center_node, radius=config.get('radius', 1), undirected=False)
+                if is_smelly:
+                    smelly_processed += 1
+                    logger.debug(f"    ✅ Extracted SMELLY subgraph for {node_id}")
+                else:
+                    clean_processed += 1
+                    logger.debug(f"    ✅ Extracted CLEAN subgraph for {node_id}")
+            else:
+                logger.debug(f"    ❌ Failed to extract/validate subgraph for {node_id}")
 
-        # Size checks
-        if len(ego_graph) < config.get('min_subgraph_size', 3):
-            return None
-
-        if ego_graph.number_of_edges() < config.get('min_edges', 1):
-            return None
-
-        # Remove isolated nodes if configured
-        if config.get('remove_isolated_nodes', True):
-            isolated = list(nx.isolates(ego_graph))
-            if isolated:
-                ego_graph.remove_nodes_from(isolated)
-                if len(ego_graph) < config.get('min_subgraph_size', 3):
-                    return None
-
-        # Compute all topological metrics
-        in_degrees = dict(ego_graph.in_degree())
-        out_degrees = dict(ego_graph.out_degree())
-
-        # Compute centrality metrics efficiently
-        if len(ego_graph) <= 50:
-            try:
-                pagerank = nx.pagerank(ego_graph, alpha=0.85, max_iter=100)
-                betweenness = nx.betweenness_centrality(ego_graph)
-                closeness = nx.closeness_centrality(ego_graph)
-            except:
-                # Fallback for problematic graphs
-                pagerank = {n: 1.0 / len(ego_graph) for n in ego_graph.nodes()}
-                betweenness = {n: 0.0 for n in ego_graph.nodes()}
-                closeness = {n: 1.0 for n in ego_graph.nodes()}
-        else:
-            # Simplified metrics for large graphs
-            pagerank = {n: 1.0 / len(ego_graph) for n in ego_graph.nodes()}
-            betweenness = {n: 0.0 for n in ego_graph.nodes()}
-            closeness = {n: 1.0 for n in ego_graph.nodes()}
-
-        # Prepare node features (clear original and add computed ones)
-        for node, attrs in ego_graph.nodes(data=True):
-            attrs.clear()  # Remove all original Arcan features
-
-            # Add our computed features
-            in_deg = float(in_degrees.get(node, 0))
-            out_deg = float(out_degrees.get(node, 0))
-            total_deg = in_deg + out_deg
-
-            attrs.update({
-                'in_degree': in_deg,
-                'out_degree': out_deg,
-                'total_degree': total_deg,
-                'in_out_ratio': in_deg / (out_deg + 1e-8),
-                'degree_centrality': total_deg / (len(ego_graph) - 1 + 1e-8),
-                'pagerank': float(pagerank.get(node, 0)),
-                'betweenness': float(betweenness.get(node, 0)),
-                'closeness': float(closeness.get(node, 0)),
-                'hub_score': float(pagerank.get(node, 0)) * 0.6 + float(betweenness.get(node, 0)) * 0.4,
-                # Add some additional useful features
-                'clustering': 0.0,  # Can be computed if needed
-                'eigenvector_centrality': float(pagerank.get(node, 0))  # Approximation
-            })
-
-        # Prepare edge features (simplified)
-        for u, v, attrs in ego_graph.edges(data=True):
-            attrs.clear()  # Remove original features
-            attrs['weight'] = 1.0  # Simple uniform weight
-
-        # Convert to PyG Data
-        node_attrs = ['in_degree', 'out_degree', 'total_degree', 'in_out_ratio',
-                      'degree_centrality', 'pagerank', 'betweenness', 'closeness',
-                      'hub_score', 'clustering', 'eigenvector_centrality']
-        edge_attrs = ['weight']
-
-        data = from_networkx(ego_graph, group_node_attrs=node_attrs, group_edge_attrs=edge_attrs)
-
-        # Add metadata
-        data.is_smelly = torch.tensor([int(is_smelly)], dtype=torch.long)
-        data.center_node = center_node
-        data.subgraph_size = len(ego_graph)
-        data.num_edges_sg = ego_graph.number_of_edges()
-
-        return data
+        # Log statistiche per questo GraphML
+        logger.info(f"GraphML {graphml_path.name} processed:")
+        logger.info(f"  - Total nodes in graph: {len(all_nodes)}")
+        logger.info(f"  - Nodes in smell_map: {nodes_in_smell_map}")
+        logger.info(f"  - Smelly extracted: {smelly_processed}")
+        logger.info(f"  - Clean extracted: {clean_processed}")
+        logger.info(f"  - Total extracted: {len(extracted_data)}")
 
     except Exception as e:
-        logger.warning(f"Failed to compute features for {center_node}: {e}")
-        return None
+        logger.error(f"Failed to process {graphml_path}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+    return extracted_data
 
 
-def process_project_optimized(project: str, arcan_dir: Path, output_dir: Path,
-                              feature_config: dict, force_refresh: bool = False) -> Dict:
-    """Process project with optimized feature computation"""
-
+def process_project_with_correct_logic(project: str, arcan_dir: Path, output_dir: Path,
+                                       config: dict, force_refresh: bool = False) -> Dict:
+    """
+    🚨 VERSIONE CORRETTA che usa la logica giusta
+    """
     start_time = time.time()
     project_stats = {
         'project': project,
         'start_time': time.time(),
         'success': False,
         'error': None,
-        'subgraph_stats': {},
         'processing_time': 0,
         'files_processed': 0,
-        'skipped': False
+        'smelly_count': 0,
+        'clean_count': 0,
+        'total_extracted': 0,
+        'graphml_processed': 0
     }
 
     try:
-        logger.info(f"=== Processing project: {project} ===")
+        logger.info(f"=== Processing project: {project} (CORRECT LOGIC) ===")
 
-        # Check if we should skip this project
-        should_skip, reason = should_skip_project(project, arcan_dir, output_dir, force_refresh)
-
-        if should_skip:
-            project_stats['skipped'] = True
-            project_stats['success'] = True
-            logger.info(f"⚡ Skipping {project}: {reason}")
-            return project_stats
-
-        logger.info(f"🔄 Processing {project}: {reason}")
-
-        # Extract smell maps
-        logger.info(f"Extracting smell maps for {project}")
-        smell_map = extract_smell_maps(project, arcan_dir)
-
-        if not smell_map:
-            project_stats['error'] = "No smell map generated"
-            return project_stats
-
-        # Process graphml files
         project_dir = arcan_dir / project
-        graphml_files = list(project_dir.glob("dependency-graph-*.graphml"))
 
-        processed_count = 0
+        # 1. Carica smell_map
+        map_path = project_dir / "smell_map.json"
+        if not map_path.exists():
+            project_stats['error'] = f"smell_map.json not found: {map_path}"
+            return project_stats
+
+        try:
+            with open(map_path, 'r') as f:
+                smell_map = json.load(f)
+        except Exception as e:
+            project_stats['error'] = f"Failed to load smell_map.json: {e}"
+            return project_stats
+
+        logger.info(f"Loaded smell_map: {len(smell_map)} components")
+
+        # Debug smell_map
+        if smell_map:
+            sample_comp = next(iter(smell_map.keys()))
+            sample_versions = smell_map[sample_comp]
+            logger.info(f"Sample component {sample_comp}: {len(sample_versions)} smelly versions")
+            logger.debug(f"  First 5 versions: {sample_versions[:5]}")
+
+        # 2. Trova tutti i GraphML files
+        graphml_files = list(project_dir.glob("dependency-graph-*.graphml"))
+        if not graphml_files:
+            project_stats['error'] = "No GraphML files found"
+            return project_stats
+
+        logger.info(f"Found {len(graphml_files)} GraphML files to process")
+
+        # 3. Processa ogni GraphML con la logica corretta
+        total_smelly = 0
+        total_clean = 0
+        files_processed = 0
 
         for graphml_file in graphml_files:
             try:
-                # Load graph
-                G = nx.read_graphml(graphml_file)
+                logger.debug(f"\n--- Processing {graphml_file.name} ---")
 
-                # Extract version info from filename
-                import re
-                match = re.search(r"dependency-graph-(\d+)_([0-9a-fA-F]+)\.graphml", graphml_file.name)
-                if not match:
-                    continue
+                # 🚨 USA LA LOGICA CORRETTA
+                extracted_data = extract_features_with_correct_logic(
+                    graphml_path=graphml_file,
+                    smell_map=smell_map,
+                    config=config
+                )
 
-                version_idx, version_hash = match.groups()
-
-                # Check graph size
-                if len(G) > feature_config.get('max_graph_size', 10000):
-                    logger.warning(f"Skipping {graphml_file.name}: graph too large ({len(G)} nodes)")
-                    continue
-
-                # Process each component in the smell map
-                for comp_id, smelly_versions in smell_map.items():
-                    is_smelly = version_hash in smelly_versions
-
-                    # Skip non-smelly if not configured to include them
-                    if not is_smelly and not feature_config.get('include_non_smelly', False):
+                # Salva i dati estratti
+                for i, data in enumerate(extracted_data):
+                    # Extract version info for filename
+                    match = re.search(r"dependency-graph-(\d+)_([0-9a-fA-F]+)\.graphml", graphml_file.name)
+                    if match:
+                        version_idx, version_id = match.groups()
+                    else:
                         continue
 
-                    # Compute features directly
-                    data = compute_graph_features_optimized(G, comp_id, is_smelly, feature_config)
-
-                    if data is None:
-                        continue
+                    # Generate filename
+                    filename = f"{project}_{data.center_node}_{files_processed:04d}_{version_idx}_{version_id[:8]}.pt"
+                    output_path = output_dir / filename
 
                     # Add additional metadata
                     data.project_name = project
-                    data.component_id = comp_id
-                    data.version_hash = version_hash
-                    data.version_idx = int(version_idx)
+                    data.component_id = data.center_node
                     data.extraction_timestamp = torch.tensor([int(time.time())], dtype=torch.long)
 
-                    # Generate filename
-                    filename = f"{project}_{comp_id}_{processed_count:04d}_{version_idx}_{version_hash}.pt"
-                    output_path = output_dir / filename
+                    # Count and save
+                    if hasattr(data, 'is_smelly') and data.is_smelly.item():
+                        total_smelly += 1
+                    else:
+                        total_clean += 1
 
-                    # Save .pt file
                     torch.save(data, output_path)
-                    processed_count += 1
+                    files_processed += 1
 
-                logger.debug(f"Processed {graphml_file.name}: extracted features for components")
+                project_stats['graphml_processed'] += 1
+                logger.debug(f"Completed {graphml_file.name}: {len(extracted_data)} subgraphs extracted")
 
             except Exception as e:
                 logger.warning(f"Failed to process {graphml_file}: {e}")
                 continue
 
-        # Update processing history
-        history = load_processing_history()
-        history[project] = {
-            'source_hash': get_project_source_hash(project_dir),
-            'last_processed': time.time(),
-            'files_processed': processed_count,
-            'graphml_files': len(graphml_files)
-        }
-        save_processing_history(history)
+        # Final statistics
+        project_stats.update({
+            'success': True,
+            'files_processed': files_processed,
+            'smelly_count': total_smelly,
+            'clean_count': total_clean,
+            'total_extracted': files_processed,
+            'processing_time': time.time() - start_time
+        })
 
-        project_stats['files_processed'] = processed_count
-        project_stats['subgraph_stats'] = {
-            'files_generated': processed_count,
-            'graphml_processed': len(graphml_files)
-        }
-        project_stats['success'] = True
+        logger.info(f"✅ Project {project} completed:")
+        logger.info(f"   - GraphML files processed: {project_stats['graphml_processed']}")
+        logger.info(f"   - Total subgraphs: {files_processed}")
+        logger.info(f"   - Smelly samples: {total_smelly}")
+        logger.info(f"   - Clean samples: {total_clean}")
+        logger.info(f"   - Processing time: {project_stats['processing_time']:.2f}s")
 
-        logger.info(f"✅ Successfully processed {project}: {processed_count} .pt files generated")
+        # 🚨 VERIFICA CRITICA
+        if total_smelly == 0:
+            logger.warning(f"⚠️  Still no smelly samples for {project}!")
+            logger.warning("This suggests a deeper issue in the smell_map or logic.")
+        else:
+            logger.info(f"🎉 SUCCESS: Found {total_smelly} smelly samples!")
 
     except Exception as e:
         project_stats['error'] = str(e)
@@ -349,170 +282,212 @@ def process_project_optimized(project: str, arcan_dir: Path, output_dir: Path,
 
     finally:
         project_stats['processing_time'] = time.time() - start_time
-        logger.info(f"Project {project} processed in {project_stats['processing_time']:.2f} seconds")
 
     return project_stats
 
 
-def run_simplified_pipeline(force_refresh_all: bool = False,
-                            force_refresh_projects: List[str] = None):
-    """Run simplified pipeline that saves .pt files in data/ folder"""
+def debug_smell_map_consistency(project: str, arcan_dir: Path):
+    """
+    🔍 Debug per verificare consistenza della smell_map
+    """
+    logger.info(f"🔍 Debugging smell_map consistency for {project}")
 
-    pipeline_start = time.time()
+    project_dir = arcan_dir / project
+
+    # 1. Load smell_map
+    map_path = project_dir / "smell_map.json"
+    if not map_path.exists():
+        logger.error(f"❌ smell_map.json not found: {map_path}")
+        return
+
+    smell_map = json.loads(map_path.read_text())
+    logger.info(f"✅ Smell map loaded: {len(smell_map)} components")
+
+    # 2. Analizza GraphML files
+    graphml_files = list(project_dir.glob("dependency-graph-*.graphml"))
+    logger.info(f"✅ Found {len(graphml_files)} GraphML files")
+
+    if not graphml_files:
+        logger.error("❌ No GraphML files found!")
+        return
+
+    # 3. Test con un GraphML file
+    test_file = graphml_files[0]
+    logger.info(f"🧪 Testing with {test_file.name}")
+
+    # Estrai versionId
+    match = re.search(r"dependency-graph-(\d+)_([0-9a-fA-F]+)\.graphml", test_file.name)
+    if not match:
+        logger.error(f"❌ Cannot parse version from {test_file.name}")
+        return
+
+    version_index, version_id = match.groups()
+    logger.info(f"   Version: index={version_index}, id={version_id}")
+
+    # 4. Carica grafo e controlla nodi
+    try:
+        G = nx.read_graphml(test_file)
+        graph_nodes = [str(n) for n in G.nodes()]
+        logger.info(f"   Graph nodes: {len(graph_nodes)}")
+
+        # 5. Verifica overlap con smell_map
+        smell_map_components = set(smell_map.keys())
+        graph_node_set = set(graph_nodes)
+        overlap = smell_map_components.intersection(graph_node_set)
+
+        logger.info(f"   Smell map components: {len(smell_map_components)}")
+        logger.info(f"   Node overlap: {len(overlap)}")
+
+        if len(overlap) == 0:
+            logger.error("❌ NO OVERLAP between graph nodes and smell_map components!")
+            logger.error("   This means the component IDs don't match.")
+            logger.error(f"   Sample graph nodes: {graph_nodes[:5]}")
+            logger.error(f"   Sample smell components: {list(smell_map_components)[:5]}")
+        else:
+            logger.info(f"✅ Found overlap: {len(overlap)} components")
+
+            # 6. Test specifico per version matching
+            smelly_in_this_version = 0
+            clean_in_this_version = 0
+
+            for comp_id in overlap:
+                smelly_versions = smell_map[comp_id]
+                is_smelly = version_id in smelly_versions
+
+                if is_smelly:
+                    smelly_in_this_version += 1
+                else:
+                    clean_in_this_version += 1
+
+            logger.info(f"   In version {version_id}:")
+            logger.info(f"     Smelly components: {smelly_in_this_version}")
+            logger.info(f"     Clean components: {clean_in_this_version}")
+
+            if smelly_in_this_version == 0:
+                logger.warning("⚠️  No smelly components in this version")
+                logger.warning("   Try with a different GraphML file or check smell_map")
+            else:
+                logger.info("🎉 Found smelly components! Logic should work.")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to load/analyze graph: {e}")
+
+
+def run_correct_logic_pipeline(projects: List[str], arcan_dir: Path, output_dir: Path, config: dict):
+    """
+    🚨 PIPELINE PRINCIPALE con logica corretta
+    """
     pipeline_stats = {
-        'pipeline_start': time.time(),
-        'total_projects': 0,
+        'total_projects': len(projects),
         'successful_projects': 0,
-        'skipped_projects': 0,
         'failed_projects': 0,
-        'project_details': [],
-        'dataset_stats': {},
-        'total_time': 0,
-        'errors': []
+        'total_smelly_samples': 0,
+        'total_clean_samples': 0,
+        'project_details': []
+    }
+
+    logger.info(f"🚀 Starting CORRECT LOGIC pipeline for {len(projects)} projects")
+
+    for project in projects:
+        logger.info(f"\n{'=' * 50}")
+        logger.info(f"Processing project: {project}")
+        logger.info(f"{'=' * 50}")
+
+        project_stats = process_project_with_correct_logic(
+            project, arcan_dir, output_dir, config
+        )
+
+        pipeline_stats['project_details'].append(project_stats)
+
+        if project_stats['success']:
+            pipeline_stats['successful_projects'] += 1
+            pipeline_stats['total_smelly_samples'] += project_stats['smelly_count']
+            pipeline_stats['total_clean_samples'] += project_stats['clean_count']
+        else:
+            pipeline_stats['failed_projects'] += 1
+            logger.error(f"❌ Project {project} failed: {project_stats['error']}")
+
+    # Final summary
+    logger.info(f"\n🏁 PIPELINE COMPLETED")
+    logger.info(f"   Successful projects: {pipeline_stats['successful_projects']}/{pipeline_stats['total_projects']}")
+    logger.info(f"   Total smelly samples: {pipeline_stats['total_smelly_samples']}")
+    logger.info(f"   Total clean samples: {pipeline_stats['total_clean_samples']}")
+    logger.info(f"   Total samples: {pipeline_stats['total_smelly_samples'] + pipeline_stats['total_clean_samples']}")
+
+    if pipeline_stats['total_smelly_samples'] == 0:
+        logger.error("❌ CRITICAL: Still no smelly samples found!")
+        logger.error("   Run debug_smell_map_consistency() on individual projects")
+    else:
+        logger.info("🎉 SUCCESS: Found smelly samples with correct logic!")
+
+    return pipeline_stats
+
+
+if __name__ == "__main__":
+    import argparse
+    import yaml
+
+    parser = argparse.ArgumentParser(description="Run CORRECT LOGIC pipeline")
+    parser.add_argument("--debug-project", help="Debug specific project")
+    parser.add_argument("--test-project", help="Test single project with correct logic")
+    parser.add_argument("--run-all", action="store_true", help="Run all projects")
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S'
+    )
+
+    # Paths
+    ROOT = Path(__file__).resolve().parent.parent
+    ARCAN_DIR = ROOT / "arcan_out" / "intervalDays2"
+    OUTPUT_DIR = ROOT / "dataset_builder" / "data" / "dataset_graph_feature"
+    CONFIG_PATH = ROOT / "config.yaml"
+
+    # Config
+    config = {
+        'min_subgraph_size': 3,
+        'max_subgraph_size': 200,
+        'max_graph_size': 10000,
+        'radius': 1,
+        'remove_isolated_nodes': True,
+        'min_edges': 1,
+        'include_non_smelly': True,  # 🚨 IMPORTANTE: True per avere campioni bilanciati
+        'validate_features': True
     }
 
     try:
-        # Load configuration
-        logger.info("Loading configuration...")
-        projects = yaml.safe_load(CONFIG_PATH.read_text())['projects']
-        feature_config = load_feature_config(CONFIG_PATH)
+        if args.debug_project:
+            debug_smell_map_consistency(args.debug_project, ARCAN_DIR)
 
-        pipeline_stats['total_projects'] = len(projects)
-        logger.info(f"Found {len(projects)} projects to process")
+        elif args.test_project:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            stats = process_project_with_correct_logic(
+                args.test_project, ARCAN_DIR, OUTPUT_DIR, config
+            )
+            print(f"\nTest completed: {stats}")
 
-        # Create output directory
-        OUTPUT_DIR_SUBGRAPH.mkdir(parents=True, exist_ok=True)
+        elif args.run_all:
+            # Load projects from config
+            projects = yaml.safe_load(CONFIG_PATH.read_text())['projects']
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Process each project
-        for project in projects:
-            force_refresh = force_refresh_all or (force_refresh_projects and project in force_refresh_projects)
-
-            project_stats = process_project_optimized(
-                project, ARCAN_DIR, OUTPUT_DIR_SUBGRAPH, feature_config, force_refresh
+            pipeline_stats = run_correct_logic_pipeline(
+                projects, ARCAN_DIR, OUTPUT_DIR, config
             )
 
-            pipeline_stats['project_details'].append(project_stats)
-
-            if project_stats['success']:
-                pipeline_stats['successful_projects'] += 1
-                if project_stats['skipped']:
-                    pipeline_stats['skipped_projects'] += 1
-            else:
-                pipeline_stats['failed_projects'] += 1
-                pipeline_stats['errors'].append({
-                    'project': project,
-                    'error': project_stats['error']
-                })
-
-        logger.info("✅ Processing completed.")
-
-        # Collect final dataset statistics
-        logger.info("Collecting final dataset statistics...")
-        pipeline_stats['dataset_stats'] = collect_dataset_stats(OUTPUT_DIR_SUBGRAPH)
-
-        logger.info("📊 Final Dataset Statistics:")
-        logger.info(f"  - Total .pt files: {pipeline_stats['dataset_stats']['total_subgraphs']}")
-        logger.info(f"  - Projects: {len(pipeline_stats['dataset_stats']['projects'])}")
-        logger.info(f"  - Unique components: {len(pipeline_stats['dataset_stats']['components'])}")
-        logger.info(f"  - Smelly samples: {pipeline_stats['dataset_stats'].get('smelly_count', 'N/A')}")
-        logger.info(f"  - Clean samples: {pipeline_stats['dataset_stats'].get('non_smelly_count', 'N/A')}")
-
-    except Exception as e:
-        error_msg = f"Pipeline critical failure: {e}"
-        logger.error(f"❌ {error_msg}")
-        pipeline_stats['errors'].append({
-            'component': 'pipeline',
-            'error': error_msg
-        })
-        raise
-
-    finally:
-        # Final statistics
-        pipeline_stats['total_time'] = time.time() - pipeline_start
-
-        # Save statistics
-        with open(PIPELINE_STATS_FILE, 'w') as f:
-            json.dump(pipeline_stats, f, indent=2, default=str)
-
-        # Log summary
-        logger.info("🏁 Pipeline finished.")
-        logger.info(
-            f"Results: {pipeline_stats['successful_projects']}/{pipeline_stats['total_projects']} projects successful")
-        logger.info(f"Skipped: {pipeline_stats['skipped_projects']} (unchanged)")
-        logger.info(f"Total time: {pipeline_stats['total_time']:.2f} seconds")
-
-        if pipeline_stats['errors']:
-            logger.warning(f"Encountered {len(pipeline_stats['errors'])} errors during processing")
-
-
-def clean_project_data(project: str):
-    """Remove all .pt files for a specific project"""
-    files_removed = 0
-    for pt_file in OUTPUT_DIR_SUBGRAPH.glob(f"{project}_*.pt"):
-        pt_file.unlink()
-        files_removed += 1
-
-    # Remove from processing history
-    history = load_processing_history()
-    if project in history:
-        del history[project]
-        save_processing_history(history)
-
-    logger.info(f"🗑️  Removed {files_removed} .pt files for {project}")
-
-
-def show_data_info():
-    """Show information about existing data"""
-    if not OUTPUT_DIR_SUBGRAPH.exists():
-        logger.info("No data directory found")
-        return
-
-    stats = collect_dataset_stats(OUTPUT_DIR_SUBGRAPH)
-    history = load_processing_history()
-
-    logger.info("📊 Current Data Status:")
-    logger.info(f"  Total .pt files: {stats['total_subgraphs']}")
-    logger.info(f"  Projects: {stats['projects']}")
-    logger.info(f"  Smelly samples: {stats.get('smelly_count', 0)}")
-    logger.info(f"  Clean samples: {stats.get('non_smelly_count', 0)}")
-
-    logger.info("\n📂 Processing History:")
-    for project, info in history.items():
-        last_time = pd.Timestamp(info['last_processed'], unit='s').strftime('%Y-%m-%d %H:%M')
-        logger.info(f"  {project}: {info['files_processed']} files (last: {last_time})")
-
-
-if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run simplified data pipeline")
-    parser.add_argument("--force-refresh-all", action="store_true",
-                        help="Force refresh all projects (ignore cache)")
-    parser.add_argument("--force-refresh", nargs='+',
-                        help="Force refresh specific projects")
-    parser.add_argument("--clean", help="Remove all .pt files for specific project")
-    parser.add_argument("--info", action="store_true",
-                        help="Show information about existing data")
-    parser.add_argument("--log-level", default="INFO",
-                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
-    args = parser.parse_args()
-
-    # Configure logging
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
-
-    try:
-        if args.clean:
-            clean_project_data(args.clean)
-        elif args.info:
-            show_data_info()
+            # Save stats
+            stats_file = OUTPUT_DIR.parent / "correct_logic_pipeline_stats.json"
+            with open(stats_file, 'w') as f:
+                json.dump(pipeline_stats, f, indent=2)
+            print(f"Pipeline stats saved to: {stats_file}")
         else:
-            run_simplified_pipeline(
-                force_refresh_all=args.force_refresh_all,
-                force_refresh_projects=args.force_refresh
-            )
+            print("Use --debug-project, --test-project, or --run-all")
 
-    except KeyboardInterrupt:
-        logger.info("Pipeline interrupted by user")
     except Exception as e:
         logger.error(f"Pipeline failed: {e}")
-        exit(1)
+        import traceback
+
+        logger.error(traceback.format_exc())

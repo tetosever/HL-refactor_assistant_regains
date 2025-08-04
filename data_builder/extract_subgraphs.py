@@ -394,7 +394,7 @@ def extract_graph_features(
         feature_config: dict
 ) -> None:
     """
-    Estrazione migliorata con parallelizzazione opzionale e statistiche
+    Estrazione migliorata con fix del bug smelly/non-smelly
     """
     project_dir = arcan_dir / project_name
     map_path = project_dir / "smell_map.json"
@@ -408,6 +408,13 @@ def extract_graph_features(
     except Exception as e:
         logger.error(f"Failed to load smell map for {project_name}: {e}")
         raise
+
+    # Debug: log della smell map caricata
+    logger.info(f"Loaded smell map for {project_name}: {len(comp2smelly)} components")
+    if comp2smelly:
+        sample_comp = next(iter(comp2smelly.keys()))
+        sample_versions = comp2smelly[sample_comp]
+        logger.info(f"Sample component {sample_comp}: versions {sample_versions[:3]}...")
 
     # Prepara lista di graphml da processare
     records: List[Tuple[int, str, Path]] = []
@@ -425,8 +432,13 @@ def extract_graph_features(
     duplicates = 0
     processed_count = 0
     error_count = 0
+    smelly_processed = 0
+    non_smelly_processed = 0
 
     for idx, version, gpath in records:
+        # Debug: log della versione corrente
+        logger.debug(f"Processing GraphML {gpath.name} with version {version}")
+
         # Carica il grafo
         try:
             G = nx.read_graphml(gpath)
@@ -447,8 +459,22 @@ def extract_graph_features(
         for comp_id, smelly_versions in comp2smelly.items():
             is_smelly = version in smelly_versions
 
-            # Salta componenti non-smelly se non richiesti
-            if not is_smelly and not feature_config.get('include_non_smelly', False):
+            # 🚨 FIX PRINCIPALE: Logica corretta per smelly/non-smelly
+            should_process = False
+
+            if is_smelly:
+                # SEMPRE processa i componenti smelly
+                should_process = True
+                logger.debug(f"Component {comp_id} is SMELLY for version {version}")
+            elif feature_config.get('include_non_smelly', False):
+                # Processa non-smelly solo se configurato
+                should_process = True
+                logger.debug(f"Component {comp_id} is NON-SMELLY for version {version} (including)")
+            else:
+                # Salta non-smelly se non richiesti
+                logger.debug(f"Component {comp_id} is NON-SMELLY for version {version} (skipping)")
+
+            if not should_process:
                 continue
 
             # Estrai subgrafo
@@ -462,6 +488,7 @@ def extract_graph_features(
             )
 
             if data is None:
+                logger.debug(f"Failed to extract subgraph for component {comp_id}")
                 continue
 
             # Controlla duplicati con fingerprint stabile
@@ -488,6 +515,14 @@ def extract_graph_features(
                 components_processed += 1
                 processed_count += 1
 
+                # Conta smelly/non-smelly processati
+                if is_smelly:
+                    smelly_processed += 1
+                    logger.debug(f"✅ Saved SMELLY subgraph: {fname}")
+                else:
+                    non_smelly_processed += 1
+                    logger.debug(f"✅ Saved NON-SMELLY subgraph: {fname}")
+
             except Exception as e:
                 logger.warning(f"torch.save failed for {outfp}: {e}")
                 error_count += 1
@@ -495,11 +530,29 @@ def extract_graph_features(
 
         logger.debug(f"Graph {gpath.name}: processed {components_processed} components")
 
-    # Statistiche finali
+    # Statistiche finali con dettagli smelly/non-smelly
     logger.info(f"Completed {project_name}:")
-    logger.info(f"  - Processed: {processed_count} subgraphs")
+    logger.info(f"  - Total processed: {processed_count} subgraphs")
+    logger.info(f"  - Smelly samples: {smelly_processed}")
+    logger.info(f"  - Non-smelly samples: {non_smelly_processed}")
     logger.info(f"  - Duplicates eliminated: {duplicates}")
     logger.info(f"  - Errors: {error_count}")
+
+    # Verifica che abbiamo processato dei smelly
+    if smelly_processed == 0:
+        logger.warning(f"⚠️  NO SMELLY SAMPLES PROCESSED for {project_name}!")
+        logger.warning("  This indicates a version matching problem.")
+        logger.warning(f"  Check if GraphML version hashes match smell_map versions.")
+
+        # Debug: mostra alcuni esempi per il debugging
+        if comp2smelly:
+            sample_comp = next(iter(comp2smelly.keys()))
+            sample_versions = comp2smelly[sample_comp]
+            logger.warning(f"  Sample smell_map versions: {sample_versions[:5]}")
+
+        if records:
+            sample_versions = [version for _, version, _ in records[:5]]
+            logger.warning(f"  Sample GraphML versions: {sample_versions}")
 
     # Salva statistiche del progetto
     stats = collect_dataset_stats(output_dir)

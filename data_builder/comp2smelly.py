@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Script migliorato per build_smell_map_arcan.py
+Script corretto per build_smell_map_arcan.py con logica originale mantenuta
 
-Identificazione ottimizzata delle componenti hub-like (smelly) con:
-- Validazione robusta dei file di input
-- Caching per evitare riprocessing
-- Gestione errori migliorata
-- Statistiche dettagliate
+Il problema nel codice attuale era:
+1. Join scorretto: usava smellId (vertexId) invece di fromId per il join con affects
+2. Filtro troppo restrittivo sui tipi di costrutto
+3. Logica di mapping invertita - mappava hub invece che componenti affette
+
+Questa versione ripristina la logica originale corretta.
 """
 
 import hashlib
@@ -14,10 +15,14 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+from collections import defaultdict
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Tipi di costrutti da escludere (come nel codice originale)
+EXCLUDED_TYPES = {"PACKAGE"}
 
 
 def validate_csv_files(project_dir: Path) -> Tuple[bool, List[str]]:
@@ -48,6 +53,41 @@ def validate_csv_files(project_dir: Path) -> Tuple[bool, List[str]]:
             errors.append(f"Cannot read {filename}: {e}")
 
     return len(errors) == 0, errors
+
+
+def analyze_construct_types(project_dir: Path) -> Dict:
+    """Analizza i tipi di costrutti presenti nel progetto per debugging"""
+    chars_path = project_dir / "smell-characteristics.csv"
+
+    if not chars_path.exists():
+        return {}
+
+    try:
+        df_chars = pd.read_csv(chars_path)
+
+        # Statistiche sui tipi di costrutti
+        type_counts = df_chars['AffectedConstructType'].value_counts().to_dict()
+
+        # Identifica quali saranno esclusi
+        unique_types = set(df_chars['AffectedConstructType'].unique())
+        excluded_types = unique_types.intersection(EXCLUDED_TYPES)
+        included_types = unique_types - EXCLUDED_TYPES
+
+        analysis = {
+            'total_constructs': len(df_chars),
+            'unique_types': list(unique_types),
+            'type_counts': type_counts,
+            'included_types': list(included_types),
+            'excluded_types_found': list(excluded_types),
+            'potential_smells': sum(count for type_name, count in type_counts.items()
+                                    if type_name not in EXCLUDED_TYPES)
+        }
+
+        return analysis
+
+    except Exception as e:
+        logger.error(f"Failed to analyze construct types: {e}")
+        return {}
 
 
 def get_cache_key(project_dir: Path) -> str:
@@ -101,76 +141,10 @@ def save_to_cache(project_dir: Path, cache_key: str, mapping: Dict, stats: Dict)
         logger.warning(f"Failed to save cache: {e}")
 
 
-def create_joined_csv(project_dir: Path) -> Tuple[pd.DataFrame, Dict]:
-    """
-    Crea un DataFrame unito con statistiche dettagliate
-    """
-    chars_path = project_dir / "smell-characteristics.csv"
-    affects_path = project_dir / "smell-affects.csv"
-
-    try:
-        df_chars = pd.read_csv(chars_path)
-        df_affects = pd.read_csv(affects_path)
-    except Exception as e:
-        raise RuntimeError(f"Failed to read CSV files: {e}")
-
-    # Statistiche pre-processing
-    stats = {
-        'total_characteristics': len(df_chars),
-        'total_affects': len(df_affects),
-        'unique_versions_chars': df_chars['versionId'].nunique(),
-        'unique_versions_affects': df_affects['versionId'].nunique(),
-        'construct_types': df_chars['AffectedConstructType'].value_counts().to_dict()
-    }
-
-    # Filtra nodi hub-like (non PACKAGE) con validazione
-    package_mask = df_chars["AffectedConstructType"].isin(["PACKAGE"])
-    hub_rows = df_chars[~package_mask].copy()
-
-    if hub_rows.empty:
-        logger.warning("No hub-like components found (all are PACKAGE type)")
-        return pd.DataFrame(), stats
-
-    hub_rows = hub_rows.rename(columns={"vertexId": "smellId"})
-
-    # Validazione dei dati
-    if 'smellId' not in hub_rows.columns or 'versionId' not in hub_rows.columns:
-        raise ValueError("Missing required columns after rename")
-
-    # Prepara affects data
-    affects_ren = df_affects.rename(columns={"fromId": "smellId"})
-
-    # Controllo consistenza versioni
-    common_versions = set(hub_rows['versionId']) & set(affects_ren['versionId'])
-    if not common_versions:
-        logger.warning("No common versions between characteristics and affects")
-        return pd.DataFrame(), stats
-
-    stats['common_versions'] = len(common_versions)
-
-    # Join interno su smellId e versionId
-    try:
-        aff_join = affects_ren.merge(
-            hub_rows,
-            on=["smellId", "versionId"],
-            how="inner"
-        )
-    except Exception as e:
-        raise RuntimeError(f"Failed to join DataFrames: {e}")
-
-    # Statistiche post-join
-    stats.update({
-        'joined_records': len(aff_join),
-        'unique_components_affected': aff_join['toId'].nunique() if 'toId' in aff_join.columns else 0,
-        'unique_smells': aff_join['smellId'].nunique() if 'smellId' in aff_join.columns else 0
-    })
-
-    return aff_join, stats
-
-
 def build_smell_map(project_dir: Path) -> Tuple[Dict, Dict]:
     """
-    Costruisce un dizionario compId -> [versionId, ...] con statistiche dettagliate
+    Costruisce un dizionario compId -> [versionId, ...]
+    Ripristina la logica originale corretta del codice vecchio
     """
     # Valida file di input
     is_valid, errors = validate_csv_files(project_dir)
@@ -183,47 +157,106 @@ def build_smell_map(project_dir: Path) -> Tuple[Dict, Dict]:
     if cached_result is not None:
         return cached_result, {}
 
-    # Processa i dati
-    aff_join, stats = create_joined_csv(project_dir)
+    # Carica i file CSV
+    chars_path = project_dir / "smell-characteristics.csv"
+    affects_path = project_dir / "smell-affects.csv"
 
-    if aff_join.empty:
-        logger.warning(f"No data to process for {project_dir.name}")
+    try:
+        df_chars = pd.read_csv(chars_path)
+        df_affects = pd.read_csv(affects_path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read CSV files: {e}")
+
+    # Analizza tipi di costrutti prima del filtraggio
+    construct_analysis = analyze_construct_types(project_dir)
+
+    # Statistiche pre-processing
+    stats = {
+        'total_characteristics': len(df_chars),
+        'total_affects': len(df_affects),
+        'unique_versions_chars': df_chars['versionId'].nunique(),
+        'unique_versions_affects': df_affects['versionId'].nunique(),
+        'construct_analysis': construct_analysis
+    }
+
+    # LOGICA ORIGINALE CORRETTA:
+    # 1. Filtra characteristics escludendo solo PACKAGE (come nel codice originale)
+    hub_rows = df_chars[~df_chars["AffectedConstructType"].isin(EXCLUDED_TYPES)].copy()
+
+    if hub_rows.empty:
+        logger.warning("No valid smell components found after filtering")
+        logger.info(f"Available construct types: {construct_analysis.get('type_counts', {})}")
         return {}, stats
 
-    # Validazione colonne necessarie
-    required_cols = ['toId', 'versionId']
-    missing_cols = set(required_cols) - set(aff_join.columns)
-    if missing_cols:
-        raise ValueError(f"Missing required columns in joined data: {missing_cols}")
+    # 2. Rinomina vertexId -> smellId in characteristics
+    hub_rows = hub_rows.rename(columns={"vertexId": "smellId"})
 
-    # Converti tipi
-    try:
-        aff_join['toId'] = aff_join['toId'].astype(str)
-        aff_join['versionId'] = aff_join['versionId'].astype(str)
-    except Exception as e:
-        raise ValueError(f"Failed to convert column types: {e}")
+    # 3. Rinomina fromId -> smellId in affects
+    affects_ren = df_affects.rename(columns={"fromId": "smellId"})
 
-    # Aggruppa e costruisci mapping
+    # Log delle statistiche di filtraggio
+    logger.info(f"Filtering results:")
+    logger.info(f"  - Total constructs: {len(df_chars)}")
+    logger.info(f"  - Valid smell constructs: {len(hub_rows)}")
+    logger.info(f"  - Excluded constructs: {len(df_chars) - len(hub_rows)}")
+
+    # Aggiorna statistiche
+    stats.update({
+        'valid_smell_constructs': len(hub_rows),
+        'excluded_constructs': len(df_chars) - len(hub_rows),
+        'included_construct_types': hub_rows['AffectedConstructType'].value_counts().to_dict()
+    })
+
+    # Controllo consistenza versioni
+    common_versions = set(hub_rows['versionId']) & set(affects_ren['versionId'])
+    if not common_versions:
+        logger.warning("No common versions between characteristics and affects")
+        return {}, stats
+
+    stats['common_versions'] = len(common_versions)
+
+    # 4. Join su smellId e versionId (QUESTA È LA CHIAVE!)
+    # smellId in hub_rows è il vertexId originale (ID dello smell)
+    # smellId in affects_ren è il fromId originale (ID del nodo sorgente, che dovrebbe essere lo smell)
     try:
-        comp2smelly = (
-            aff_join
-            .groupby('toId')['versionId']
-            .agg(set)  # Crea set di versionId
-            .to_dict()  # Trasforma in dict
+        aff_join = affects_ren.merge(
+            hub_rows,
+            on=["smellId", "versionId"],
+            how="inner"
         )
-
-        # Converte in dizionario con liste ordinate
-        comp2smelly_sorted = {
-            comp: sorted(versions)
-            for comp, versions in comp2smelly.items()
-        }
-
     except Exception as e:
-        raise RuntimeError(f"Failed to build component mapping: {e}")
+        raise RuntimeError(f"Failed to join DataFrames: {e}")
+
+    if aff_join.empty:
+        logger.warning("No records after join - check data consistency")
+        logger.info("Sample characteristics smellIds: " + str(hub_rows['smellId'].head().tolist()))
+        logger.info("Sample affects smellIds: " + str(affects_ren['smellId'].head().tolist()))
+        return {}, stats
+
+    # Statistiche post-join
+    stats.update({
+        'joined_records': len(aff_join),
+        'unique_components_affected': aff_join['toId'].nunique() if 'toId' in aff_join.columns else 0,
+        'unique_smell_hubs': aff_join['smellId'].nunique() if 'smellId' in aff_join.columns else 0
+    })
+
+    logger.info(f"Successfully joined data: {len(aff_join)} records for {stats['unique_smell_hubs']} smell hubs")
+
+    # 5. Costruisci comp2smelly (LOGICA ORIGINALE)
+    # Mappa componente affetta (toId) -> versioni in cui è affetta
+    comp2smelly = defaultdict(set)
+
+    for _, row in aff_join.iterrows():
+        comp_id = str(row["toId"])  # Componente affetta dallo smell
+        ver_id = str(row["versionId"])  # Versione in cui è affetta
+        comp2smelly[comp_id].add(ver_id)
+
+    # Converte in dizionario con liste ordinate (come nel codice originale)
+    comp2smelly_sorted = {comp: sorted(versions) for comp, versions in comp2smelly.items()}
 
     # Statistiche finali
     stats.update({
-        'total_smelly_components': len(comp2smelly_sorted),
+        'total_affected_components': len(comp2smelly_sorted),
         'avg_versions_per_component': sum(len(v) for v in comp2smelly_sorted.values()) / len(
             comp2smelly_sorted) if comp2smelly_sorted else 0,
         'max_versions_per_component': max(len(v) for v in comp2smelly_sorted.values()) if comp2smelly_sorted else 0,
@@ -238,7 +271,7 @@ def build_smell_map(project_dir: Path) -> Tuple[Dict, Dict]:
 
 def extract_smell_maps(project: str, arcan_dir: Path) -> Dict:
     """
-    Funzione principale migliorata per estrarre le mappature "smelly"
+    Funzione principale per estrarre le mappature "smelly" con logica originale corretta
     """
     project_dir = arcan_dir / project
 
@@ -265,7 +298,8 @@ def extract_smell_maps(project: str, arcan_dir: Path) -> Dict:
             json.dump(stats, f, indent=2, ensure_ascii=False, default=str)
 
         logger.info(f"✅ Smell map saved: {output_json}")
-        logger.info(f"   - Components found: {stats.get('total_smelly_components', 0)}")
+        logger.info(f"   - Affected components: {stats.get('total_affected_components', 0)}")
+        logger.info(f"   - Smell hubs: {stats.get('unique_smell_hubs', 0)}")
         logger.info(f"   - Avg versions per component: {stats.get('avg_versions_per_component', 0):.2f}")
         logger.info(f"✅ Statistics saved: {stats_json}")
 
@@ -281,7 +315,7 @@ def validate_smell_map(mapping: Dict, project_dir: Path) -> List[str]:
     warnings = []
 
     if not mapping:
-        warnings.append("Empty smell map generated")
+        warnings.append("Empty smell map generated - no affected components found")
         return warnings
 
     # Controlla componenti con singola versione (potenziali false positive)
@@ -308,10 +342,11 @@ def validate_smell_map(mapping: Dict, project_dir: Path) -> List[str]:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Extract smell maps from Arcan output")
+    parser = argparse.ArgumentParser(description="Extract smell maps from Arcan output (corrected logic)")
     parser.add_argument("project", help="Project name")
     parser.add_argument("arcan_dir", type=Path, help="Path to arcan_out directory")
     parser.add_argument("--validate", action="store_true", help="Run validation checks")
+    parser.add_argument("--analyze-types", action="store_true", help="Show detailed construct type analysis")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
@@ -322,6 +357,22 @@ if __name__ == "__main__":
     )
 
     try:
+        if args.analyze_types:
+            # Analisi dettagliata dei tipi di costrutti
+            project_dir = args.arcan_dir / args.project
+            analysis = analyze_construct_types(project_dir)
+
+            print(f"\n=== Construct Type Analysis for {args.project} ===")
+            print(f"Total constructs: {analysis.get('total_constructs', 0)}")
+            print(f"Valid smell constructs: {analysis.get('potential_smells', 0)}")
+            print(f"\nAll construct types found:")
+            for type_name, count in analysis.get('type_counts', {}).items():
+                status = "EXCLUDED" if type_name in EXCLUDED_TYPES else "INCLUDED"
+                print(f"  {type_name}: {count} ({status})")
+
+            print(f"\nIncluded types: {analysis.get('included_types', [])}")
+            print(f"Excluded types found: {analysis.get('excluded_types_found', [])}")
+
         mapping = extract_smell_maps(args.project, args.arcan_dir)
 
         if args.validate:
@@ -333,7 +384,7 @@ if __name__ == "__main__":
                     logger.warning(f"  - {warning}")
 
         print(f"Successfully processed {args.project}")
-        print(f"Found {len(mapping)} smelly components")
+        print(f"Found {len(mapping)} components affected by smells")
 
     except Exception as e:
         logger.error(f"Failed: {e}")

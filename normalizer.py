@@ -6,7 +6,7 @@ from sklearn.preprocessing import RobustScaler
 from torch_geometric.data import Data
 from torch_geometric.transforms import BaseTransform
 
-from graph_feature_extraction import EnhancedGraphFeatureExtractor
+from data_builder.graph_feature_extraction import EnhancedGraphFeatureExtractor
 
 
 class EnhancedStructuralNormalizer(BaseTransform):
