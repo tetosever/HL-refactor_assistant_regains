@@ -795,11 +795,6 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
             if not hasattr(data, 'x') or not hasattr(data, 'edge_index'):
                 continue
 
-            # CRITICAL: Validate and fix 7-feature format
-            if data.x.size(1) != 7:
-                logger.debug(f"File {file.name} has {data.x.size(1)} features, fixing to 7")
-                data = validate_7_feature_format(data)
-
             if data.x.size(0) < 3:  # Need at least 3 nodes
                 continue
 
@@ -810,9 +805,22 @@ def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch
             if torch.isnan(data.x).any() or torch.isnan(data.edge_index.float()).any():
                 continue
 
-            # Ensure batch attribute doesn't exist (will be added when needed)
-            if hasattr(data, 'batch'):
-                delattr(data, 'batch')
+            # Remove non-batchable attributes before classification
+            for attr in [
+                'batch',
+                'node_id_to_index',
+                'index_to_node_id',
+                'edge_id_mapping',
+                'original_node_ids',
+                'original_edge_ids',
+            ]:
+                if hasattr(data, attr):
+                    delattr(data, attr)
+
+            # Ensure 7-feature format
+            if data.x.size(1) != 7:
+                logger.debug(f"File {file.name} has {data.x.size(1)} features, fixing to 7")
+            data = validate_7_feature_format(data)
 
             # Classify by smell
             is_smelly = getattr(data, 'is_smelly', 0)
