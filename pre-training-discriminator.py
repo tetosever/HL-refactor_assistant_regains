@@ -65,12 +65,13 @@ class AdvancedLoss(nn.Module):
     """Advanced loss combining multiple objectives"""
 
     def __init__(self, alpha_focal=2.0, gamma_focal=2.0, lambda_consistency=0.1,
-                 lambda_diversity=0.05, label_smoothing=0.1):
+                 lambda_diversity=0.05, label_smoothing=0.1, lambda_dice=0.1):
         super().__init__()
         self.focal_loss = FocalLoss(alpha=alpha_focal, gamma=gamma_focal)
         self.lambda_consistency = lambda_consistency
         self.lambda_diversity = lambda_diversity
         self.label_smoothing = label_smoothing
+        self.lambda_dice = lambda_dice
 
     def forward(self, outputs, labels, batch_data=None):
         # Main classification loss with label smoothing
@@ -84,8 +85,15 @@ class AdvancedLoss(nn.Module):
         else:
             main_loss = self.focal_loss(outputs['logits'], labels)
 
-        total_loss = main_loss
-        loss_components = {'main_loss': main_loss.item()}
+        probs = torch.softmax(outputs['logits'], dim=1)
+        labels_onehot = F.one_hot(labels, num_classes=probs.size(1)).float()
+        dice = 1 - (2 * (probs * labels_onehot).sum(dim=0) + 1e-7) / (
+            probs.pow(2).sum(dim=0) + labels_onehot.pow(2).sum(dim=0) + 1e-7
+        )
+        dice = dice.mean()
+
+        total_loss = main_loss + self.lambda_dice * dice
+        loss_components = {'main_loss': main_loss.item(), 'dice_loss': dice.item()}
 
         # Feature consistency regularization
         if 'feature_projection' in outputs and self.lambda_consistency > 0:
