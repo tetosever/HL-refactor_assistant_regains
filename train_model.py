@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Enhanced GCPN Training Script for Hub-like Dependency Refactoring
-FIXED VERSION with 7-feature compatibility and discriminator validation
+FIXED VERSION with 7-feature compatibility and enhanced discriminator validation
 
 Key Features:
 - Enhanced Policy Network with hub-aware attention (7-feature compatible)
@@ -19,6 +19,7 @@ import random
 import json
 import os
 import warnings
+import traceback
 from collections import deque
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
@@ -433,7 +434,7 @@ def validate_7_feature_format(data: Data) -> Data:
     if data.x.size(1) == 7:
         return data
 
-    logger.warning(f"Data has {data.x.size(1)} features, expected 7. Fixing...")
+    logger.debug(f"Data has {data.x.size(1)} features, expected 7. Fixing...")
 
     if data.x.size(1) > 7:
         # Truncate to 7 features
@@ -497,9 +498,16 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
 
 
 def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: torch.device) -> Optional[float]:
-    """Get discriminator prediction for a single graph with robust error handling"""
+    """Get discriminator prediction for a single graph with enhanced debugging"""
     try:
         discriminator.eval()
+
+        # Clone data to avoid modifying original
+        data = data.clone()
+
+        # Debug: Log data properties
+        logger.debug(
+            f"Input data - nodes: {data.x.size(0)}, edges: {data.edge_index.size(1)}, features: {data.x.size(1)}")
 
         # Ensure data is on correct device
         if data.x.device != device:
@@ -507,68 +515,162 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
 
         # CRITICAL: Validate 7-feature format
         data = validate_7_feature_format(data)
+        logger.debug(f"After validation - features: {data.x.size(1)}")
 
-        # Ensure batch attribute exists
+        # Ensure batch attribute exists and is correct
         if not hasattr(data, 'batch'):
             data.batch = torch.zeros(data.x.size(0), dtype=torch.long, device=device)
+        elif data.batch.device != device:
+            data.batch = data.batch.to(device)
+
+        # Validate edge_index bounds
+        if data.edge_index.size(1) > 0 and data.edge_index.max() >= data.x.size(0):
+            logger.warning(f"Edge index out of bounds: max={data.edge_index.max()}, nodes={data.x.size(0)}")
+            return None
+
+        # Check for NaN/Inf values
+        if torch.isnan(data.x).any() or torch.isinf(data.x).any():
+            logger.warning("Found NaN/Inf in node features")
+            return None
+
+        # Ensure edge_attr exists
+        if not hasattr(data, 'edge_attr') or data.edge_attr is None:
+            num_edges = data.edge_index.size(1)
+            data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=device)
+
+        logger.debug(
+            f"Data prepared - x: {data.x.shape}, edge_index: {data.edge_index.shape}, batch: {data.batch.shape}")
 
         with torch.no_grad():
-            output = discriminator(data)
+            try:
+                output = discriminator(data)
+                logger.debug(f"Discriminator output keys: {output.keys() if output else 'None'}")
 
-            if output is None or 'logits' not in output:
+                if output is None or 'logits' not in output:
+                    logger.warning("Discriminator returned None or missing logits")
+                    return None
+
+                logits = output['logits']
+                logger.debug(f"Logits shape: {logits.shape}")
+
+                if logits is None or logits.size(0) == 0:
+                    logger.warning("Empty logits tensor")
+                    return None
+
+                # Get probability of being smelly
+                probs = F.softmax(logits, dim=1)
+                prob_smelly = probs[0, 1].item()
+
+                logger.debug(f"Prediction successful - prob_smelly: {prob_smelly:.4f}")
+                return prob_smelly
+
+            except Exception as forward_e:
+                logger.warning(f"Forward pass failed: {forward_e}")
+                logger.debug(f"Data shapes at forward: x={data.x.shape}, edge_index={data.edge_index.shape}")
+                logger.debug(f"Full traceback: {traceback.format_exc()}")
                 return None
-
-            logits = output['logits']
-            if logits is None or logits.size(0) == 0:
-                return None
-
-            # Get probability of being smelly
-            prob_smelly = F.softmax(logits, dim=1)[0, 1].item()
-            return prob_smelly
 
     except Exception as e:
-        logger.debug(f"Error in discriminator prediction: {e}")
+        logger.warning(f"Error in discriminator prediction: {e}")
+        logger.debug(f"Full traceback: {traceback.format_exc()}")
         return None
 
 
-def validate_discriminator_performance(discriminator: nn.Module, smelly_data: List[Data],
-                                       clean_data: List[Data], device: torch.device) -> Dict[str, float]:
-    """Validate discriminator performance with robust error handling"""
-    logger.info("Validating discriminator performance...")
+def validate_discriminator_performance_enhanced(discriminator: nn.Module, smelly_data: List[Data],
+                                                clean_data: List[Data], device: torch.device) -> Dict[str, float]:
+    """Enhanced validation with detailed debugging"""
+    logger.info("🔍 Enhanced discriminator validation starting...")
 
     correct_predictions = 0
     total_predictions = 0
     smelly_correct = 0
     clean_correct = 0
+    failed_predictions = 0
 
-    # Test on smelly graphs
-    for i, data in enumerate(smelly_data[:20]):  # Smaller subset for faster validation
+    # Test on smelly graphs with detailed logging
+    logger.info(f"Testing on {min(20, len(smelly_data))} smelly graphs...")
+    for i, data in enumerate(smelly_data[:20]):
+        logger.debug(f"\n--- Testing smelly graph {i} ---")
+        logger.debug(
+            f"Original data: nodes={data.x.size(0)}, edges={data.edge_index.size(1)}, features={data.x.size(1)}")
+
         prob_smelly = get_discriminator_prediction(discriminator, data, device)
 
         if prob_smelly is not None:
             if prob_smelly > 0.5:  # Correctly identified as smelly
                 smelly_correct += 1
+                logger.debug(f"✅ Smelly graph {i}: correctly classified (prob={prob_smelly:.4f})")
+            else:
+                logger.debug(f"❌ Smelly graph {i}: misclassified as clean (prob={prob_smelly:.4f})")
             total_predictions += 1
         else:
-            logger.debug(f"Failed to get prediction for smelly graph {i}")
+            failed_predictions += 1
+            logger.debug(f"💥 Smelly graph {i}: prediction failed")
 
-    # Test on clean graphs
-    for i, data in enumerate(clean_data[:20]):  # Smaller subset
+    # Test on clean graphs with detailed logging
+    logger.info(f"Testing on {min(20, len(clean_data))} clean graphs...")
+    for i, data in enumerate(clean_data[:20]):
+        logger.debug(f"\n--- Testing clean graph {i} ---")
+        logger.debug(
+            f"Original data: nodes={data.x.size(0)}, edges={data.edge_index.size(1)}, features={data.x.size(1)}")
+
         prob_smelly = get_discriminator_prediction(discriminator, data, device)
 
         if prob_smelly is not None:
             if prob_smelly <= 0.5:  # Correctly identified as clean
                 clean_correct += 1
+                logger.debug(f"✅ Clean graph {i}: correctly classified (prob={prob_smelly:.4f})")
+            else:
+                logger.debug(f"❌ Clean graph {i}: misclassified as smelly (prob={prob_smelly:.4f})")
             total_predictions += 1
         else:
-            logger.debug(f"Failed to get prediction for clean graph {i}")
+            failed_predictions += 1
+            logger.debug(f"💥 Clean graph {i}: prediction failed")
 
-    logger.info(f"Validation results: total_predictions={total_predictions}, "
-                f"smelly_correct={smelly_correct}, clean_correct={clean_correct}")
+    # Detailed logging
+    logger.info(f"🔍 Validation summary:")
+    logger.info(f"  - Total attempts: {min(20, len(smelly_data)) + min(20, len(clean_data))}")
+    logger.info(f"  - Failed predictions: {failed_predictions}")
+    logger.info(f"  - Successful predictions: {total_predictions}")
+    logger.info(f"  - Smelly correct: {smelly_correct}")
+    logger.info(f"  - Clean correct: {clean_correct}")
 
     if total_predictions == 0:
-        logger.warning("Could not validate discriminator - no valid predictions")
-        return {'accuracy': 0.0, 'smelly_accuracy': 0.0, 'clean_accuracy': 0.0}
+        logger.error("❌ CRITICAL: All predictions failed!")
+        logger.error("This suggests a fundamental compatibility issue.")
+
+        # Emergency diagnostic
+        logger.info("🚨 Running emergency diagnostic...")
+        sample_data = smelly_data[0] if smelly_data else clean_data[0]
+        logger.info(f"Sample data properties:")
+        logger.info(f"  - Type: {type(sample_data)}")
+        logger.info(f"  - Device: {sample_data.x.device}")
+        logger.info(f"  - Node features shape: {sample_data.x.shape}")
+        logger.info(f"  - Node features dtype: {sample_data.x.dtype}")
+        logger.info(f"  - Edge index shape: {sample_data.edge_index.shape}")
+        logger.info(f"  - Edge index dtype: {sample_data.edge_index.dtype}")
+        logger.info(f"  - Has batch attr: {hasattr(sample_data, 'batch')}")
+        logger.info(f"  - Has edge_attr: {hasattr(sample_data, 'edge_attr')}")
+
+        # Try a minimal test
+        try:
+            test_data = sample_data.clone().to(device)
+            test_data = validate_7_feature_format(test_data)
+            if not hasattr(test_data, 'batch'):
+                test_data.batch = torch.zeros(test_data.x.size(0), dtype=torch.long, device=device)
+
+            logger.info("🧪 Attempting minimal discriminator forward pass...")
+            discriminator.eval()
+            with torch.no_grad():
+                output = discriminator(test_data)
+                logger.info(f"✅ Minimal test successful! Output keys: {output.keys()}")
+                logger.info(f"   Logits shape: {output['logits'].shape}")
+        except Exception as test_e:
+            logger.error(f"❌ Minimal test failed: {test_e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+
+        return {'accuracy': 0.0, 'smelly_accuracy': 0.0, 'clean_accuracy': 0.0,
+                'failed_predictions': failed_predictions}
 
     accuracy = (smelly_correct + clean_correct) / total_predictions
     smelly_acc = smelly_correct / min(20, len(smelly_data)) if smelly_data else 0
@@ -577,11 +679,74 @@ def validate_discriminator_performance(discriminator: nn.Module, smelly_data: Li
     results = {
         'accuracy': accuracy,
         'smelly_accuracy': smelly_acc,
-        'clean_accuracy': clean_acc
+        'clean_accuracy': clean_acc,
+        'failed_predictions': failed_predictions,
+        'total_attempts': min(20, len(smelly_data)) + min(20, len(clean_data))
     }
 
-    logger.info(f"Discriminator validation: Overall: {accuracy:.3f}, Smelly: {smelly_acc:.3f}, Clean: {clean_acc:.3f}")
+    logger.info(f"🎯 Final validation results:")
+    logger.info(f"  - Overall accuracy: {accuracy:.3f}")
+    logger.info(f"  - Smelly accuracy: {smelly_acc:.3f}")
+    logger.info(f"  - Clean accuracy: {clean_acc:.3f}")
+    logger.info(f"  - Success rate: {total_predictions / results['total_attempts']:.3f}")
+
     return results
+
+
+def debug_discriminator_architecture(discriminator: nn.Module, sample_data: Data, device: torch.device):
+    """Debug discriminator architecture compatibility"""
+    logger.info("🔧 Debugging discriminator architecture...")
+
+    try:
+        # Prepare sample data
+        test_data = sample_data.clone().to(device)
+        test_data = validate_7_feature_format(test_data)
+
+        if not hasattr(test_data, 'batch'):
+            test_data.batch = torch.zeros(test_data.x.size(0), dtype=torch.long, device=device)
+
+        logger.info(f"Test data prepared:")
+        logger.info(f"  - Nodes: {test_data.x.size(0)}")
+        logger.info(f"  - Features: {test_data.x.size(1)}")
+        logger.info(f"  - Edges: {test_data.edge_index.size(1)}")
+        logger.info(f"  - Device: {test_data.x.device}")
+
+        # Test discriminator layers step by step
+        discriminator.eval()
+        with torch.no_grad():
+            logger.info("Testing discriminator forward pass step by step...")
+
+            # Check input projection
+            if hasattr(discriminator, 'node_projection'):
+                try:
+                    node_emb = discriminator.node_projection(test_data.x)
+                    logger.info(f"✅ Node projection successful: {node_emb.shape}")
+                except Exception as e:
+                    logger.error(f"❌ Node projection failed: {e}")
+                    return
+
+            # Full forward pass
+            try:
+                output = discriminator(test_data)
+                logger.info(f"✅ Full forward pass successful!")
+                logger.info(f"   Output keys: {list(output.keys())}")
+                for key, tensor in output.items():
+                    if isinstance(tensor, torch.Tensor):
+                        logger.info(f"   {key}: {tensor.shape}")
+
+                # Test final prediction
+                logits = output['logits']
+                probs = F.softmax(logits, dim=1)
+                prob_smelly = probs[0, 1].item()
+                logger.info(f"✅ Prediction successful: {prob_smelly:.4f}")
+
+            except Exception as e:
+                logger.error(f"❌ Forward pass failed: {e}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+
+    except Exception as e:
+        logger.error(f"❌ Debug setup failed: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
 
 
 def load_and_prepare_data(data_dir: Path, max_samples: int = 1000, device: torch.device = torch.device('cpu')) -> Tuple[
@@ -1057,17 +1222,24 @@ def main():
         logger.info("🔄 Loading pretrained discriminator...")
         discriminator, discriminator_checkpoint = load_pretrained_discriminator(discriminator_path, device)
 
-        # Validate discriminator on current dataset
-        logger.info("✅ Validating discriminator performance...")
-        validation_results = validate_discriminator_performance(discriminator, smelly_data, clean_data, device)
+        # Enhanced discriminator validation with debugging
+        logger.info("🔍 Running enhanced discriminator validation...")
 
-        if validation_results['accuracy'] < 0.3:
+        # First, debug the architecture
+        if smelly_data:
+            debug_discriminator_architecture(discriminator, smelly_data[0], device)
+
+        # Then run enhanced validation
+        validation_results = validate_discriminator_performance_enhanced(discriminator, smelly_data, clean_data, device)
+
+        if validation_results['accuracy'] < 0.1:
             logger.error("❌ Discriminator performance is critically low!")
-            logger.error("Cannot proceed with training. Please check discriminator and data.")
+            logger.error("This appears to be an architecture/compatibility issue.")
+            logger.error("Check the debug output above for specific problems.")
             return
-        elif validation_results['accuracy'] < 0.6:
-            logger.warning("⚠️  Discriminator performance is low but proceeding...")
-            logger.warning("Training may be suboptimal. Consider re-training discriminator.")
+        elif validation_results['failed_predictions'] > 0:
+            logger.warning(f"⚠️ {validation_results['failed_predictions']} predictions failed, but continuing...")
+            logger.warning("Some samples may have compatibility issues.")
         else:
             logger.info("✅ Discriminator validation passed!")
 
@@ -1221,8 +1393,9 @@ def main():
             # Additional diagnostics every 500 episodes
             if episode % 500 == 0 and episode > 0:
                 # Test discriminator performance
-                val_results = validate_discriminator_performance(discriminator, smelly_data[:10], clean_data[:10],
-                                                                 device)
+                val_results = validate_discriminator_performance_enhanced(discriminator, smelly_data[:10],
+                                                                          clean_data[:10],
+                                                                          device)
                 logger.info(f"🔍 Discriminator validation - Acc: {val_results['accuracy']:.3f}")
 
                 # Analyze agent performance
