@@ -48,7 +48,7 @@ class HubDetectionDiscriminator(nn.Module):
         for i in range(1, num_layers):
             self.convs.append(GATConv(hidden_dim, hidden_dim // heads,
                                       heads=heads, concat=True, dropout=dropout))
-            self.norms.append(LayerNorm(hidden_dim))
+            self.norms.append(GraphNorm(hidden_dim))
 
         # Multi-level pooling for richer graph representations
         self.pooling_weights = nn.Parameter(torch.ones(3))  # mean, max, add
@@ -112,7 +112,7 @@ class HubDetectionDiscriminator(nn.Module):
                 nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain('relu'))
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-            elif isinstance(m, (nn.BatchNorm1d, nn.LayerNorm)):
+            elif isinstance(m, (nn.BatchNorm1d, nn.LayerNorm, GraphNorm)):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
 
