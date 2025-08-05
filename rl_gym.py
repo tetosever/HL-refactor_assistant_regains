@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-Updated RL Environment with Centralized Hyperparameter Configuration
+Updated RL Environment with Hub-Focused Refactoring Patterns
 
 Key changes:
-- Uses centralized reward configuration from hyperparameters_configuration.py
-- All reward parameters loaded from config file
-- Incremental feature updates instead of full reconstruction
-- Direct computation of affected node features
-- No dependency on UnifiedDataLoader for intermediate graphs
-- Eliminates the "Failed to recompute features" warning
+- Replaced observer/strategy patterns with extract_superclass/move_method
+- Hub-centric pattern selection based on literature best practices
+- Maintained all existing logic and infrastructure
+- Added new patterns based on ROSE and hub resolution literature
 """
 
 import copy
@@ -223,7 +221,7 @@ class IncrementalFeatureComputer:
 
 
 class HubRefactoringEnv:
-    """RL Environment with centralized hyperparameter configuration and incremental feature computation"""
+    """RL Environment with Hub-Focused refactoring patterns"""
 
     def __init__(self, initial_data: Data, discriminator: nn.Module,
                  max_steps: int = 20, device: torch.device = torch.device('cpu'),
@@ -276,10 +274,12 @@ class HubRefactoringEnv:
         self.best_hub_score = None
         self.hub_score_history = []
 
-        logger.debug(f"Environment initialized with centralized config:")
-        logger.debug(f"  REWARD_SUCCESS: {self.REWARD_SUCCESS}")
-        logger.debug(f"  REWARD_SMALL_IMPROVEMENT: {self.REWARD_SMALL_IMPROVEMENT}")
-        logger.debug(f"  HUB_SCORE_EXCELLENT: {self.HUB_SCORE_EXCELLENT}")
+        logger.debug(f"Environment initialized with Hub-Focused patterns:")
+        logger.debug(f"  0: Split Responsibility (Move Class)")
+        logger.debug(f"  1: Extract Interface")
+        logger.debug(f"  2: Dependency Injection")
+        logger.debug(f"  3: Extract Superclass (Pull Up)")
+        logger.debug(f"  4: Move Method")
 
     def update_reward_config(self, new_reward_config):
         """Update reward configuration dynamically"""
@@ -341,7 +341,7 @@ class HubRefactoringEnv:
         # Reset improvement multiplier
         self.improvement_multiplier = 1.0
 
-        logger.debug(f"Environment reset - Initial hub score: {initial_score:.4f} (centralized config)")
+        logger.debug(f"Environment reset - Initial hub score: {initial_score:.4f} (Hub-Focused patterns)")
         return self.current_data
 
     def _get_graph_hash(self, data: Data) -> str:
@@ -405,14 +405,26 @@ class HubRefactoringEnv:
             return 0.5  # Fallback to neutral score
 
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
-        """Step with centralized reward calculation and hub tracking"""
+        """Step with FIXED metric collection and transport"""
         source, target, pattern, terminate = action
         self.steps += 1
 
         # Base step penalty from centralized config
         reward = self.REWARD_STEP
         done = False
-        info = {'valid': False, 'pattern': pattern, 'success': False, 'hub_improvement': 0.0}
+
+        # FIXED: Initialize info with default values for consistent metric transport
+        info = {
+            'valid': False,
+            'pattern': pattern,
+            'success': False,
+            'hub_improvement': 0.0,
+            'old_hub_score': 0.5,  # Default fallback
+            'new_hub_score': 0.5,  # Default fallback
+            'best_hub_score': self.best_hub_score if self.best_hub_score else 0.5,
+            'step_metrics_calculated': False,  # NEW: Flag to track if metrics were calculated
+            'step_error': None  # NEW: Track step errors
+        }
 
         try:
             # Check termination first
@@ -420,18 +432,25 @@ class HubRefactoringEnv:
                 done = True
                 final_reward = self._evaluate_final_state()
                 reward += final_reward
-                info['termination'] = 'requested' if terminate else 'max_steps'
-                info['final_reward'] = final_reward
+                info.update({
+                    'termination': 'requested' if terminate else 'max_steps',
+                    'final_reward': final_reward,
+                    'step_metrics_calculated': True  # Mark as calculated even for termination
+                })
                 return self.current_data, reward, done, info
 
             # Validate action
             if source >= self.current_data.x.size(0) or target >= self.current_data.x.size(0):
                 reward += self.REWARD_INVALID
-                info['error'] = 'invalid_node_index'
+                info.update({
+                    'error': 'invalid_node_index',
+                    'step_error': f'Invalid indices: source={source}, target={target}, max_nodes={self.current_data.x.size(0)}'
+                })
                 return self.current_data, reward, done, info
 
-            # Get current hub score BEFORE modification
-            old_hub_score = self._get_current_hub_score()
+            # FIXED: Always try to get hub scores, with better error handling
+            old_hub_score = self._get_current_hub_score_safe()
+            info['old_hub_score'] = old_hub_score  # Always update this
 
             # Apply refactoring pattern
             success, new_data, pattern_info = self._apply_pattern_incremental(pattern, source, target)
@@ -444,10 +463,10 @@ class HubRefactoringEnv:
                 self._cached_hub_score = None
                 self._graph_hash = None
 
-                # Get NEW hub score AFTER modification
-                new_hub_score = self._get_current_hub_score()
+                # FIXED: Get NEW hub score with better error handling
+                new_hub_score = self._get_current_hub_score_safe()
 
-                # Calculate improvement (positive = better, negative = worse)
+                # FIXED: Always calculate improvement, even if scores are fallback values
                 hub_improvement = old_hub_score - new_hub_score
 
                 # Track best score
@@ -460,7 +479,7 @@ class HubRefactoringEnv:
                         self.improvement_multiplier_max
                     )
 
-                # Add to history
+                # FIXED: Always add to history for consistent tracking
                 self.hub_score_history.append(new_hub_score)
 
                 # CENTRALIZED CONFIG REWARD CALCULATION
@@ -499,6 +518,7 @@ class HubRefactoringEnv:
                 # Record action with improvement
                 self.action_history.append((source, target, pattern, hub_improvement))
 
+                # FIXED: Update info with ALL calculated metrics
                 info.update({
                     'valid': True,
                     'success': True,
@@ -510,31 +530,39 @@ class HubRefactoringEnv:
                     'features_updated_incrementally': True,
                     'affected_nodes': pattern_info.get('affected_nodes', []),
                     'improvement_multiplier': self.improvement_multiplier,
-                    'reward_config_used': 'centralized'
+                    'reward_config_used': 'centralized',
+                    'step_metrics_calculated': True,  # Mark as successfully calculated
+                    'hub_score_is_fallback': old_hub_score == 0.5 and new_hub_score == 0.5  # Track if using fallbacks
                 })
             else:
                 # Pattern failed - penalty from centralized config
                 reward += self.REWARD_INVALID
-                info['error'] = pattern_info.get('error', 'pattern_failed')
-                info['reward_type'] = 'pattern_failed'
+                info.update({
+                    'error': pattern_info.get('error', 'pattern_failed'),
+                    'reward_type': 'pattern_failed',
+                    'step_error': f"Pattern {pattern} failed: {pattern_info.get('error', 'unknown')}"
+                })
 
         except Exception as e:
             logger.warning(f"Error in step: {e}")
             reward += self.REWARD_INVALID
-            info['error'] = f'step_error: {str(e)}'
-            info['reward_type'] = 'error'
+            info.update({
+                'error': f'step_error: {str(e)}',
+                'reward_type': 'error',
+                'step_error': str(e)
+            })
 
         return self.current_data, reward, done, info
 
     def _apply_pattern_incremental(self, pattern: int, source: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply refactoring pattern with better error handling"""
+        """Apply hub-focused refactoring pattern with better error handling"""
+        # UPDATED: Hub-Focused Pattern Mapping
         patterns = {
-            0: self._extract_interface_incremental,
-            1: self._dependency_injection_incremental,
-            2: self._split_by_responsibility_incremental,
-            3: self._observer_pattern_incremental,
-            4: self._strategy_pattern_incremental,
-            5: self._remove_middleman_incremental
+            0: self._split_by_responsibility_incremental,  # MOVE CLASS (Primary)
+            1: self._extract_interface_incremental,  # INTERFACE SEGREGATION
+            2: self._dependency_injection_incremental,  # BREAK DEPENDENCY
+            3: self._extract_superclass_incremental,  # PULL UP (New)
+            4: self._move_method_incremental  # MOVE METHOD (New)
         }
 
         if pattern not in patterns:
@@ -562,40 +590,55 @@ class HubRefactoringEnv:
             return False, None, {'error': f'pattern_exception: {str(e)}'}
 
     def _extract_interface_incremental(self, hub: int, client: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Extract interface to decouple hub from clients with incremental updates"""
+        """PATTERN 1: Extract interface - VERSIONE MIGLIORATA E PIÙ ROBUSTA"""
         try:
             data = copy.deepcopy(self.current_data)
 
-            # Check if edge exists
+            # MIGLIORAMENTO 1: Se non c'è edge diretto hub→client, trova un client valido
             edge_mask = (data.edge_index[0] == hub) & (data.edge_index[1] == client)
+
             if not edge_mask.any():
-                return False, None, {'error': 'no_edge_to_decouple'}
+                # Trova tutti i client del hub (nodi che ricevono da hub)
+                out_edges = data.edge_index[:, data.edge_index[0] == hub]
+                if out_edges.size(1) == 0:
+                    # Se hub non ha outgoing edges, cerca incoming edges e inversione
+                    in_edges = data.edge_index[:, data.edge_index[1] == hub]
+                    if in_edges.size(1) == 0:
+                        return False, None, {'error': 'hub_has_no_connections'}
 
-            # Add interface node
+                    # Usa il primo incoming edge come "client"
+                    client = in_edges[0, 0].item()  # Source of incoming edge
+                    edge_mask = (data.edge_index[0] == client) & (data.edge_index[1] == hub)
+
+                    if not edge_mask.any():
+                        return False, None, {'error': 'no_valid_connections_found'}
+                else:
+                    # Usa il primo outgoing edge target come client
+                    client = out_edges[1, 0].item()
+                    edge_mask = (data.edge_index[0] == hub) & (data.edge_index[1] == client)
+
+            # Ora procedi con l'estrazione dell'interfaccia
             n_nodes = data.x.size(0)
-
-            # Create placeholder features for new node (will be computed incrementally)
             interface_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
             data.x = torch.cat([data.x, interface_features], dim=0)
 
-            # Update node mappings if they exist
+            # Update node mappings se esistono
             if hasattr(data, 'original_node_ids'):
-                interface_id = f"interface_{n_nodes}"
+                interface_id = f"interface_{n_nodes}_hub{hub}_client{client}"
                 data.original_node_ids.append(interface_id)
-
                 if hasattr(data, 'node_id_to_index'):
                     data.node_id_to_index[interface_id] = n_nodes
                 if hasattr(data, 'index_to_node_id'):
                     data.index_to_node_id[n_nodes] = interface_id
 
             # Redirect edge through interface
-            edge_mask = ~((data.edge_index[0] == hub) & (data.edge_index[1] == client))
+            keep_mask = ~edge_mask
             new_edges = torch.tensor([[hub, n_nodes], [n_nodes, client]], device=self.device).t()
-            data.edge_index = torch.cat([data.edge_index[:, edge_mask], new_edges], dim=1)
+            data.edge_index = torch.cat([data.edge_index[:, keep_mask], new_edges], dim=1)
 
             # Update edge attributes
             if hasattr(data, 'edge_attr'):
-                data.edge_attr = data.edge_attr[edge_mask]
+                data.edge_attr = data.edge_attr[keep_mask]
                 new_edge_attr = torch.ones(2, 1, device=self.device, dtype=torch.float32)
                 data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
 
@@ -603,7 +646,7 @@ class HubRefactoringEnv:
             affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
                 'interface_extraction', hub, client, to_networkx(data, to_undirected=False)
             )
-            affected_nodes.add(n_nodes)  # Include the new interface node
+            affected_nodes.add(n_nodes)
 
             data = IncrementalFeatureComputer.update_features_incremental(
                 data, affected_nodes, {'pattern': 'extract_interface', 'interface_node': n_nodes}
@@ -613,22 +656,49 @@ class HubRefactoringEnv:
                 'interface_node': n_nodes,
                 'decoupled': (hub, client),
                 'affected_nodes': list(affected_nodes),
-                'modification_type': 'interface_extraction'
+                'modification_type': 'interface_extraction',
+                'pattern_name': 'Extract Interface (Interface Segregation)',
+                'robust_client_selection': True
             }
         except Exception as e:
             return False, None, {'error': f'extract_interface_failed: {str(e)}'}
 
     def _dependency_injection_incremental(self, dependent: int, dependency: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply dependency injection to reduce coupling with incremental updates"""
+        """PATTERN 2: Dependency injection - VERSIONE MIGLIORATA E PIÙ ROBUSTA"""
         try:
             data = copy.deepcopy(self.current_data)
 
-            edge_mask = (data.edge_index[0] == dependent) & (data.edge_index[1] == dependency)
-            if not edge_mask.any():
-                return False, None, {'error': 'no_dependency_to_inject'}
+            # MIGLIORAMENTO 1: Cerca edge in entrambe le direzioni
+            forward_edge = (data.edge_index[0] == dependent) & (data.edge_index[1] == dependency)
+            backward_edge = (data.edge_index[0] == dependency) & (data.edge_index[1] == dependent)
 
-            # Remove direct dependency edge
-            keep_mask = ~edge_mask
+            edge_found = forward_edge.any() or backward_edge.any()
+
+            if not edge_found:
+                # MIGLIORAMENTO 2: Se non c'è edge diretto, trova una dipendenza valida
+                # Cerca dipendenze del dependent
+                out_edges = data.edge_index[:, data.edge_index[0] == dependent]
+                in_edges = data.edge_index[:, data.edge_index[1] == dependent]
+
+                if out_edges.size(1) > 0:
+                    # Usa una dipendenza outgoing
+                    dependency = out_edges[1, 0].item()
+                    forward_edge = (data.edge_index[0] == dependent) & (data.edge_index[1] == dependency)
+                elif in_edges.size(1) > 0:
+                    # Usa una dipendenza incoming
+                    dependency = in_edges[0, 0].item()
+                    backward_edge = (data.edge_index[0] == dependency) & (data.edge_index[1] == dependent)
+                else:
+                    return False, None, {'error': 'no_dependencies_available_for_injection'}
+
+            # Rimuovi l'edge appropriato
+            if forward_edge.any():
+                keep_mask = ~forward_edge
+                direction = 'forward'
+            else:
+                keep_mask = ~backward_edge
+                direction = 'backward'
+
             data.edge_index = data.edge_index[:, keep_mask]
 
             # Update edge attributes
@@ -646,38 +716,275 @@ class HubRefactoringEnv:
 
             return True, data, {
                 'injected_dependency': (dependent, dependency),
+                'direction_removed': direction,
                 'affected_nodes': list(affected_nodes),
-                'modification_type': 'dependency_injection'
+                'modification_type': 'dependency_injection',
+                'pattern_name': 'Dependency Injection (Break Dependency)',
+                'robust_dependency_selection': True
             }
         except Exception as e:
             return False, None, {'error': f'dependency_injection_failed: {str(e)}'}
 
-    def _split_by_responsibility_incremental(self, large_node: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Split node by responsibilities with incremental updates"""
+    def _extract_superclass_incremental(self, hub: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
+        """PATTERN 3: Extract superclass - VERSIONE MIGLIORATA E PIÙ ROBUSTA"""
         try:
             data = copy.deepcopy(self.current_data)
 
-            # Check if node has enough connections to split
+            # MIGLIORAMENTO 1: Logica più flessibile per trovare commonalities
+            hub_out_mask = data.edge_index[0] == hub
+            target_out_mask = data.edge_index[0] == target
+
+            hub_targets = set(data.edge_index[1, hub_out_mask].tolist())
+            target_targets = set(data.edge_index[1, target_out_mask].tolist())
+
+            # Trova dipendenze comuni
+            common_targets = hub_targets.intersection(target_targets)
+
+            # MIGLIORAMENTO 2: Se non ci sono dipendenze comuni outgoing, prova incoming
+            if len(common_targets) < 1:
+                hub_in_mask = data.edge_index[1] == hub
+                target_in_mask = data.edge_index[1] == target
+
+                hub_sources = set(data.edge_index[0, hub_in_mask].tolist())
+                target_sources = set(data.edge_index[0, target_in_mask].tolist())
+
+                common_sources = hub_sources.intersection(target_sources)
+
+                if len(common_sources) >= 1:
+                    # Usa common sources invece di targets
+                    common_targets = common_sources
+                    extraction_direction = 'incoming'
+                else:
+                    # MIGLIORAMENTO 3: Fallback - crea superclass basata su similarità strutturale
+                    hub_degree = hub_out_mask.sum() + (data.edge_index[1] == hub).sum()
+                    target_degree = target_out_mask.sum() + (data.edge_index[1] == target).sum()
+
+                    if hub_degree >= 1 and target_degree >= 2:
+                        # Crea superclass per nodi con degree simile, anche senza dipendenze comuni
+                        common_targets = set()  # Empty set, but we'll create inheritance relationship
+                        extraction_direction = 'structural_similarity'
+                    else:
+                        return False, None, {'error': 'insufficient_structural_similarity_for_superclass'}
+            else:
+                extraction_direction = 'outgoing'
+
+            # Crea superclass node
+            n_nodes = data.x.size(0)
+            superclass_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
+            data.x = torch.cat([data.x, superclass_features], dim=0)
+
+            # Update node mappings
+            if hasattr(data, 'original_node_ids'):
+                superclass_id = f"superclass_{n_nodes}_hub{hub}_target{target}"
+                data.original_node_ids.append(superclass_id)
+                if hasattr(data, 'node_id_to_index'):
+                    data.node_id_to_index[superclass_id] = n_nodes
+                if hasattr(data, 'index_to_node_id'):
+                    data.index_to_node_id[n_nodes] = superclass_id
+
+            # MIGLIORAMENTO 4: Gestisci i diversi tipi di estrazione
+            if extraction_direction == 'outgoing' and common_targets:
+                # Rimuovi common dependencies da entrambi i nodi
+                edges_to_remove = torch.zeros(data.edge_index.size(1), dtype=torch.bool, device=self.device)
+                for common_target in common_targets:
+                    hub_to_common = (data.edge_index[0] == hub) & (data.edge_index[1] == common_target)
+                    target_to_common = (data.edge_index[0] == target) & (data.edge_index[1] == common_target)
+                    edges_to_remove = edges_to_remove | hub_to_common | target_to_common
+
+                keep_mask = ~edges_to_remove
+                data.edge_index = data.edge_index[:, keep_mask]
+
+                # Aggiungi nuovi edges
+                new_edges = []
+                new_edges.append([hub, n_nodes])  # hub inherits from superclass
+                new_edges.append([target, n_nodes])  # target inherits from superclass
+                for common_target in common_targets:
+                    new_edges.append([n_nodes, common_target])  # superclass dependencies
+
+            elif extraction_direction == 'incoming' and common_targets:
+                # Gestisci common sources (incoming edges)
+                edges_to_remove = torch.zeros(data.edge_index.size(1), dtype=torch.bool, device=self.device)
+                for common_source in common_targets:  # Note: common_targets contains sources in this case
+                    source_to_hub = (data.edge_index[0] == common_source) & (data.edge_index[1] == hub)
+                    source_to_target = (data.edge_index[0] == common_source) & (data.edge_index[1] == target)
+                    edges_to_remove = edges_to_remove | source_to_hub | source_to_target
+
+                keep_mask = ~edges_to_remove
+                data.edge_index = data.edge_index[:, keep_mask]
+
+                # Aggiungi nuovi edges
+                new_edges = []
+                new_edges.append([hub, n_nodes])  # hub inherits from superclass
+                new_edges.append([target, n_nodes])  # target inherits from superclass
+                for common_source in common_targets:  # Note: common_targets contains sources
+                    new_edges.append([common_source, n_nodes])  # sources point to superclass
+
+            else:
+                # Structural similarity fallback - just create inheritance
+                new_edges = []
+                new_edges.append([hub, n_nodes])  # hub inherits from superclass
+                new_edges.append([target, n_nodes])  # target inherits from superclass
+
+            # Aggiungi i nuovi edges
+            if new_edges:
+                new_edges_tensor = torch.tensor(new_edges, device=self.device).t()
+                data.edge_index = torch.cat([data.edge_index, new_edges_tensor], dim=1)
+
+                # Update edge attributes
+                if hasattr(data, 'edge_attr'):
+                    if extraction_direction in ['outgoing', 'incoming']:
+                        data.edge_attr = data.edge_attr[keep_mask]
+                    new_edge_attr = torch.ones(len(new_edges), 1, device=self.device, dtype=torch.float32)
+                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'extract_superclass', hub, target, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.add(n_nodes)
+            affected_nodes.update(common_targets)
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'extract_superclass', 'superclass_node': n_nodes}
+            )
+
+            return True, data, {
+                'superclass_node': n_nodes,
+                'common_dependencies': list(common_targets),
+                'refactored_nodes': [hub, target],
+                'extraction_direction': extraction_direction,
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'extract_superclass',
+                'pattern_name': 'Extract Superclass (Pull Up)',
+                'robust_commonality_finding': True
+            }
+        except Exception as e:
+            return False, None, {'error': f'extract_superclass_failed: {str(e)}'}
+
+    def _move_method_incremental(self, from_hub: int, to_target: int) -> Tuple[bool, Optional[Data], Dict]:
+        """PATTERN 4: Move method - VERSIONE MIGLIORATA E PIÙ ROBUSTA"""
+        try:
+            data = copy.deepcopy(self.current_data)
+
+            # MIGLIORAMENTO 1: Logica più flessibile per trovare methods da spostare
+            hub_out_mask = data.edge_index[0] == from_hub
+            hub_targets = data.edge_index[1, hub_out_mask]
+
+            if hub_targets.size(0) == 0:
+                # Se non ha outgoing edges, prova incoming edges (inverse move)
+                hub_in_mask = data.edge_index[1] == from_hub
+                hub_sources = data.edge_index[0, hub_in_mask]
+
+                if hub_sources.size(0) == 0:
+                    return False, None, {'error': 'hub_has_no_movable_methods'}
+
+                # Sposta incoming edges (methods that call the hub)
+                methods_to_move = hub_sources
+                move_direction = 'incoming'
+            else:
+                # Sposta outgoing edges (methods called by the hub)
+                methods_to_move = hub_targets
+                move_direction = 'outgoing'
+
+            # MIGLIORAMENTO 2: Determina quanti methods spostare in base alla dimensione
+            total_methods = methods_to_move.size(0)
+            if total_methods == 1:
+                num_to_move = 1
+            elif total_methods <= 3:
+                num_to_move = 1  # Sposta solo 1 per preservare funzionalità
+            else:
+                num_to_move = max(1, total_methods // 3)  # Sposta 1/3 dei methods
+
+            # Seleziona methods da spostare
+            selected_methods = methods_to_move[:num_to_move]
+
+            # MIGLIORAMENTO 3: Sposta i methods
+            moved_methods = []
+            edges_to_remove = torch.zeros(data.edge_index.size(1), dtype=torch.bool, device=self.device)
+            new_edges = []
+
+            for method_target in selected_methods:
+                method_target_int = method_target.item()
+                moved_methods.append(method_target_int)
+
+                if move_direction == 'outgoing':
+                    # Rimuovi edge hub → method_target
+                    edge_mask = (data.edge_index[0] == from_hub) & (data.edge_index[1] == method_target_int)
+                    edges_to_remove = edges_to_remove | edge_mask
+                    # Aggiungi edge to_target → method_target
+                    new_edges.append([to_target, method_target_int])
+                else:  # incoming
+                    # Rimuovi edge method_target → hub
+                    edge_mask = (data.edge_index[0] == method_target_int) & (data.edge_index[1] == from_hub)
+                    edges_to_remove = edges_to_remove | edge_mask
+                    # Aggiungi edge method_target → to_target
+                    new_edges.append([method_target_int, to_target])
+
+            # Applica le modifiche
+            keep_mask = ~edges_to_remove
+            data.edge_index = data.edge_index[:, keep_mask]
+
+            if new_edges:
+                new_edges_tensor = torch.tensor(new_edges, device=self.device).t()
+                data.edge_index = torch.cat([data.edge_index, new_edges_tensor], dim=1)
+
+                # Update edge attributes
+                if hasattr(data, 'edge_attr'):
+                    data.edge_attr = data.edge_attr[keep_mask]
+                    new_edge_attr = torch.ones(len(new_edges), 1, device=self.device, dtype=torch.float32)
+                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
+
+            # Incremental feature update
+            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
+                'move_method', from_hub, to_target, to_networkx(data, to_undirected=False)
+            )
+            affected_nodes.update(moved_methods)
+
+            data = IncrementalFeatureComputer.update_features_incremental(
+                data, affected_nodes, {'pattern': 'move_method', 'moved_methods': moved_methods}
+            )
+
+            return True, data, {
+                'moved_methods': moved_methods,
+                'from_node': from_hub,
+                'to_node': to_target,
+                'move_direction': move_direction,
+                'methods_moved_count': len(moved_methods),
+                'total_available_methods': total_methods,
+                'affected_nodes': list(affected_nodes),
+                'modification_type': 'move_method',
+                'pattern_name': 'Move Method',
+                'robust_method_selection': True
+            }
+        except Exception as e:
+            return False, None, {'error': f'move_method_failed: {str(e)}'}
+
+    # AGGIUNTA: Pattern 0 (Split Responsibility) già robusto, ma piccolo miglioramento
+    def _split_by_responsibility_incremental(self, large_node: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
+        """PATTERN 0: Split node by responsibilities - VERSIONE LEGGERMENTE MIGLIORATA"""
+        try:
+            data = copy.deepcopy(self.current_data)
+
             out_mask = data.edge_index[0] == large_node
             in_mask = data.edge_index[1] == large_node
 
             out_degree = out_mask.sum().item()
             in_degree = in_mask.sum().item()
 
-            if out_degree + in_degree < 4:
+            # MIGLIORAMENTO: Soglia ancora più bassa per essere più applicabile
+            if out_degree + in_degree < 2:  # Ridotto da 3 a 2
                 return False, None, {'error': 'insufficient_connections_to_split'}
 
-            # Add two responsibility nodes
+            # Resto del codice uguale...
             n_nodes = data.x.size(0)
 
-            # Create placeholder features (will be computed incrementally)
             resp_features = torch.zeros(2, 7, device=data.x.device, dtype=torch.float32)
             data.x = torch.cat([data.x, resp_features], dim=0)
 
             # Update node mappings
             if hasattr(data, 'original_node_ids'):
-                resp1_id = f"resp1_{n_nodes}"
-                resp2_id = f"resp2_{n_nodes + 1}"
+                resp1_id = f"class_moved_{n_nodes}"
+                resp2_id = f"class_moved_{n_nodes + 1}"
                 data.original_node_ids.extend([resp1_id, resp2_id])
 
                 if hasattr(data, 'node_id_to_index'):
@@ -687,27 +994,34 @@ class HubRefactoringEnv:
                     data.index_to_node_id[n_nodes] = resp1_id
                     data.index_to_node_id[n_nodes + 1] = resp2_id
 
-            # Redistribute outgoing edges
+            # Redistribuisci outgoing edges
             out_edges = data.edge_index[:, out_mask]
 
-            if out_edges.size(1) > 2:
-                mid = out_edges.size(1) // 2
+            if out_edges.size(1) > 0:  # MIGLIORAMENTO: Cambiato da >1 a >0
+                if out_edges.size(1) == 1:
+                    # Con solo 1 edge, spostalo tutto alla prima responsibility
+                    mid = 1
+                else:
+                    mid = max(1, out_edges.size(1) // 2)
 
-                # Create new edges to responsibility nodes
                 edges_to_resp1 = torch.stack([
                     torch.full((mid,), n_nodes, device=self.device),
                     out_edges[1, :mid]
                 ])
-                edges_to_resp2 = torch.stack([
-                    torch.full((out_edges.size(1) - mid,), n_nodes + 1, device=self.device),
-                    out_edges[1, mid:]
-                ])
 
-                # Keep original edges and add coordinator edges
+                if out_edges.size(1) > mid:
+                    edges_to_resp2 = torch.stack([
+                        torch.full((out_edges.size(1) - mid,), n_nodes + 1, device=self.device),
+                        out_edges[1, mid:]
+                    ])
+                    new_edges = torch.cat([edges_to_resp1, edges_to_resp2], dim=1)
+                else:
+                    new_edges = edges_to_resp1
+
+                # Keep original edges (without outgoing) and add coordinator edges
                 keep_mask = ~out_mask
                 coord_edges = torch.tensor([[large_node, large_node], [n_nodes, n_nodes + 1]], device=self.device)
 
-                new_edges = torch.cat([edges_to_resp1, edges_to_resp2], dim=1)
                 data.edge_index = torch.cat([data.edge_index[:, keep_mask], coord_edges, new_edges], dim=1)
 
                 # Update edge attributes
@@ -719,212 +1033,25 @@ class HubRefactoringEnv:
 
             # Incremental feature update
             affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'node_splitting', large_node, large_node, to_networkx(data, to_undirected=False)
+                'move_class', large_node, large_node, to_networkx(data, to_undirected=False)
             )
-            affected_nodes.update([n_nodes, n_nodes + 1])  # Include new responsibility nodes
+            affected_nodes.update([n_nodes, n_nodes + 1])
 
             data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'split_responsibility', 'split_nodes': [n_nodes, n_nodes + 1]}
+                data, affected_nodes, {'pattern': 'move_class', 'moved_classes': [n_nodes, n_nodes + 1]}
             )
 
             return True, data, {
-                'split_nodes': [n_nodes, n_nodes + 1],
-                'original': large_node,
+                'moved_classes': [n_nodes, n_nodes + 1],
+                'original_hub': large_node,
                 'affected_nodes': list(affected_nodes),
-                'modification_type': 'node_splitting'
+                'modification_type': 'move_class',
+                'pattern_name': 'Split Responsibility (Move Class)',
+                'improved_threshold': True,
+                'total_connections_used': out_degree + in_degree
             }
         except Exception as e:
-            return False, None, {'error': f'split_responsibility_failed: {str(e)}'}
-
-    def _observer_pattern_incremental(self, subject: int, observer: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply observer pattern to reduce direct coupling with incremental updates"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Find all observers of the subject
-            observer_mask = data.edge_index[0] == subject
-            observers = data.edge_index[1, observer_mask]
-
-            if len(observers) < 2:
-                return False, None, {'error': 'insufficient_observers'}
-
-            # Add notification hub
-            n_nodes = data.x.size(0)
-
-            # Create placeholder features (will be computed incrementally)
-            notif_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
-            data.x = torch.cat([data.x, notif_features], dim=0)
-
-            # Update node mappings
-            if hasattr(data, 'original_node_ids'):
-                notif_id = f"notif_hub_{n_nodes}"
-                data.original_node_ids.append(notif_id)
-
-                if hasattr(data, 'node_id_to_index'):
-                    data.node_id_to_index[notif_id] = n_nodes
-                if hasattr(data, 'index_to_node_id'):
-                    data.index_to_node_id[n_nodes] = notif_id
-
-            # Replace direct edges with observer pattern
-            keep_mask = ~observer_mask
-            data.edge_index = data.edge_index[:, keep_mask]
-
-            # Add new pattern edges
-            subj_to_notif = torch.tensor([[subject], [n_nodes]], device=self.device)
-            notif_to_obs = torch.stack([torch.full_like(observers, n_nodes), observers])
-
-            new_edges = torch.cat([subj_to_notif, notif_to_obs], dim=1)
-            data.edge_index = torch.cat([data.edge_index, new_edges], dim=1)
-
-            # Update edge attributes
-            if hasattr(data, 'edge_attr'):
-                data.edge_attr = data.edge_attr[keep_mask]
-                new_edge_attr = torch.ones(new_edges.size(1), 1, device=self.device, dtype=torch.float32)
-                data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'observer_pattern', subject, subject, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.add(n_nodes)  # Include notification hub
-            affected_nodes.update(observers.tolist())  # Include all observers
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'observer', 'notification_hub': n_nodes}
-            )
-
-            return True, data, {
-                'notification_hub': n_nodes,
-                'observers': observers.tolist(),
-                'affected_nodes': list(affected_nodes),
-                'modification_type': 'observer_pattern'
-            }
-        except Exception as e:
-            return False, None, {'error': f'observer_pattern_failed: {str(e)}'}
-
-    def _strategy_pattern_incremental(self, context: int, strategy: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Extract strategy pattern to reduce coupling with incremental updates"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Check if context has multiple outgoing connections
-            out_mask = data.edge_index[0] == context
-            strategies = data.edge_index[1, out_mask]
-
-            if len(strategies) < 2:
-                return False, None, {'error': 'insufficient_strategies'}
-
-            # Add strategy interface
-            n_nodes = data.x.size(0)
-
-            # Create placeholder features (will be computed incrementally)
-            interface_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
-            data.x = torch.cat([data.x, interface_features], dim=0)
-
-            # Update node mappings
-            if hasattr(data, 'original_node_ids'):
-                interface_id = f"strategy_iface_{n_nodes}"
-                data.original_node_ids.append(interface_id)
-
-                if hasattr(data, 'node_id_to_index'):
-                    data.node_id_to_index[interface_id] = n_nodes
-                if hasattr(data, 'index_to_node_id'):
-                    data.index_to_node_id[n_nodes] = interface_id
-
-            # Redirect through strategy interface
-            keep_mask = ~out_mask
-            data.edge_index = data.edge_index[:, keep_mask]
-
-            # Add context -> interface and interface -> strategies
-            ctx_to_iface = torch.tensor([[context], [n_nodes]], device=self.device)
-            iface_to_strat = torch.stack([torch.full_like(strategies, n_nodes), strategies])
-
-            new_edges = torch.cat([ctx_to_iface, iface_to_strat], dim=1)
-            data.edge_index = torch.cat([data.edge_index, new_edges], dim=1)
-
-            # Update edge attributes
-            if hasattr(data, 'edge_attr'):
-                data.edge_attr = data.edge_attr[keep_mask]
-                new_edge_attr = torch.ones(new_edges.size(1), 1, device=self.device, dtype=torch.float32)
-                data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'strategy_pattern', context, context, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.add(n_nodes)  # Include strategy interface
-            affected_nodes.update(strategies.tolist())  # Include all strategies
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'strategy', 'strategy_interface': n_nodes}
-            )
-
-            return True, data, {
-                'strategy_interface': n_nodes,
-                'strategies': strategies.tolist(),
-                'affected_nodes': list(affected_nodes),
-                'modification_type': 'strategy_pattern'
-            }
-        except Exception as e:
-            return False, None, {'error': f'strategy_pattern_failed: {str(e)}'}
-
-    def _remove_middleman_incremental(self, middleman: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Remove unnecessary middleman to reduce indirection with incremental updates"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Get predecessors and successors
-            in_mask = data.edge_index[1] == middleman
-            out_mask = data.edge_index[0] == middleman
-
-            predecessors = data.edge_index[0, in_mask]
-            successors = data.edge_index[1, out_mask]
-
-            if len(predecessors) == 0 or len(successors) == 0:
-                return False, None, {'error': 'not_a_middleman'}
-
-            # Remove middleman edges
-            remove_mask = in_mask | out_mask
-            data.edge_index = data.edge_index[:, ~remove_mask]
-
-            # Add direct connections (bypassing middleman)
-            direct_edges = []
-            for pred in predecessors:
-                for succ in successors:
-                    pred_val = pred.item() if torch.is_tensor(pred) else pred
-                    succ_val = succ.item() if torch.is_tensor(succ) else succ
-                    if pred_val != succ_val:  # Avoid self-loops
-                        direct_edges.append([pred_val, succ_val])
-
-            if direct_edges:
-                direct_edges = torch.tensor(direct_edges, device=self.device).t()
-                data.edge_index = torch.cat([data.edge_index, direct_edges], dim=1)
-
-                # Update edge attributes
-                if hasattr(data, 'edge_attr'):
-                    data.edge_attr = data.edge_attr[~remove_mask]
-                    new_edge_attr = torch.ones(direct_edges.size(1), 1, device=self.device, dtype=torch.float32)
-                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'middleman_removal', middleman, middleman, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.update(predecessors.tolist())
-            affected_nodes.update(successors.tolist())
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'remove_middleman', 'removed_node': middleman}
-            )
-
-            return True, data, {
-                'removed_middleman': middleman,
-                'direct_connections': direct_edges.size(1) if direct_edges else 0,
-                'affected_nodes': list(affected_nodes),
-                'modification_type': 'middleman_removal'
-            }
-        except Exception as e:
-            return False, None, {'error': f'remove_middleman_failed: {str(e)}'}
+            return False, None, {'error': f'move_class_failed: {str(e)}'}
 
     def _evaluate_final_state(self) -> float:
         """Final state evaluation with centralized config thresholds"""
@@ -967,7 +1094,7 @@ class HubRefactoringEnv:
 
             total_reward = base_reward + efficiency_bonus + consistency_bonus
 
-            logger.debug(f"Final evaluation (centralized config) - Initial: {self.initial_hub_score:.4f}, "
+            logger.debug(f"Final evaluation (Hub-Focused patterns) - Initial: {self.initial_hub_score:.4f}, "
                          f"Final: {final_hub_score:.4f}, Total improvement: {total_improvement:.4f}, "
                          f"Reward: {total_reward:.2f}")
 
@@ -976,6 +1103,14 @@ class HubRefactoringEnv:
         except Exception as e:
             logger.warning(f"Failed to evaluate final state: {e}")
             return 0.0
+
+    def _get_current_hub_score_safe(self) -> float:
+        """FIXED: Safer hub score computation with better error reporting"""
+        try:
+            return self._get_current_hub_score()
+        except Exception as e:
+            logger.warning(f"Hub score calculation failed: {e}, using fallback 0.5")
+            return 0.5
 
     def get_reward_config_summary(self) -> Dict[str, Any]:
         """Get summary of current reward configuration for debugging"""
@@ -995,16 +1130,29 @@ class HubRefactoringEnv:
             'improvement_multiplier_max': self.improvement_multiplier_max,
             'improvement_multiplier_min': self.improvement_multiplier_min,
             'current_improvement_multiplier': self.improvement_multiplier,
-            'config_source': 'centralized_hyperparameters_configuration'
+            'config_source': 'centralized_hyperparameters_configuration',
+            'pattern_set': 'hub_focused_patterns'
         }
 
     def log_reward_calculation_details(self, hub_improvement: float, reward_type: str) -> None:
         """Log detailed reward calculation for debugging"""
-        logger.debug(f"Reward calculation details (centralized config):")
+        logger.debug(f"Reward calculation details (Hub-Focused patterns):")
         logger.debug(f"  Hub improvement: {hub_improvement:.4f}")
         logger.debug(f"  Reward type: {reward_type}")
         logger.debug(f"  Improvement multiplier: {self.improvement_multiplier:.3f}")
+        logger.debug(
+            f"  Available patterns: 0=Split Responsibility, 1=Extract Interface, 2=Dependency Injection, 3=Extract Superclass, 4=Move Method")
         logger.debug(f"  REWARD_SMALL_IMPROVEMENT: {self.REWARD_SMALL_IMPROVEMENT}")
         logger.debug(f"  HUB_SCORE_EXCELLENT threshold: {self.HUB_SCORE_EXCELLENT}")
         logger.debug(f"  HUB_SCORE_GOOD threshold: {self.HUB_SCORE_GOOD}")
         logger.debug(f"  HUB_SCORE_ACCEPTABLE threshold: {self.HUB_SCORE_ACCEPTABLE}")
+
+    def get_pattern_info(self) -> Dict[int, str]:
+        """Get information about available patterns"""
+        return {
+            0: "Split Responsibility (Move Class) - Primary hub resolution pattern",
+            1: "Extract Interface (Interface Segregation) - Decouple hub dependencies",
+            2: "Dependency Injection (Break Dependency) - Remove direct dependencies",
+            3: "Extract Superclass (Pull Up) - Factor out common dependencies",
+            4: "Move Method - Redistribute hub responsibilities"
+        }

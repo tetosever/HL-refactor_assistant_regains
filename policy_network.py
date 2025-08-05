@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Fixed Policy Network for Hub Refactoring with 7-Feature Compatibility
+Version 1: Policy Network Adapted for 5 Hub-Focused Refactoring Patterns
+- Updated pattern count from 6 to 5
+- Maintained existing hub detection logic
+- Compatible with current pattern set in rl_gym.py
 """
 
 from dataclasses import dataclass
@@ -28,15 +31,14 @@ class HubRefactoringAction:
 
 
 class HubRefactoringPatterns:
-    """Catalog of hub-specific refactoring patterns"""
+    """Updated catalog of 5 hub-specific refactoring patterns"""
 
     PATTERNS = {
-        0: "EXTRACT_INTERFACE",  # Create interface between hub and dependents
-        1: "DEPENDENCY_INJECTION",  # Inject dependencies instead of hub coupling
-        2: "SPLIT_BY_RESPONSIBILITY",  # Split hub by different responsibilities
-        3: "OBSERVER_PATTERN",  # Replace hub with observer pattern
-        4: "STRATEGY_PATTERN",  # Extract strategies from hub
-        5: "REMOVE_MIDDLEMAN"  # Remove unnecessary hub intermediary
+        0: "SPLIT_RESPONSIBILITY",    # Split hub by responsibilities (Move Class)
+        1: "EXTRACT_INTERFACE",      # Extract interface to decouple hub
+        2: "DEPENDENCY_INJECTION",   # Break direct dependencies
+        3: "EXTRACT_SUPERCLASS",     # Pull up common dependencies
+        4: "MOVE_METHOD"             # Move methods from hub to other nodes
     }
 
     @staticmethod
@@ -48,54 +50,37 @@ class HubRefactoringPatterns:
         out_degree = graph.out_degree(hub_node)
         total_degree = in_degree + out_degree
 
-        # Pattern applicability rules
-        if out_degree > 3:  # Many dependents
-            applicable.extend([0, 3])  # Interface, Observer
+        # Pattern applicability rules (updated for 5 patterns)
+        if out_degree > 3:  # Many outgoing connections
+            applicable.extend([0, 1])  # Split Responsibility, Extract Interface
 
-        if in_degree > 3:  # Many dependencies
-            applicable.extend([1])  # DI
+        if in_degree > 3:  # Many incoming dependencies
+            applicable.extend([2])  # Dependency Injection
 
-        if total_degree > 6:  # Very connected
-            applicable.extend([2])  # Split
+        if total_degree > 6:  # Very connected hub
+            applicable.extend([0, 3])  # Split Responsibility, Extract Superclass
 
-        if out_degree > 2 and in_degree > 2:
-            applicable.append(4)  # Strategy
+        if out_degree > 2 and in_degree > 1:  # Good candidate for method movement
+            applicable.append(4)  # Move Method
 
-        if HubRefactoringPatterns._is_pure_middleman(hub_node, graph):
-            applicable.append(5)  # Remove middleman
+        if out_degree > 1 and in_degree > 1:  # Can extract common dependencies
+            applicable.append(3)  # Extract Superclass
 
-        return list(set(applicable)) if applicable else [0]  # Default to extract interface
-
-    @staticmethod
-    def _is_pure_middleman(node: int, graph: nx.DiGraph) -> bool:
-        """Check if node is just passing through connections"""
-        predecessors = set(graph.predecessors(node))
-        successors = set(graph.successors(node))
-
-        if len(predecessors) == 0 or len(successors) == 0:
-            return False
-
-        # Check if there's significant overlap in connections
-        for pred in predecessors:
-            pred_successors = set(graph.successors(pred))
-            if len(pred_successors & successors) > len(successors) * 0.5:
-                return True
-
-        return False
+        return list(set(applicable)) if applicable else [0]  # Default to split responsibility
 
 
 class HubRefactoringPolicy(nn.Module):
-    """Fixed policy network for hub-reducing refactoring patterns with 7-feature compatibility"""
+    """Version 1: Policy network adapted for 5 hub-focused refactoring patterns"""
 
     def __init__(self, node_dim: int = 7, edge_dim: int = 1, hidden_dim: int = 128,
                  num_layers: int = 3, dropout: float = 0.3):
         super().__init__()
 
         self.hidden_dim = hidden_dim
-        self.num_patterns = len(HubRefactoringPatterns.PATTERNS)
-        self.node_dim = node_dim  # Should be 7 for unified features
+        self.num_patterns = 5  # UPDATED: Changed from 6 to 5 patterns
+        self.node_dim = node_dim
 
-        # Feature embedding - fixed for 7 features
+        # Feature embedding
         self.node_embed = nn.Linear(node_dim, hidden_dim)
         self.edge_embed = nn.Linear(edge_dim, hidden_dim) if edge_dim > 0 else None
 
@@ -110,27 +95,25 @@ class HubRefactoringPolicy(nn.Module):
                 self.convs.append(GATConv(hidden_dim, hidden_dim // 8, heads=8, concat=True))
             self.norms.append(GraphNorm(hidden_dim))
 
-        # Hub importance computation - FIXED for 7 structural features
-        # Input: node features (hidden_dim) + all 7 structural features
+        # Hub importance computation
         self.hub_importance_net = nn.Sequential(
-            nn.Linear(hidden_dim + 7, hidden_dim // 2),  # Changed from 6 to 7
+            nn.Linear(hidden_dim + 7, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, 1),
             nn.Sigmoid()
         )
 
-        # Action selection heads (fixed dimensions)
+        # Action selection heads
         self.hub_selector = nn.Sequential(
-            nn.Linear(hidden_dim + 1, hidden_dim // 2),  # +1 for importance score
+            nn.Linear(hidden_dim + 1, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, 1)
         )
 
-        # Pattern selector - FIXED for 7 features
-        # Input: node features (hidden_dim) + graph features (hidden_dim * 2) + structural (7)
-        pattern_input_dim = hidden_dim + (hidden_dim * 2) + 7  # Changed from 6 to 7
+        # Pattern selector - UPDATED for 5 patterns
+        pattern_input_dim = hidden_dim + (hidden_dim * 2) + 7
         self.pattern_selector = nn.Sequential(
             nn.Linear(pattern_input_dim, hidden_dim * 2),
             nn.ReLU(),
@@ -138,11 +121,11 @@ class HubRefactoringPolicy(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, self.num_patterns)
+            nn.Linear(hidden_dim, self.num_patterns)  # UPDATED: Output 5 patterns instead of 6
         )
 
         self.target_selector = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),  # hub + candidate features
+            nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 1)
@@ -166,15 +149,11 @@ class HubRefactoringPolicy(nn.Module):
 
     def compute_structural_features(self, x: torch.Tensor) -> torch.Tensor:
         """Extract all 7 structural features for hub identification"""
-        # For the unified 7-feature format, we use ALL features
         if x.size(1) >= 7:
-            # Use all 7 features: [fan_in, fan_out, degree_centrality, in_out_ratio, pagerank, betweenness, closeness]
             structural = x[:, :7]
         else:
-            # Pad with zeros if we don't have enough features
             padding = torch.zeros(x.size(0), 7 - x.size(1), device=x.device)
             structural = torch.cat([x, padding], dim=1)
-
         return structural
 
     def forward(self, data: Data) -> Dict[str, torch.Tensor]:
@@ -186,7 +165,7 @@ class HubRefactoringPolicy(nn.Module):
         if x.size(1) != self.node_dim:
             raise ValueError(f"Expected {self.node_dim} node features, got {x.size(1)}")
 
-        # Extract structural features (all 7 features)
+        # Extract structural features
         structural_features = self.compute_structural_features(x)
 
         # Embed features
@@ -199,7 +178,7 @@ class HubRefactoringPolicy(nn.Module):
             x_emb = F.relu(h) + x_emb  # Residual
             x_emb = F.dropout(x_emb, p=0.3, training=self.training)
 
-        # Compute hub importance scores using all 7 features
+        # Compute hub importance scores
         hub_input = torch.cat([x_emb, structural_features], dim=-1)
         hub_importance = self.hub_importance_net(hub_input).squeeze(-1)
 
@@ -212,7 +191,7 @@ class HubRefactoringPolicy(nn.Module):
         # Graph-level features for pattern selection
         graph_mean = global_mean_pool(x_emb, batch)
         graph_max = global_max_pool(x_emb, batch)
-        graph_features = torch.cat([graph_mean, graph_max], dim=-1)  # Size: hidden_dim * 2
+        graph_features = torch.cat([graph_mean, graph_max], dim=-1)
 
         # Pattern selection (per node, considering graph context)
         batch_size = batch.max().item() + 1
@@ -220,15 +199,12 @@ class HubRefactoringPolicy(nn.Module):
 
         for b in range(batch_size):
             mask = (batch == b)
-            node_features = x_emb[mask]  # Size: [num_nodes_in_graph, hidden_dim]
-            node_structural = structural_features[mask]  # Size: [num_nodes_in_graph, 7]
-            graph_feat = graph_features[b].unsqueeze(0).expand(mask.sum(),
-                                                               -1)  # Size: [num_nodes_in_graph, hidden_dim*2]
+            node_features = x_emb[mask]
+            node_structural = structural_features[mask]
+            graph_feat = graph_features[b].unsqueeze(0).expand(mask.sum(), -1)
 
-            # Combine features (fixed dimensions for 7 features)
+            # Combine features
             pattern_input = torch.cat([node_features, graph_feat, node_structural], dim=-1)
-            # Size: [num_nodes_in_graph, hidden_dim + hidden_dim*2 + 7]
-
             pattern_logits = self.pattern_selector(pattern_input)
             pattern_logits_list.append(pattern_logits)
 
@@ -252,4 +228,14 @@ class HubRefactoringPolicy(nn.Module):
             'term_probs': term_probs,
             'hub_importance': hub_importance,
             'node_embeddings': x_emb
+        }
+
+    def get_pattern_info(self) -> Dict[int, str]:
+        """Get information about the 5 available patterns"""
+        return {
+            0: "Split Responsibility (Move Class) - Divide hub responsibilities into separate classes",
+            1: "Extract Interface - Decouple hub from clients through interfaces",
+            2: "Dependency Injection - Remove direct dependencies from hub",
+            3: "Extract Superclass (Pull Up) - Factor out common dependencies to superclass",
+            4: "Move Method - Redistribute methods from hub to appropriate classes"
         }
