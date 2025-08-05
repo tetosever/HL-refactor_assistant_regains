@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-Enhanced GCPN Training Script with Incremental Feature Updates
-UPDATED VERSION with incremental feature computation - eliminates warnings
+Enhanced GCPN Training Script with Centralized Hyperparameter Configuration
+UPDATED VERSION with centralized config management
 
 Key Features:
-- Uses IncrementalFeatureComputer for efficient feature updates
-- No more "Failed to recompute features" warnings
+- Uses centralized hyperparameter configuration from hyperparameters_configuration.py
+- All training parameters are now configurable from a single location
 - Enhanced Environment with incremental pattern-based actions
 - Discriminator-based adversarial learning with robust validation
 - PPO + GAE optimization
 - GPU/CUDA optimizations
 - UNIFIED 7-feature pipeline compatibility
 """
-
+import datetime
 import logging
 import random
 import json
 import os
+import time
 import warnings
 import traceback
 from collections import deque
@@ -29,24 +30,16 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch import nn
 from torch.distributions import Categorical
+from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Batch, Data
 import torch_geometric.data.data
 
-# UPDATED IMPORTS - using incremental environment
+# UPDATED IMPORTS - using incremental environment and centralized config
 from data_loader import create_unified_loader, validate_dataset_consistency, UnifiedDataLoader
 from discriminator import HubDetectionDiscriminator
 from policy_network import HubRefactoringPolicy
 from rl_gym import HubRefactoringEnv  # UPDATED: using incremental version
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Suppress specific warnings
-warnings.filterwarnings("ignore", message="Loading .* with weights_only=False")
-warnings.filterwarnings("ignore", message=".*weights_only=False.*")
-
-# Define RefactoringAction class
+from hyperparameters_configuration import get_improved_config, print_config_summary
 from dataclasses import dataclass
 
 
@@ -59,70 +52,6 @@ class RefactoringAction:
     terminate: bool
     confidence: float = 0.0
 
-
-class ExperienceBuffer:
-    """Experience buffer for PPO training with GPU optimization"""
-
-    def __init__(self, capacity: int = 10000, device: torch.device = torch.device('cpu')):
-        self.capacity = capacity
-        self.device = device
-        self.buffer = deque(maxlen=capacity)
-
-    def add(self, experience: Dict[str, Any]):
-        # Move tensors to device if needed
-        if isinstance(experience.get('state'), Data):
-            experience['state'] = experience['state'].to(self.device)
-        self.buffer.append(experience)
-
-    def sample(self, batch_size: int) -> List[Dict[str, Any]]:
-        return random.sample(self.buffer, min(batch_size, len(self.buffer)))
-
-    def clear(self):
-        self.buffer.clear()
-
-    def __len__(self):
-        return len(self.buffer)
-
-
-# !/usr/bin/env python3
-"""
-Enhanced RL Training with Environment Diversity and TensorBoard Monitoring
-
-Key improvements:
-1. Dynamic graph refresh every 100 episodes
-2. Reset picks new graphs from pool
-3. TensorBoard logging in results folder
-4. Better exploration/exploitation balance
-"""
-
-import logging
-import random
-import json
-import os
-import warnings
-import traceback
-from collections import deque
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
-from datetime import datetime
-
-import numpy as np
-import torch
-import torch.nn.functional as F
-import torch.optim as optim
-from torch import nn
-from torch.distributions import Categorical
-from torch_geometric.data import Batch, Data
-import torch_geometric.data.data
-
-# TensorBoard imports
-from torch.utils.tensorboard import SummaryWriter
-
-# Your existing imports
-from data_loader import create_unified_loader, validate_dataset_consistency, UnifiedDataLoader
-from discriminator import HubDetectionDiscriminator
-from policy_network import HubRefactoringPolicy
-from rl_gym import HubRefactoringEnv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -137,11 +66,12 @@ class EnhancedEnvironmentManager:
     """Manages diverse graph pools for better exploration"""
 
     def __init__(self, data_loader: UnifiedDataLoader, discriminator: nn.Module,
-                 pool_size: int = 50, device: torch.device = torch.device('cpu')):
+                 env_config, device: torch.device = torch.device('cpu')):
         self.data_loader = data_loader
         self.discriminator = discriminator
-        self.pool_size = pool_size
+        self.pool_size = env_config.graph_pool_size
         self.device = device
+        self.pool_refresh_episodes = env_config.pool_refresh_episodes
 
         # Graph pools
         self.smelly_pool = []
@@ -184,19 +114,35 @@ class EnhancedEnvironmentManager:
         if len(candidates) <= target_size:
             return candidates
 
+        env_config = get_improved_config()['environment']
+
+        # Filter by size range
+        size_filtered = [
+            g for g in candidates
+            if env_config.min_graph_size <= g.x.size(0) <= env_config.max_graph_size
+        ]
+
+        if not size_filtered:
+            size_filtered = candidates  # Fallback if no graphs in size range
+
         # Sort by graph size for diversity
-        size_sorted = sorted(candidates, key=lambda x: x.x.size(0))
+        size_sorted = sorted(size_filtered, key=lambda x: x.x.size(0))
 
-        # Select spread across sizes
+        # Select spread across sizes using diversity bins
         selected = []
-        step = len(size_sorted) // target_size
-
-        for i in range(0, len(size_sorted), step):
-            if len(selected) < target_size:
-                selected.append(size_sorted[i])
+        if env_config.size_diversity_bins > 0:
+            bin_size = len(size_sorted) // env_config.size_diversity_bins
+            for i in range(env_config.size_diversity_bins):
+                start_idx = i * bin_size
+                end_idx = min((i + 1) * bin_size, len(size_sorted))
+                if start_idx < len(size_sorted):
+                    # Select random graph from this size bin
+                    bin_graphs = size_sorted[start_idx:end_idx]
+                    if bin_graphs:
+                        selected.append(random.choice(bin_graphs))
 
         # Fill remaining with random selection
-        remaining = [g for g in candidates if g not in selected]
+        remaining = [g for g in size_filtered if g not in selected]
         while len(selected) < target_size and remaining:
             selected.append(remaining.pop(random.randint(0, len(remaining) - 1)))
 
@@ -226,8 +172,7 @@ class EnhancedEnvironmentManager:
 
     def should_refresh_pool(self, episode: int) -> bool:
         """Check if pool should be refreshed"""
-        # Refresh every 500 episodes to introduce new graph varieties
-        return episode > 0 and episode % 500 == 0
+        return episode > 0 and episode % self.pool_refresh_episodes == 0
 
     def get_stats(self) -> Dict[str, Any]:
         """Get pool statistics"""
@@ -247,7 +192,7 @@ class TensorBoardLogger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Create timestamped run directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = self.log_dir / f"rl_training_{timestamp}"
 
         self.writer = SummaryWriter(log_dir=str(run_dir))
@@ -291,39 +236,70 @@ class TensorBoardLogger:
 
 
 class PPOTrainer:
-    """PPO trainer with adversarial discriminator training - GPU optimized"""
+    """PPO trainer with centralized hyperparameter configuration"""
 
     def __init__(self, policy: nn.Module, discriminator: nn.Module,
-                 lr_policy: float = 5e-4, lr_disc: float = 1e-4,
-                 device: torch.device = torch.device('cpu')):
+                 opt_config, disc_config, device: torch.device = torch.device('cpu')):
         self.device = device
+        self.opt_config = opt_config
+        self.disc_config = disc_config
 
         # Move models to device
         self.policy = policy.to(device)
         self.discriminator = discriminator.to(device)
 
-        # Optimizers with GPU-friendly settings
-        self.opt_policy = optim.AdamW(policy.parameters(), lr=lr_policy, eps=1e-5, weight_decay=1e-4)
-        self.opt_disc = optim.AdamW(discriminator.parameters(), lr=lr_disc, eps=1e-5, weight_decay=1e-4)
+        # Create optimizers with centralized config
+        self.opt_policy = optim.AdamW(
+            policy.parameters(),
+            lr=opt_config.policy_lr,
+            eps=opt_config.optimizer_eps,
+            weight_decay=opt_config.weight_decay,
+            betas=opt_config.betas
+        )
+        self.opt_disc = optim.AdamW(
+            discriminator.parameters(),
+            lr=opt_config.discriminator_lr,
+            eps=opt_config.optimizer_eps,
+            weight_decay=opt_config.weight_decay,
+            betas=opt_config.betas
+        )
 
-        # PPO parameters
-        self.clip_eps = 0.1
-        self.gamma = 0.9
+        # PPO parameters from config
+        self.clip_eps = opt_config.clip_epsilon
+        self.gamma = 0.99
         self.lam = 0.95
-        self.value_coef = 0.5
-        self.entropy_coef = 0.02
-        self.max_grad_norm = 0.8
+        self.value_coef = opt_config.value_coefficient
+        self.entropy_coef = opt_config.entropy_coefficient
+        self.max_grad_norm = opt_config.max_grad_norm
+
+        # Learning rate schedulers from config
+        self.policy_scheduler = optim.lr_scheduler.StepLR(
+            self.opt_policy,
+            step_size=opt_config.policy_lr_decay_step,
+            gamma=opt_config.lr_decay_factor
+        )
+        self.disc_scheduler = optim.lr_scheduler.StepLR(
+            self.opt_disc,
+            step_size=opt_config.disc_lr_decay_step,
+            gamma=opt_config.lr_decay_factor
+        )
 
         # Training statistics
         self.update_count = 0
         self.policy_losses = []
         self.disc_losses = []
         self.disc_metrics = []
+        self.policy_metrics = []
 
         # GPU optimization settings
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
-            torch.cuda.empty_cache()
+
+        logger.info(f"PPO Trainer initialized with config:")
+        logger.info(f"  - Policy LR: {opt_config.policy_lr}")
+        logger.info(f"  - Discriminator LR: {opt_config.discriminator_lr}")
+        logger.info(f"  - Clip epsilon: {opt_config.clip_epsilon}")
+        logger.info(f"  - Entropy coefficient: {opt_config.entropy_coefficient}")
 
     def compute_gae(self, rewards: List[float], values: List[float],
                     dones: List[bool]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -360,156 +336,204 @@ class PPOTrainer:
 
         return advantages, returns
 
-    def compute_policy_loss(self, states: List[Data], actions: List[RefactoringAction],
-                            old_log_probs: torch.Tensor, advantages: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Compute PPO policy loss with unified data validation"""
+    def update_discriminator(self, smelly_graphs: List[Data], clean_graphs: List[Data],
+                             generated_graphs: List[Data]):
+        """Discriminator update with centralized configuration"""
 
-        # All states should already have exactly 7 features from unified loader
-        states_on_device = []
-        for state in states:
-            if state.x.device != self.device:
-                state = state.to(self.device)
+        epochs = self.opt_config.discriminator_epochs
+        early_stop_threshold = self.disc_config.early_stop_threshold
+        label_smoothing = self.disc_config.label_smoothing
+        gp_lambda = self.disc_config.gradient_penalty_lambda
 
-            # Validate 7-feature format
-            if state.x.size(1) != 7:
-                logger.warning(f"State has {state.x.size(1)} features, expected 7 from unified loader!")
-
-            states_on_device.append(state)
-
-        # Batch states efficiently
-        try:
-            batch_data = Batch.from_data_list(states_on_device)
-            if batch_data.x.device != self.device:
-                batch_data = batch_data.to(self.device)
-        except Exception as e:
-            logger.warning(f"Batching failed: {e}, using fallback")
-            policy_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            entropy = torch.tensor(0.0, device=self.device)
-            return {
-                'policy_loss': policy_loss,
-                'entropy': entropy,
-                'approx_kl': torch.tensor(0.0, device=self.device),
-                'clipfrac': torch.tensor(0.0, device=self.device)
-            }
-
-        # Forward pass
-        policy_out = self.policy(batch_data)
-
-        # Compute current log probabilities
-        log_probs = []
-        entropies = []
-
-        # Handle batched data properly
-        num_graphs = len(states_on_device)
-        nodes_per_graph = [state.x.size(0) for state in states_on_device]
-        cumsum_nodes = [0] + list(np.cumsum(nodes_per_graph))
-
-        for i, action in enumerate(actions):
-            try:
-                start_idx = cumsum_nodes[i]
-                end_idx = cumsum_nodes[i + 1]
-
-                # Validate indices
-                if start_idx >= policy_out['hub_probs'].size(0) or end_idx > policy_out['hub_probs'].size(0):
-                    continue
-
-                # Hub selection
-                hub_probs_i = policy_out['hub_probs'][start_idx:end_idx]
-                if hub_probs_i.size(0) == 0:
-                    continue
-
-                hub_dist = Categorical(hub_probs_i + 1e-8)
-                hub_action_tensor = torch.tensor(action.source_node, device=self.device)
-                if action.source_node >= hub_probs_i.size(0):
-                    hub_action_tensor = torch.tensor(0, device=self.device)
-
-                log_prob_hub = hub_dist.log_prob(hub_action_tensor)
-                entropy_hub = hub_dist.entropy()
-
-                # Pattern selection
-                pattern_idx = start_idx + min(action.source_node, hub_probs_i.size(0) - 1)
-                if pattern_idx < policy_out['pattern_probs'].size(0):
-                    pattern_probs_i = policy_out['pattern_probs'][pattern_idx]
-                    pattern_dist = Categorical(pattern_probs_i + 1e-8)
-                    pattern_action_tensor = torch.tensor(action.pattern, device=self.device)
-                    if action.pattern >= pattern_probs_i.size(0):
-                        pattern_action_tensor = torch.tensor(0, device=self.device)
-
-                    log_prob_pattern = pattern_dist.log_prob(pattern_action_tensor)
-                    entropy_pattern = pattern_dist.entropy()
-                else:
-                    log_prob_pattern = torch.tensor(0.0, device=self.device)
-                    entropy_pattern = torch.tensor(0.0, device=self.device)
-
-                # Termination
-                if i < policy_out['term_probs'].size(0):
-                    term_probs_i = policy_out['term_probs'][i]
-                else:
-                    term_probs_i = policy_out['term_probs'][0] if policy_out['term_probs'].size(
-                        0) > 0 else torch.tensor([0.5, 0.5], device=self.device)
-
-                term_dist = Categorical(term_probs_i + 1e-8)
-                term_action_tensor = torch.tensor(int(action.terminate), device=self.device)
-                log_prob_term = term_dist.log_prob(term_action_tensor)
-                entropy_term = term_dist.entropy()
-
-                total_log_prob = log_prob_hub + log_prob_pattern + log_prob_term
-                total_entropy = entropy_hub + entropy_pattern + entropy_term
-
-                log_probs.append(total_log_prob)
-                entropies.append(total_entropy)
-
-            except Exception as e:
-                logger.debug(f"Error computing log prob for action {i}: {e}")
-                log_probs.append(torch.tensor(0.0, device=self.device))
-                entropies.append(torch.tensor(0.0, device=self.device))
-
-        if not log_probs:
-            policy_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            entropy = torch.tensor(0.0, device=self.device)
-            return {
-                'policy_loss': policy_loss,
-                'entropy': entropy,
-                'approx_kl': torch.tensor(0.0, device=self.device),
-                'clipfrac': torch.tensor(0.0, device=self.device)
-            }
-
-        log_probs = torch.stack(log_probs)
-        entropy = torch.stack(entropies).mean()
-
-        # Ensure old_log_probs is on correct device and has correct shape
-        old_log_probs = old_log_probs.to(self.device)
-        if old_log_probs.size(0) != log_probs.size(0):
-            min_size = min(old_log_probs.size(0), log_probs.size(0))
-            old_log_probs = old_log_probs[:min_size]
-            log_probs = log_probs[:min_size]
-            advantages = advantages[:min_size]
-
-        # PPO clipped objective
-        ratio = torch.exp(log_probs - old_log_probs)
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages
-        policy_loss = -torch.min(surr1, surr2).mean()
-
-        return {
-            'policy_loss': policy_loss,
-            'entropy': entropy,
-            'approx_kl': ((ratio - 1) - (log_probs - old_log_probs)).mean(),
-            'clipfrac': ((ratio - 1).abs() > self.clip_eps).float().mean()
-        }
-
-    def update_policy(self, states: List[Data], actions: List[RefactoringAction],
-                      old_log_probs: torch.Tensor, advantages: torch.Tensor,
-                      returns: torch.Tensor, epochs: int = 4):
-        """Update policy network using PPO with unified data"""
-
-        if len(states) == 0:
-            return
+        total_metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1': []}
 
         for epoch in range(epochs):
-            # Shuffle data
+            # Sample balanced batches with config-defined sizes
+            min_size = min(len(smelly_graphs), len(clean_graphs), len(generated_graphs))
+            batch_size = min(
+                self.disc_config.max_samples_per_class,
+                max(self.disc_config.min_samples_per_class, min_size)
+            )
+
+            if batch_size <= 2:
+                logger.warning(f"Skipping discriminator update - insufficient samples: {min_size}")
+                continue
+
+            try:
+                # Sample data with balanced sampling if enabled
+                if self.disc_config.use_balanced_sampling:
+                    smelly_sample = np.random.choice(len(smelly_graphs), batch_size, replace=False).tolist()
+                    clean_sample = np.random.choice(len(clean_graphs), batch_size, replace=False).tolist()
+                    generated_sample = np.random.choice(len(generated_graphs), batch_size, replace=False).tolist()
+                else:
+                    # Simple random sampling
+                    smelly_sample = random.sample(range(len(smelly_graphs)), batch_size)
+                    clean_sample = random.sample(range(len(clean_graphs)), batch_size)
+                    generated_sample = random.sample(range(len(generated_graphs)), batch_size)
+
+                smelly_batch_data = [smelly_graphs[i].to(self.device) for i in smelly_sample]
+                clean_batch_data = [clean_graphs[i].to(self.device) for i in clean_sample]
+                generated_batch_data = [generated_graphs[i].to(self.device) for i in generated_sample]
+
+                # Create batches
+                smelly_batch = Batch.from_data_list(smelly_batch_data)
+                clean_batch = Batch.from_data_list(clean_batch_data)
+                generated_batch = Batch.from_data_list(generated_batch_data)
+
+                # Enable gradients for gradient penalty
+                smelly_batch.x.requires_grad_(True)
+                clean_batch.x.requires_grad_(True)
+                generated_batch.x.requires_grad_(True)
+
+                # Forward pass
+                self.discriminator.train()
+                smelly_out = self.discriminator(smelly_batch)
+                clean_out = self.discriminator(clean_batch)
+                gen_out = self.discriminator(generated_batch)
+
+                # Validate outputs
+                if any(out is None or 'logits' not in out for out in [smelly_out, clean_out, gen_out]):
+                    logger.warning("Discriminator returned invalid output, skipping update")
+                    continue
+
+                # Labels (smelly=1, clean/generated=0)
+                smelly_labels = torch.ones(batch_size, dtype=torch.long, device=self.device)
+                clean_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+                gen_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+
+                # Compute losses with label smoothing
+                loss_smelly = F.cross_entropy(smelly_out['logits'], smelly_labels,
+                                              label_smoothing=label_smoothing)
+                loss_clean = F.cross_entropy(clean_out['logits'], clean_labels,
+                                             label_smoothing=label_smoothing)
+                loss_gen = F.cross_entropy(gen_out['logits'], gen_labels,
+                                           label_smoothing=label_smoothing)
+
+                # Gradient penalty calculation
+                gp_loss = 0.0
+                try:
+                    for batch_data, out in [(smelly_batch, smelly_out),
+                                            (clean_batch, clean_out),
+                                            (generated_batch, gen_out)]:
+                        if batch_data.x.grad is not None:
+                            batch_data.x.grad.zero_()
+
+                        grads = torch.autograd.grad(
+                            outputs=out['logits'].sum(),
+                            inputs=batch_data.x,
+                            create_graph=True,
+                            retain_graph=True,
+                            only_inputs=True
+                        )[0]
+                        gp_loss += (grads.norm(2, dim=1) - 1).pow(2).mean()
+                except Exception as e:
+                    logger.debug(f"Gradient penalty calculation failed: {e}")
+                    gp_loss = 0.0
+
+                # Total discriminator loss
+                disc_loss = loss_smelly + loss_clean + loss_gen + gp_lambda * gp_loss
+
+                # Backward pass with gradient clipping
+                self.opt_disc.zero_grad()
+                disc_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.max_grad_norm)
+                self.opt_disc.step()
+
+                # Calculate detailed metrics if enabled
+                if self.disc_config.calculate_detailed_metrics:
+                    with torch.no_grad():
+                        self.discriminator.eval()
+
+                        # Get predictions
+                        smelly_preds = smelly_out['logits'].argmax(dim=1)
+                        clean_preds = clean_out['logits'].argmax(dim=1)
+                        gen_preds = gen_out['logits'].argmax(dim=1)
+
+                        # Combine all predictions and labels
+                        all_preds = torch.cat([smelly_preds, clean_preds, gen_preds])
+                        all_labels = torch.cat([smelly_labels, clean_labels, gen_labels])
+
+                        # Calculate metrics
+                        correct = (all_preds == all_labels).float()
+                        accuracy = correct.mean().item()
+
+                        # Calculate precision, recall, F1 for positive class (smelly)
+                        tp = ((all_preds == 1) & (all_labels == 1)).sum().float()
+                        fp = ((all_preds == 1) & (all_labels == 0)).sum().float()
+                        fn = ((all_preds == 0) & (all_labels == 1)).sum().float()
+                        tn = ((all_preds == 0) & (all_labels == 0)).sum().float()
+
+                        precision = tp / (tp + fp + 1e-8)
+                        recall = tp / (tp + fn + 1e-8)
+                        f1 = 2 * precision * recall / (precision + recall + 1e-8)
+
+                        # Store metrics
+                        total_metrics['accuracy'].append(accuracy)
+                        total_metrics['precision'].append(precision.item())
+                        total_metrics['recall'].append(recall.item())
+                        total_metrics['f1'].append(f1.item())
+
+                        # Log confusion matrix if enabled
+                        if self.disc_config.log_confusion_matrix:
+                            logger.debug(f"Confusion Matrix - TP: {tp.item():.0f}, FP: {fp.item():.0f}, "
+                                         f"TN: {tn.item():.0f}, FN: {fn.item():.0f}")
+
+                self.disc_losses.append(disc_loss.item())
+
+                # Early stopping
+                if total_metrics['accuracy'] and total_metrics['f1']:
+                    current_acc = total_metrics['accuracy'][-1]
+                    current_f1 = total_metrics['f1'][-1]
+
+                    if current_acc < early_stop_threshold and current_f1 < early_stop_threshold:
+                        logger.debug(f"Early stopping discriminator at epoch {epoch}: "
+                                     f"acc={current_acc:.4f}, F1={current_f1:.4f}")
+                        break
+
+                logger.debug(f"Discriminator epoch {epoch}: loss={disc_loss.item():.4f}")
+
+            except Exception as e:
+                logger.warning(f"Error in discriminator update epoch {epoch}: {e}")
+                continue
+
+        # Calculate average metrics across epochs
+        if total_metrics['accuracy']:
+            avg_metrics = {
+                'accuracy': np.mean(total_metrics['accuracy']),
+                'precision': np.mean(total_metrics['precision']),
+                'recall': np.mean(total_metrics['recall']),
+                'f1': np.mean(total_metrics['f1'])
+            }
+            self.disc_metrics.append(avg_metrics)
+            logger.debug(f"Discriminator update complete - Avg F1: {avg_metrics['f1']:.4f}, "
+                         f"Avg Accuracy: {avg_metrics['accuracy']:.4f}")
+
+        # Step learning rate scheduler
+        self.disc_scheduler.step()
+
+        # GPU memory cleanup
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+
+    def update_policy(self, states: List[Data], actions: List[Any],
+                      old_log_probs: torch.Tensor, advantages: torch.Tensor,
+                      returns: torch.Tensor):
+        """Policy update with centralized configuration"""
+
+        epochs = self.opt_config.policy_epochs
+
+        if len(states) == 0:
+            logger.warning("No states provided for policy update")
+            return
+
+        policy_losses = []
+        entropy_losses = []
+        kl_divergences = []
+
+        for epoch in range(epochs):
+            # Shuffle data for better training
             indices = torch.randperm(len(states), device=self.device)
-            batch_size = min(32, len(states))
+            batch_size = min(24, len(states))  # Could also be configurable
 
             for start in range(0, len(states), batch_size):
                 end = min(start + batch_size, len(states))
@@ -525,8 +549,10 @@ class PPOTrainer:
                 loss_info = self.compute_policy_loss(batch_states, batch_actions,
                                                      batch_old_log_probs, batch_advantages)
 
-                # Total loss
-                total_loss = loss_info['policy_loss'] - self.entropy_coef * loss_info['entropy']
+                # Total loss with config weights
+                total_loss = (loss_info['policy_loss'] +
+                              self.value_coef * 0 +  # No value loss for now
+                              -self.entropy_coef * loss_info['entropy'])
 
                 # Backward pass with gradient clipping
                 self.opt_policy.zero_grad()
@@ -534,120 +560,259 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.opt_policy.step()
 
+                # Store metrics
+                policy_losses.append(loss_info['policy_loss'].item())
+                entropy_losses.append(loss_info['entropy'].item())
+                kl_divergences.append(loss_info['approx_kl'].item())
+
                 # Early stopping on large KL divergence
-                if loss_info['approx_kl'] > 0.01:
-                    logger.debug(f"Early stopping due to large KL: {loss_info['approx_kl']:.4f}")
+                if loss_info['approx_kl'] > 0.02:
+                    logger.debug(f"Early stopping policy update due to large KL: {loss_info['approx_kl']:.4f}")
                     break
 
-        self.policy_losses.append(total_loss.item())
+        # Store average metrics
+        if policy_losses:
+            avg_policy_loss = np.mean(policy_losses)
+            avg_entropy = np.mean(entropy_losses)
+            avg_kl = np.mean(kl_divergences)
+
+            self.policy_losses.append(avg_policy_loss)
+            self.policy_metrics.append({
+                'policy_loss': avg_policy_loss,
+                'entropy': avg_entropy,
+                'kl_divergence': avg_kl,
+                'update_count': self.update_count
+            })
+
+            logger.debug(f"Policy update complete - Loss: {avg_policy_loss:.4f}, "
+                         f"Entropy: {avg_entropy:.4f}, KL: {avg_kl:.4f}")
+
         self.update_count += 1
 
+        # Step learning rate scheduler
+        self.policy_scheduler.step()
+
         # GPU memory cleanup
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    def update_discriminator(self, smelly_graphs: List[Data], clean_graphs: List[Data],
-                             generated_graphs: List[Data], epochs: int = 5,
-                             early_stop_threshold: float = 0.6,
-                             label_smoothing: float = 0.1,
-                             gp_lambda: float = 10.0):
-        """Update discriminator with adversarial training using unified data format"""
+    def compute_policy_loss(self, states: List[Data], actions: List[Any],
+                            old_log_probs: torch.Tensor, advantages: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Policy loss computation with better error handling"""
 
-        for epoch in range(epochs):
-            # Sample balanced batches
-            batch_size = min(16, len(smelly_graphs), len(clean_graphs), len(generated_graphs))
+        # Validate inputs
+        if not states or not actions:
+            return {
+                'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
+                'entropy': torch.tensor(0.0, device=self.device),
+                'approx_kl': torch.tensor(0.0, device=self.device),
+                'clipfrac': torch.tensor(0.0, device=self.device)
+            }
 
-            if batch_size == 0:
+        # Ensure all states have correct format
+        valid_states = []
+        valid_actions = []
+        valid_indices = []
+
+        for i, state in enumerate(states):
+            if state.x.device != self.device:
+                state = state.to(self.device)
+
+            # Validate 7-feature format
+            if state.x.size(1) != 7:
+                logger.warning(f"State {i} has {state.x.size(1)} features, expected 7")
                 continue
 
+            # Ensure batch attribute
+            if not hasattr(state, 'batch') or state.batch is None:
+                state.batch = torch.zeros(state.x.size(0), dtype=torch.long, device=self.device)
+
+            valid_states.append(state)
+            valid_actions.append(actions[i])
+            valid_indices.append(i)
+
+        if not valid_states:
+            logger.warning("No valid states for policy loss computation")
+            return {
+                'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
+                'entropy': torch.tensor(0.0, device=self.device),
+                'approx_kl': torch.tensor(0.0, device=self.device),
+                'clipfrac': torch.tensor(0.0, device=self.device)
+            }
+
+        # Filter old_log_probs and advantages to match valid states
+        if len(valid_indices) < len(old_log_probs):
+            old_log_probs = old_log_probs[valid_indices]
+            advantages = advantages[valid_indices]
+
+        # Batch states with better error handling
+        try:
+            batch_data = Batch.from_data_list(valid_states)
+            if batch_data.x.device != self.device:
+                batch_data = batch_data.to(self.device)
+        except Exception as e:
+            logger.warning(f"Failed to batch states: {e}")
+            return {
+                'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
+                'entropy': torch.tensor(0.0, device=self.device),
+                'approx_kl': torch.tensor(0.0, device=self.device),
+                'clipfrac': torch.tensor(0.0, device=self.device)
+            }
+
+        # Forward pass
+        try:
+            self.policy.train()
+            policy_out = self.policy(batch_data)
+        except Exception as e:
+            logger.warning(f"Policy forward pass failed: {e}")
+            return {
+                'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
+                'entropy': torch.tensor(0.0, device=self.device),
+                'approx_kl': torch.tensor(0.0, device=self.device),
+                'clipfrac': torch.tensor(0.0, device=self.device)
+            }
+
+        # Compute current log probabilities with improved error handling
+        log_probs = []
+        entropies = []
+
+        # Handle batched data properly
+        num_graphs = len(valid_states)
+        nodes_per_graph = [state.x.size(0) for state in valid_states]
+        cumsum_nodes = [0] + list(np.cumsum(nodes_per_graph))
+
+        for i, action in enumerate(valid_actions):
             try:
-                # Sample data - all should already be in unified format from UnifiedDataLoader
-                smelly_sample = random.sample(smelly_graphs, batch_size)
-                clean_sample = random.sample(clean_graphs, batch_size)
-                generated_sample = random.sample(generated_graphs, batch_size)
+                start_idx = cumsum_nodes[i]
+                end_idx = cumsum_nodes[i + 1]
 
-                # Move to device
-                smelly_sample = [data.to(self.device) for data in smelly_sample]
-                clean_sample = [data.to(self.device) for data in clean_sample]
-                generated_sample = [data.to(self.device) for data in generated_sample]
+                # Validate indices
+                if start_idx >= policy_out['hub_probs'].size(0) or end_idx > policy_out['hub_probs'].size(0):
+                    log_probs.append(torch.tensor(-5.0, device=self.device))
+                    entropies.append(torch.tensor(0.1, device=self.device))
+                    continue
 
-                smelly_batch = Batch.from_data_list(smelly_sample)
-                clean_batch = Batch.from_data_list(clean_sample)
-                generated_batch = Batch.from_data_list(generated_sample)
+                # Hub selection with better bounds checking
+                hub_probs_i = policy_out['hub_probs'][start_idx:end_idx]
+                if hub_probs_i.size(0) == 0:
+                    log_probs.append(torch.tensor(-5.0, device=self.device))
+                    entropies.append(torch.tensor(0.1, device=self.device))
+                    continue
 
-                # Enable gradient for gradient penalty
-                smelly_batch.x.requires_grad_(True)
-                clean_batch.x.requires_grad_(True)
-                generated_batch.x.requires_grad_(True)
+                # Add numerical stability
+                hub_probs_i = hub_probs_i + 1e-8
+                hub_probs_i = hub_probs_i / hub_probs_i.sum()  # Renormalize
 
-                # Forward pass
-                smelly_out = self.discriminator(smelly_batch)
-                clean_out = self.discriminator(clean_batch)
-                gen_out = self.discriminator(generated_batch)
+                hub_dist = Categorical(hub_probs_i)
+                hub_action_tensor = torch.tensor(
+                    min(action.source_node, hub_probs_i.size(0) - 1),
+                    device=self.device
+                )
 
-                # Labels (smelly=1, clean/generated=0)
-                smelly_labels = torch.ones(batch_size, dtype=torch.long, device=self.device)
-                clean_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
-                gen_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+                log_prob_hub = hub_dist.log_prob(hub_action_tensor)
+                entropy_hub = hub_dist.entropy()
 
-                # Compute losses with label smoothing
-                loss_smelly = F.cross_entropy(smelly_out['logits'], smelly_labels,
-                                              label_smoothing=label_smoothing)
-                loss_clean = F.cross_entropy(clean_out['logits'], clean_labels,
-                                             label_smoothing=label_smoothing)
-                loss_gen = F.cross_entropy(gen_out['logits'], gen_labels,
-                                           label_smoothing=label_smoothing)
+                # Pattern selection with better error handling
+                pattern_idx = start_idx + min(action.source_node, hub_probs_i.size(0) - 1)
+                if pattern_idx < policy_out['pattern_probs'].size(0):
+                    pattern_probs_i = policy_out['pattern_probs'][pattern_idx] + 1e-8
+                    pattern_probs_i = pattern_probs_i / pattern_probs_i.sum()  # Renormalize
 
-                # Gradient penalty
-                gp_loss = 0.0
-                for batch, out in [(smelly_batch, smelly_out),
-                                   (clean_batch, clean_out),
-                                   (generated_batch, gen_out)]:
-                    grad = torch.autograd.grad(out['logits'].sum(), batch.x,
-                                               create_graph=True)[0]
-                    gp_loss += grad.pow(2).mean()
+                    pattern_dist = Categorical(pattern_probs_i)
+                    pattern_action_tensor = torch.tensor(
+                        min(action.pattern, pattern_probs_i.size(0) - 1),
+                        device=self.device
+                    )
 
-                # Total discriminator loss
-                disc_loss = loss_smelly + loss_clean + loss_gen + gp_lambda * gp_loss
+                    log_prob_pattern = pattern_dist.log_prob(pattern_action_tensor)
+                    entropy_pattern = pattern_dist.entropy()
+                else:
+                    log_prob_pattern = torch.tensor(-2.0, device=self.device)
+                    entropy_pattern = torch.tensor(0.1, device=self.device)
 
-                # Backward pass
-                self.opt_disc.zero_grad()
-                disc_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.max_grad_norm)
-                self.opt_disc.step()
+                # Termination with better handling
+                if i < policy_out['term_probs'].size(0):
+                    term_probs_i = policy_out['term_probs'][i] + 1e-8
+                    term_probs_i = term_probs_i / term_probs_i.sum()  # Renormalize
+                else:
+                    term_probs_i = torch.tensor([0.7, 0.3], device=self.device)  # Default probs
 
-                # Validation metrics
-                with torch.no_grad():
-                    preds = torch.cat([
-                        smelly_out['logits'].argmax(dim=1),
-                        clean_out['logits'].argmax(dim=1),
-                        gen_out['logits'].argmax(dim=1)
-                    ])
-                    labels = torch.cat([smelly_labels, clean_labels, gen_labels])
-                    accuracy = (preds == labels).float().mean().item()
-                    tp = ((preds == 1) & (labels == 1)).sum().item()
-                    fp = ((preds == 1) & (labels == 0)).sum().item()
-                    fn = ((preds == 0) & (labels == 1)).sum().item()
-                    precision = tp / (tp + fp + 1e-8)
-                    recall = tp / (tp + fn + 1e-8)
-                    f1 = 2 * precision * recall / (precision + recall + 1e-8)
-                    self.disc_metrics.append({'accuracy': accuracy, 'f1': f1})
+                term_dist = Categorical(term_probs_i)
+                term_action_tensor = torch.tensor(int(action.terminate), device=self.device)
+                log_prob_term = term_dist.log_prob(term_action_tensor)
+                entropy_term = term_dist.entropy()
 
-                self.disc_losses.append(disc_loss.item())
+                # Combine probabilities
+                total_log_prob = log_prob_hub + log_prob_pattern + log_prob_term
+                total_entropy = entropy_hub + entropy_pattern + entropy_term
 
-                # Early stopping if performance drops below threshold
-                if accuracy < early_stop_threshold or f1 < early_stop_threshold:
-                    logger.debug(
-                        f"Early stopping discriminator at epoch {epoch}: acc={accuracy:.4f}, F1={f1:.4f}")
-                    break
+                log_probs.append(total_log_prob)
+                entropies.append(total_entropy)
 
             except Exception as e:
-                logger.debug(f"Error in discriminator update: {e}")
-                continue
+                logger.debug(f"Error computing log prob for action {i}: {e}")
+                log_probs.append(torch.tensor(-5.0, device=self.device))
+                entropies.append(torch.tensor(0.1, device=self.device))
 
-        # GPU memory cleanup
-        if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
+        if not log_probs:
+            return {
+                'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
+                'entropy': torch.tensor(0.0, device=self.device),
+                'approx_kl': torch.tensor(0.0, device=self.device),
+                'clipfrac': torch.tensor(0.0, device=self.device)
+            }
+
+        log_probs = torch.stack(log_probs)
+        entropy = torch.stack(entropies).mean()
+
+        # Ensure dimensions match
+        old_log_probs = old_log_probs.to(self.device)
+        if old_log_probs.size(0) != log_probs.size(0):
+            min_size = min(old_log_probs.size(0), log_probs.size(0))
+            old_log_probs = old_log_probs[:min_size]
+            log_probs = log_probs[:min_size]
+            advantages = advantages[:min_size]
+
+        # PPO clipped objective with numerical stability
+        ratio = torch.exp(torch.clamp(log_probs - old_log_probs, -10, 10))  # Clamp for stability
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages
+        policy_loss = -torch.min(surr1, surr2).mean()
+
+        # Compute additional metrics
+        with torch.no_grad():
+            approx_kl = (old_log_probs - log_probs).mean()
+            clipfrac = ((ratio - 1).abs() > self.clip_eps).float().mean()
+
+        return {
+            'policy_loss': policy_loss,
+            'entropy': entropy,
+            'approx_kl': approx_kl,
+            'clipfrac': clipfrac
+        }
+
+    def get_latest_metrics(self) -> Dict[str, Any]:
+        """Get latest training metrics for logging"""
+        metrics = {}
+
+        if self.policy_metrics:
+            latest_policy = self.policy_metrics[-1]
+            metrics.update({
+                'policy_loss': latest_policy['policy_loss'],
+                'policy_entropy': latest_policy['entropy'],
+                'policy_kl': latest_policy['kl_divergence']
+            })
+
+        if self.disc_metrics:
+            latest_disc = self.disc_metrics[-1]
+            metrics.update({
+                'discriminator_accuracy': latest_disc['accuracy'],
+                'discriminator_f1': latest_disc['f1'],
+                'discriminator_precision': latest_disc['precision'],
+                'discriminator_recall': latest_disc['recall']
+            })
+
+        return metrics
 
 
 def safe_torch_load(file_path: Path, device: torch.device):
@@ -756,6 +921,7 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
         logger.warning(f"Discriminator prediction failed: {e}")
         return None
 
+
 def validate_discriminator_performance(discriminator: nn.Module, data_loader: UnifiedDataLoader,
                                        device: torch.device, num_samples: int = 40) -> Dict[str, float]:
     """Enhanced validation with unified data loader"""
@@ -832,9 +998,12 @@ def validate_discriminator_performance(discriminator: nn.Module, data_loader: Un
 
 
 def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager,
-                                         discriminator: nn.Module, num_envs: int = 8,
+                                         discriminator: nn.Module, training_config,
                                          device: torch.device = torch.device('cpu')) -> List[HubRefactoringEnv]:
-    """Create training environments with diverse graphs"""
+    """Create training environments with diverse graphs using centralized config"""
+    num_envs = training_config.num_envs
+    max_steps = training_config.max_steps_per_episode
+
     logger.info(f"🌍 Creating {num_envs} environments with diverse graphs...")
 
     envs = []
@@ -853,8 +1022,8 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
             if test_pred is not None:
                 logger.info(f"Environment {i}: Initial hub score = {test_pred:.4f}, nodes = {initial_graph.x.size(0)}")
 
-                # Create environment
-                env = HubRefactoringEnv(initial_graph, discriminator, max_steps=15, device=device)
+                # Create environment with config-based max_steps
+                env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
                 # Store reference to environment manager for dynamic resets
                 env.env_manager = env_manager
                 envs.append(env)
@@ -867,6 +1036,7 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
 
     logger.info(f"✅ Created {len(envs)} diverse training environments")
     return envs
+
 
 def enhanced_reset_environment(env: HubRefactoringEnv) -> Data:
     """Enhanced reset that picks new graph from pool"""
@@ -893,9 +1063,12 @@ def enhanced_reset_environment(env: HubRefactoringEnv) -> Data:
         logger.warning(f"Enhanced reset failed: {e}, using standard reset")
         return env.reset()
 
+
 def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
-                     steps_per_env: int = 32, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
-    """Collect rollouts with unified data handling and incremental updates"""
+                     training_config, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
+    """Collect rollouts with centralized config and unified data handling"""
+
+    steps_per_env = training_config.steps_per_env
 
     all_states = []
     all_actions = []
@@ -1076,7 +1249,8 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
                 # Log incremental update success
                 if info.get('features_updated_incrementally', False):
-                    logger.debug(f"Environment {i}: Features updated incrementally for {len(info.get('affected_nodes', []))} nodes")
+                    logger.debug(
+                        f"Environment {i}: Features updated incrementally for {len(info.get('affected_nodes', []))} nodes")
 
                 next_states.append(state)
                 rewards.append(reward)
@@ -1209,7 +1383,18 @@ def monitor_gpu_usage():
 
 
 def main():
-    """Enhanced main training loop with incremental feature updates and environment diversity"""
+    """Enhanced main training loop with centralized hyperparameter configuration"""
+
+    # Load centralized configuration
+    config = get_improved_config()
+    reward_config = config['rewards']
+    training_config = config['training']
+    opt_config = config['optimization']
+    disc_config = config['discriminator']
+    env_config = config['environment']
+
+    # Print configuration summary
+    print_config_summary()
 
     # Setup GPU environment
     device = setup_gpu_environment()
@@ -1222,10 +1407,10 @@ def main():
         torch.cuda.manual_seed(42)
         torch.cuda.manual_seed_all(42)
 
-    logger.info(f"🎯 Starting ENHANCED RL training on device: {device}")
-    logger.info(f"🚀 Features updated incrementally + Environment Diversity!")
+    logger.info(f"🎯 Starting RL training with CENTRALIZED CONFIG on device: {device}")
+    logger.info(f"🚀 All hyperparameters loaded from hyperparameters_configuration.py!")
 
-    # Paths
+    # Paths (same as before)
     base_dir = Path(__file__).parent
     data_dir = base_dir / 'dataset_builder' / 'data' / 'dataset_graph_feature'
     results_dir = base_dir / 'results'
@@ -1233,7 +1418,7 @@ def main():
 
     results_dir.mkdir(exist_ok=True)
 
-    # TensorBoard setup in results folder
+    # TensorBoard setup
     tensorboard_dir = results_dir / 'tensorboard_logs'
     tb_logger = TensorBoardLogger(tensorboard_dir)
 
@@ -1307,34 +1492,43 @@ def main():
     trainable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     logger.info(f"Policy network - Total params: {total_params:,}, Trainable: {trainable_params:,}")
 
-    # Create trainer with pretrained discriminator
-    logger.info("🎯 Setting up PPO trainer with incremental feature updates...")
-    trainer = PPOTrainer(policy, discriminator, device=device)
+    logger.info("🎯 Setting up PPO trainer with centralized config...")
+    trainer = PPOTrainer(
+        policy,
+        discriminator,
+        opt_config,
+        disc_config,
+        device=device
+    )
 
-    # ENHANCED training parameters - optimized for diversity and incremental updates
-    num_episodes = 5000
-    num_envs = min(8 if device.type == 'cuda' else 4, stats['label_distribution']['smelly'])
-    steps_per_env = 32
-    update_frequency = 4
-    environment_refresh_frequency = 100  # NEW: Refresh environments every 100 episodes
+    # Training parameters from centralized config
+    num_episodes = training_config.num_episodes
+    num_envs = min(training_config.num_envs if device.type == 'cuda' else 3, stats['label_distribution']['smelly'])
+    steps_per_env = training_config.steps_per_env
+    update_frequency = training_config.update_frequency
+    environment_refresh_frequency = training_config.environment_refresh_frequency
 
-    logger.info("⚙️ ENHANCED training configuration:")
+    # Hub score tracking parameters from config
+    hub_score_improvement_threshold = training_config.hub_improvement_threshold
+    consecutive_failures_threshold = training_config.consecutive_failures_threshold
+
+    logger.info("⚙️ CENTRALIZED training configuration:")
     logger.info(f"  Episodes: {num_episodes}")
     logger.info(f"  Environments: {num_envs}")
-    logger.info(f"  Environment refresh: every {environment_refresh_frequency} episodes")
     logger.info(f"  Steps per env: {steps_per_env}")
     logger.info(f"  Update frequency: {update_frequency}")
+    logger.info(f"  Environment refresh: every {environment_refresh_frequency} episodes")
+    logger.info(f"  Hub improvement threshold: {hub_score_improvement_threshold}")
+    logger.info(f"  Consecutive failures threshold: {consecutive_failures_threshold}")
     logger.info(f"  Device: {device}")
-    logger.info(f"  Feature updates: INCREMENTAL + DIVERSE GRAPHS")
-    logger.info(f"  TensorBoard: {tensorboard_dir}")
 
-    # Create enhanced environment manager for diverse graph pools
-    logger.info("🌍 Creating enhanced environment manager with diverse graph pools...")
+    # Create enhanced environment manager with centralized config
+    logger.info("🌍 Creating enhanced environment manager with centralized config...")
     try:
         env_manager = EnhancedEnvironmentManager(
             data_loader=data_loader,
             discriminator=discriminator,
-            pool_size=50,  # Maintain pool of 50 diverse graphs
+            env_config=env_config,
             device=device
         )
         logger.info(f"✅ Environment manager created with {env_manager.pool_size} diverse graphs")
@@ -1342,96 +1536,157 @@ def main():
         logger.error(f"❌ Failed to create environment manager: {e}")
         return
 
-    # Create environments with incremental feature updates and diverse graphs
-    logger.info("🌍 Creating training environments with diverse graphs and incremental updates...")
+    # Create environments with centralized config
+    logger.info("🌍 Creating training environments with centralized config...")
     try:
-        envs = create_diverse_training_environments(env_manager, discriminator, num_envs, device)
+        envs = create_diverse_training_environments(env_manager, discriminator, training_config, device)
         logger.info(f"✅ Successfully created {len(envs)} diverse training environments")
-        logger.info(f"🚀 All environments use incremental updates + diverse graphs!")
+        logger.info(f"🚀 All environments use incremental updates + centralized config!")
     except Exception as e:
         logger.error(f"❌ Failed to create training environments: {e}")
         return
 
-    logger.info("🚀 Starting ENHANCED RL training with incremental updates + diverse graphs...")
+    # Update environment reward structure with centralized config
+    logger.info("🎯 Updating environment reward structures with centralized config...")
+    for i, env in enumerate(envs):
+        try:
+            # Update reward parameters from centralized config
+            env.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
+            env.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
+            env.REWARD_FAILURE = reward_config.REWARD_FAILURE
+            env.REWARD_STEP = reward_config.REWARD_STEP
+            env.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
+            env.REWARD_INVALID = reward_config.REWARD_INVALID
+            env.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
 
-    # Enhanced training loop with diversity and monitoring
+            # Update hub score thresholds
+            env.HUB_SCORE_EXCELLENT = reward_config.HUB_SCORE_EXCELLENT
+            env.HUB_SCORE_GOOD = reward_config.HUB_SCORE_GOOD
+            env.HUB_SCORE_ACCEPTABLE = reward_config.HUB_SCORE_ACCEPTABLE
+
+            # Update progressive reward scaling
+            env.improvement_multiplier_boost = reward_config.improvement_multiplier_boost
+            env.improvement_multiplier_decay = reward_config.improvement_multiplier_decay
+            env.improvement_multiplier_max = reward_config.improvement_multiplier_max
+            env.improvement_multiplier_min = reward_config.improvement_multiplier_min
+
+            logger.debug(f"Environment {i}: Updated with centralized reward config")
+        except Exception as e:
+            logger.warning(f"Failed to update environment {i} config: {e}")
+
+    logger.info("🚀 Starting CENTRALIZED CONFIG RL training...")
+
+    # Enhanced training loop with centralized config
     episode_rewards = []
     success_rates = []
     hub_improvements = []
+    hub_scores = []
     environment_diversity_stats = []
-    start_time = torch.cuda.Event(enable_timing=True) if device.type == 'cuda' else None
-    end_time = torch.cuda.Event(enable_timing=True) if device.type == 'cuda' else None
+    consecutive_failures = 0
+    best_episode_reward = float('-inf')
+
+    logger.info("🚀 Starting training with CENTRALIZED HYPERPARAMETERS...")
 
     for episode in range(num_episodes):
-        if device.type == 'cuda' and start_time:
-            start_time.record()
+        episode_start_time = time.time()
 
-        # ENHANCED: Environment refresh every 100 episodes for better exploration
+        # Environment refresh with centralized config
         if episode % environment_refresh_frequency == 0 and episode > 0:
-            logger.info(f"🔄 Environment refresh at episode {episode} - diversifying graphs...")
+            logger.info(f"🔄 Environment refresh at episode {episode} (config: every {environment_refresh_frequency})")
 
-            # Reset all environments with new diverse graphs
+            # Reset environments with new diverse graphs
             reset_count = 0
+            initial_hub_scores = []
+
             for i, env in enumerate(envs):
                 try:
                     new_state = enhanced_reset_environment(env)
+                    # Get initial hub score for the new graph
+                    initial_score = env.initial_hub_score if hasattr(env, 'initial_hub_score') else None
+                    if initial_score is not None:
+                        initial_hub_scores.append(initial_score)
                     reset_count += 1
-                    logger.debug(f"Environment {i} reset with new graph (nodes: {new_state.x.size(0)})")
                 except Exception as e:
                     logger.warning(f"Failed to reset environment {i}: {e}")
 
-            logger.info(f"✅ Refreshed {reset_count} environments with diverse graphs")
+            logger.info(f"✅ Refreshed {reset_count} environments")
+            if initial_hub_scores:
+                avg_initial_score = np.mean(initial_hub_scores)
+                logger.info(f"📊 New environments avg initial hub score: {avg_initial_score:.4f}")
 
-            # Log environment diversity stats
-            env_stats = env_manager.get_stats()
-            tb_logger.log_environment_metrics(episode, env_stats)
-            environment_diversity_stats.append(env_stats)
-
-        # Pool refresh every 500 episodes for completely new graph varieties
-        if env_manager.should_refresh_pool(episode):
+        # Pool refresh with centralized config
+        if (env_manager.should_refresh_pool(episode) or
+                consecutive_failures > consecutive_failures_threshold):
             env_manager._refresh_pool()
-            logger.info("🔄 Graph pool refreshed with completely new varieties")
+            consecutive_failures = 0
+            logger.info("🔄 Graph pool refreshed (centralized config)")
 
-        # Collect rollouts with incremental feature updates and diverse graphs
-        rollout_data = collect_rollouts(envs, policy, steps_per_env, device)
+        # Collect rollouts with centralized config
+        rollout_data = collect_rollouts(envs, policy, training_config, device)
 
         if len(rollout_data['rewards']) == 0:
-            logger.warning(f"No valid rollouts in episode {episode}, recreating environments...")
+            logger.warning(f"No valid rollouts in episode {episode}")
+            consecutive_failures += 1
+            continue
 
-            # Try to recreate environments with new diverse graphs
-            try:
-                envs = create_diverse_training_environments(env_manager, discriminator, num_envs, device)
-                continue
-            except Exception as e:
-                logger.error(f"Failed to recreate environments: {e}")
-                break
-
+        # Calculate episode metrics with centralized config thresholds
         episode_reward = np.mean(rollout_data['rewards'])
         episode_rewards.append(episode_reward)
 
-        # Calculate success rate (episodes that improved hub score)
-        positive_rewards = [r for r in rollout_data['rewards'] if r > 0]
-        success_rate = len(positive_rewards) / max(len(rollout_data['rewards']), 1)
+        # Track hub improvements using centralized threshold
+        valid_improvements = []
+        hub_scores_this_episode = []
+
+        for i, env in enumerate(envs):
+            if hasattr(env, 'hub_score_history') and len(env.hub_score_history) > 1:
+                # Calculate improvement from initial to final
+                initial = env.hub_score_history[0]
+                final = env.hub_score_history[-1]
+                improvement = initial - final  # Positive = improvement
+
+                if improvement > hub_score_improvement_threshold:
+                    valid_improvements.append(improvement)
+
+                hub_scores_this_episode.extend(env.hub_score_history)
+
+        # Calculate success rate
+        success_count = len(valid_improvements)
+        success_rate = success_count / len(envs) if envs else 0
         success_rates.append(success_rate)
 
-        # Calculate hub improvements
-        if rollout_data.get('hub_improvements'):
-            avg_improvement = np.mean([imp for imp in rollout_data['hub_improvements'] if imp > 0])
-            hub_improvements.append(avg_improvement if avg_improvement > 0 else 0)
+        # Track hub improvements
+        avg_improvement = np.mean(valid_improvements) if valid_improvements else 0
+        hub_improvements.append(avg_improvement)
+
+        # Track actual hub scores
+        if hub_scores_this_episode:
+            avg_hub_score = np.mean(hub_scores_this_episode)
+            hub_scores.append(avg_hub_score)
         else:
-            hub_improvements.append(0)
+            hub_scores.append(0.5)
 
-        # Update policy every N episodes
-        if episode % update_frequency == 0 and len(rollout_data['states']) >= 32:
+        # Update consecutive failures counter
+        if success_rate > 0.1 or episode_reward > -0.1:
+            consecutive_failures = 0
+        else:
+            consecutive_failures += 1
 
-            # Compute advantages
+        # Track best performance
+        if episode_reward > best_episode_reward:
+            best_episode_reward = episode_reward
+            logger.info(f"🎉 New best episode reward: {episode_reward:.4f} at episode {episode}")
+
+        # Policy updates with centralized config frequency
+        if episode % update_frequency == 0 and len(rollout_data['states']) >= 16:
+
+            # Compute GAE advantages
             advantages, returns = trainer.compute_gae(
                 rollout_data['rewards'],
                 rollout_data['values'],
                 rollout_data['dones']
             )
 
-            # Update policy
+            # Update policy with centralized config epochs
             trainer.update_policy(
                 rollout_data['states'],
                 rollout_data['actions'],
@@ -1440,122 +1695,113 @@ def main():
                 returns
             )
 
-            # Log policy metrics to TensorBoard
-            if trainer.policy_losses:
-                tb_logger.log_policy_metrics(trainer.update_count, {
-                    'policy_loss': trainer.policy_losses[-1],
-                    'policy_updates': trainer.update_count
-                })
+            # Log policy metrics
+            policy_metrics = trainer.get_latest_metrics()
+            if policy_metrics:
+                for key, value in policy_metrics.items():
+                    if 'policy' in key:
+                        tb_logger.log_policy_metrics(trainer.update_count, {key.replace('policy_', ''): value})
 
-            # Update discriminator occasionally (fine-tuning)
-            if episode % (update_frequency * 5) == 0 and episode > 0:
-                # Get smelly and clean samples for discriminator update
-                smelly_samples, labels = data_loader.load_dataset(max_samples_per_class=8, shuffle=True,
-                                                                  remove_metadata=True)
-                smelly_graphs = [data for data, label in zip(smelly_samples, labels) if label == 1]
-                clean_graphs = [data for data, label in zip(smelly_samples, labels) if label == 0]
-
-                # Collect recent states from environments
-                recent_states = []
-                for env in envs:
-                    if hasattr(env, 'current_data') and env.current_data is not None:
-                        recent_states.append(env.current_data.clone())
-
-                if len(smelly_graphs) >= 8 and len(clean_graphs) >= 8 and len(recent_states) >= 8:
-                    # Fine-tune discriminator with unified data
-                    trainer.update_discriminator(
-                        smelly_graphs[:8],
-                        clean_graphs[:8],
-                        recent_states[:8]
+            # Discriminator fine-tuning with centralized config
+            disc_update_freq = update_frequency * disc_config.update_frequency_multiplier
+            if episode % disc_update_freq == 0 and episode > 100:
+                try:
+                    # Get diverse samples for discriminator
+                    smelly_samples, labels = data_loader.load_dataset(
+                        max_samples_per_class=disc_config.max_samples_per_class,
+                        shuffle=True,
+                        remove_metadata=True
                     )
 
-                    # Log discriminator metrics
-                    if trainer.disc_losses:
-                        tb_logger.log_discriminator_metrics(episode, {
-                            'discriminator_loss': trainer.disc_losses[-1]
-                        })
+                    smelly_graphs = [data for data, label in zip(smelly_samples, labels) if label == 1]
+                    clean_graphs = [data for data, label in zip(smelly_samples, labels) if label == 0]
 
-        # Timing for GPU
-        if device.type == 'cuda' and end_time:
-            end_time.record()
-            torch.cuda.synchronize()
-            if start_time:
-                episode_time = start_time.elapsed_time(end_time) / 1000.0
+                    # Collect recent generated states
+                    recent_states = []
+                    for env in envs:
+                        if hasattr(env, 'current_data') and env.current_data is not None:
+                            recent_states.append(env.current_data.clone())
 
-        # ENHANCED logging with TensorBoard every episode
-        if len(episode_rewards) > 0:
-            tb_logger.log_episode_metrics(episode, {
-                'reward': episode_rewards[-1],
-                'success_rate': success_rates[-1] if success_rates else 0,
-                'hub_improvement': hub_improvements[-1] if hub_improvements else 0
-            })
+                    min_samples = disc_config.min_samples_per_class
+                    if (len(smelly_graphs) >= min_samples and
+                            len(clean_graphs) >= min_samples and
+                            len(recent_states) >= min_samples):
 
-        # Enhanced logging and monitoring every 100 episodes
-        if episode % 100 == 0:
-            avg_reward_100 = np.mean(episode_rewards[-100:]) if episode_rewards else 0
-            avg_success_100 = np.mean(success_rates[-100:]) if success_rates else 0
-            avg_improvement_100 = np.mean(hub_improvements[-100:]) if hub_improvements else 0
-            policy_loss = trainer.policy_losses[-1] if trainer.policy_losses else 0
-            disc_loss = trainer.disc_losses[-1] if trainer.disc_losses else 0
+                        # Update discriminator with centralized config
+                        trainer.update_discriminator(
+                            smelly_graphs[:disc_config.max_samples_per_class],
+                            clean_graphs[:disc_config.max_samples_per_class],
+                            recent_states[:disc_config.max_samples_per_class]
+                        )
 
-            timing_info = ""
-            if device.type == 'cuda' and 'episode_time' in locals():
-                timing_info = f"Time: {episode_time:.2f}s | "
+                        # Log discriminator metrics
+                        disc_metrics = trainer.get_latest_metrics()
+                        if disc_metrics:
+                            for key, value in disc_metrics.items():
+                                if 'discriminator' in key:
+                                    tb_logger.log_discriminator_metrics(episode,
+                                                                        {key.replace('discriminator_', ''): value})
+
+                except Exception as e:
+                    logger.warning(f"Discriminator update failed at episode {episode}: {e}")
+
+        # Enhanced TensorBoard logging every episode
+        tb_logger.log_episode_metrics(episode, {
+            'reward': episode_reward,
+            'success_rate': success_rate,
+            'hub_improvement': avg_improvement,
+            'average_hub_score': hub_scores[-1] if hub_scores else 0.5,
+            'consecutive_failures': consecutive_failures,
+            'best_reward_so_far': best_episode_reward
+        })
+
+        # Enhanced logging every 50 episodes with centralized config info
+        if episode % 50 == 0:
+            recent_rewards = episode_rewards[-50:] if len(episode_rewards) >= 50 else episode_rewards
+            recent_success_rates = success_rates[-50:] if len(success_rates) >= 50 else success_rates
+            recent_improvements = hub_improvements[-50:] if len(hub_improvements) >= 50 else hub_improvements
+            recent_hub_scores = hub_scores[-50:] if len(hub_scores) >= 50 else hub_scores
+
+            avg_reward_50 = np.mean(recent_rewards) if recent_rewards else 0
+            avg_success_50 = np.mean(recent_success_rates) if recent_success_rates else 0
+            avg_improvement_50 = np.mean(recent_improvements) if recent_improvements else 0
+            avg_hub_score_50 = np.mean(recent_hub_scores) if recent_hub_scores else 0.5
+
+            # Get latest training metrics
+            latest_metrics = trainer.get_latest_metrics()
+            policy_loss = latest_metrics.get('policy_loss', 0)
+            disc_f1 = latest_metrics.get('discriminator_f1', 0)
 
             logger.info(f"Episode {episode:5d} | "
-                        f"Reward (100): {avg_reward_100:7.3f} | "
-                        f"Success Rate: {avg_success_100:5.3f} | "
-                        f"Hub Improv: {avg_improvement_100:5.3f} | "
+                        f"Reward (50): {avg_reward_50:7.3f} | "
+                        f"Success Rate: {avg_success_50:5.3f} | "
+                        f"Hub Improv: {avg_improvement_50:6.4f} | "
+                        f"Hub Score: {avg_hub_score_50:5.3f} | "
                         f"Policy Loss: {policy_loss:7.4f} | "
-                        f"Disc Loss: {disc_loss:7.4f} | "
-                        f"{timing_info}Enhanced: ✅")
+                        f"Disc F1: {disc_f1:5.3f} | "
+                        f"Failures: {consecutive_failures:2d} | "
+                        f"Config: ✅")
 
-            # Log aggregated metrics to TensorBoard
+            # Log aggregated metrics
             tb_logger.log_training_metrics(episode, {
-                'reward_avg_100': avg_reward_100,
-                'success_rate_avg_100': avg_success_100,
-                'hub_improvement_avg_100': avg_improvement_100,
-                'total_environments': len(envs)
+                'reward_avg_50': avg_reward_50,
+                'success_rate_avg_50': avg_success_50,
+                'hub_improvement_avg_50': avg_improvement_50,
+                'hub_score_avg_50': avg_hub_score_50,
+                'consecutive_failures': consecutive_failures
             })
 
-            # Log environment diversity stats
-            env_stats = env_manager.get_stats()
-            tb_logger.log_environment_metrics(episode, env_stats)
+            # Early stopping conditions with centralized config
+            if episode > 1000:
+                if consecutive_failures > consecutive_failures_threshold * 2:
+                    logger.warning(f"Too many consecutive failures ({consecutive_failures}), consider stopping")
 
-            # Monitor GPU usage
-            if device.type == 'cuda':
-                monitor_gpu_usage()
+                if avg_reward_50 > 5.0 and avg_success_50 > 0.7:
+                    logger.info(
+                        f"🎉 Excellent performance achieved! Reward: {avg_reward_50:.3f}, Success: {avg_success_50:.3f}")
 
-            # Additional diagnostics every 500 episodes
-            if episode % 500 == 0 and episode > 0:
-                # Test discriminator performance
-                val_results = validate_discriminator_performance(discriminator, data_loader, device, num_samples=20)
-                logger.info(f"🔍 Discriminator validation - Acc: {val_results['accuracy']:.3f}")
-
-                # Log discriminator validation to TensorBoard
-                tb_logger.log_discriminator_metrics(episode, {
-                    'validation_accuracy': val_results['accuracy'],
-                    'validation_f1': val_results.get('f1', 0)
-                })
-
-                # Analyze agent performance
-                recent_rewards = episode_rewards[-100:] if len(episode_rewards) >= 100 else episode_rewards
-                if recent_rewards:
-                    logger.info(f"📊 Agent performance analysis:")
-                    logger.info(f"  Mean reward: {np.mean(recent_rewards):.3f}")
-                    logger.info(f"  Std reward: {np.std(recent_rewards):.3f}")
-                    logger.info(f"  Max reward: {np.max(recent_rewards):.3f}")
-                    logger.info(f"  Min reward: {np.min(recent_rewards):.3f}")
-
-                # Environment diversity analysis
-                env_stats = env_manager.get_stats()
-                logger.info(f"🌍 Environment diversity stats:")
-                logger.info(f"  Total graphs seen: {env_stats['total_graphs_seen']}")
-                logger.info(f"  Pool refreshes: {env_stats['pool_refreshes']}")
-                logger.info(f"  Current pool size: {env_stats['pool_size']}")
-
-        # Save checkpoints with enhanced stats
-        if episode % 1000 == 0 and episode > 0:
+        # Save checkpoints with centralized config info
+        if episode % 500 == 0 and episode > 0:
             try:
                 checkpoint = {
                     'episode': episode,
@@ -1563,220 +1809,193 @@ def main():
                     'discriminator_state': discriminator.state_dict(),
                     'trainer_state': {
                         'update_count': trainer.update_count,
-                        'policy_losses': trainer.policy_losses,
-                        'disc_losses': trainer.disc_losses
+                        'policy_losses': trainer.policy_losses[-100:],
+                        'disc_losses': trainer.disc_losses[-100:],
+                        'policy_metrics': trainer.policy_metrics[-50:],
+                        'disc_metrics': trainer.disc_metrics[-50:]
                     },
-                    'enhanced_training_stats': {
-                        'episode_rewards': episode_rewards,
-                        'success_rates': success_rates,
-                        'hub_improvements': hub_improvements,
-                        'environment_diversity_stats': environment_diversity_stats,
-                        'discriminator_validation': validation_results
+                    'centralized_config_stats': {
+                        'episode_rewards': episode_rewards[-500:],
+                        'success_rates': success_rates[-500:],
+                        'hub_improvements': hub_improvements[-500:],
+                        'hub_scores': hub_scores[-500:],
+                        'best_episode_reward': best_episode_reward,
+                        'consecutive_failures': consecutive_failures
                     },
-                    'enhanced_config': {
-                        'device': str(device),
-                        'node_dim': node_dim,
-                        'edge_dim': edge_dim,
-                        'hidden_dim': hidden_dim,
-                        'environment_refresh_frequency': environment_refresh_frequency,
-                        'graph_pool_size': env_manager.pool_size,
-                        'data_loader': 'UnifiedDataLoader',
-                        'feature_updates': 'incremental',
-                        'environment_diversity': True,
-                        'tensorboard_enabled': True,
-                        'feature_computation': 'IncrementalFeatureComputer'
-                    },
-                    'environment_manager_stats': env_manager.get_stats(),
-                    'data_consistency_report': consistency_report,
-                    'dataset_statistics': stats
+                    'centralized_config_used': {
+                        'rewards': {
+                            'REWARD_SUCCESS': reward_config.REWARD_SUCCESS,
+                            'REWARD_PARTIAL_SUCCESS': reward_config.REWARD_PARTIAL_SUCCESS,
+                            'REWARD_FAILURE': reward_config.REWARD_FAILURE,
+                            'REWARD_STEP': reward_config.REWARD_STEP,
+                            'REWARD_HUB_REDUCTION': reward_config.REWARD_HUB_REDUCTION,
+                            'REWARD_SMALL_IMPROVEMENT': reward_config.REWARD_SMALL_IMPROVEMENT,
+                            'HUB_SCORE_EXCELLENT': reward_config.HUB_SCORE_EXCELLENT,
+                            'HUB_SCORE_GOOD': reward_config.HUB_SCORE_GOOD,
+                            'HUB_SCORE_ACCEPTABLE': reward_config.HUB_SCORE_ACCEPTABLE
+                        },
+                        'training': {
+                            'num_episodes': training_config.num_episodes,
+                            'num_envs': training_config.num_envs,
+                            'steps_per_env': training_config.steps_per_env,
+                            'update_frequency': training_config.update_frequency,
+                            'hub_improvement_threshold': training_config.hub_improvement_threshold,
+                            'consecutive_failures_threshold': training_config.consecutive_failures_threshold
+                        },
+                        'optimization': {
+                            'policy_lr': opt_config.policy_lr,
+                            'discriminator_lr': opt_config.discriminator_lr,
+                            'clip_epsilon': opt_config.clip_epsilon,
+                            'entropy_coefficient': opt_config.entropy_coefficient,
+                            'policy_epochs': opt_config.policy_epochs,
+                            'discriminator_epochs': opt_config.discriminator_epochs
+                        },
+                        'discriminator': {
+                            'early_stop_threshold': disc_config.early_stop_threshold,
+                            'label_smoothing': disc_config.label_smoothing,
+                            'calculate_detailed_metrics': disc_config.calculate_detailed_metrics,
+                            'use_balanced_sampling': disc_config.use_balanced_sampling
+                        },
+                        'environment': {
+                            'graph_pool_size': env_config.graph_pool_size,
+                            'pool_refresh_episodes': env_config.pool_refresh_episodes,
+                            'min_graph_size': env_config.min_graph_size,
+                            'max_graph_size': env_config.max_graph_size
+                        }
+                    }
                 }
 
-                checkpoint_path = results_dir / f'enhanced_rl_checkpoint_{episode}.pt'
+                checkpoint_path = results_dir / f'centralized_config_rl_checkpoint_{episode}.pt'
                 torch.save(checkpoint, checkpoint_path)
-                logger.info(f"💾 Saved enhanced checkpoint: {checkpoint_path}")
+                logger.info(f"💾 Saved centralized config checkpoint: {checkpoint_path}")
+
             except Exception as e:
                 logger.warning(f"Failed to save checkpoint: {e}")
 
-        # Memory cleanup every 50 episodes
-        if episode % 50 == 0 and device.type == 'cuda':
+        # Memory cleanup
+        if episode % 25 == 0 and device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    # Training completed
-    logger.info("🏁 ENHANCED RL Training completed!")
-    logger.info("🚀 Incremental feature updates + Environment diversity = SUCCESS!")
+    # Training completed - Enhanced summary with centralized config info
+    logger.info("🏁 CENTRALIZED CONFIG RL Training completed!")
 
-    # Final GPU memory cleanup
-    if device.type == 'cuda':
-        torch.cuda.empty_cache()
-        monitor_gpu_usage()
+    # Final performance analysis
+    if episode_rewards:
+        final_100_rewards = episode_rewards[-100:] if len(episode_rewards) >= 100 else episode_rewards
+        final_100_success = success_rates[-100:] if len(success_rates) >= 100 else success_rates
+        final_100_improvements = hub_improvements[-100:] if len(hub_improvements) >= 100 else hub_improvements
+        final_100_hub_scores = hub_scores[-100:] if len(hub_scores) >= 100 else hub_scores
 
-    # Save final enhanced models
-    logger.info("💾 Saving final enhanced models...")
+        logger.info("\n" + "=" * 80)
+        logger.info("🎯 FINAL CENTRALIZED CONFIG TRAINING SUMMARY")
+        logger.info("=" * 80)
+        logger.info(f"Total episodes: {num_episodes}")
+        logger.info(f"Best episode reward: {best_episode_reward:.4f}")
+        logger.info(f"Final 100 episodes performance:")
+        logger.info(f"  Average reward: {np.mean(final_100_rewards):.4f}")
+        logger.info(f"  Average success rate: {np.mean(final_100_success):.4f}")
+        logger.info(f"  Average hub improvement: {np.mean(final_100_improvements):.4f}")
+        logger.info(f"  Average hub score: {np.mean(final_100_hub_scores):.4f}")
+        logger.info(f"  Final consecutive failures: {consecutive_failures}")
+        logger.info("\nCentralized Config Used:")
+        logger.info(f"  Policy LR: {opt_config.policy_lr}")
+        logger.info(f"  Discriminator LR: {opt_config.discriminator_lr}")
+        logger.info(f"  Success reward: {reward_config.REWARD_SUCCESS}")
+        logger.info(f"  Hub improvement threshold: {hub_score_improvement_threshold}")
 
+        # Performance assessment
+        final_reward = np.mean(final_100_rewards)
+        final_success = np.mean(final_100_success)
+
+        if final_reward > 5.0 and final_success > 0.6:
+            logger.info("🎉 EXCELLENT training performance achieved with centralized config!")
+        elif final_reward > 2.0 and final_success > 0.3:
+            logger.info("✅ GOOD training performance achieved with centralized config!")
+        elif final_reward > 0.5 and final_success > 0.1:
+            logger.info("✅ MODERATE training performance achieved with centralized config!")
+        else:
+            logger.info("⚠️  Training performance needs improvement")
+            logger.info("Consider adjusting hyperparameters in hyperparameters_configuration.py")
+
+    # Save final model with comprehensive centralized config stats
     try:
-        final_save_path = results_dir / 'final_enhanced_rl_model.pt'
+        final_save_path = results_dir / 'final_centralized_config_rl_model.pt'
+        final_stats = {
+            'total_episodes': num_episodes,
+            'best_episode_reward': best_episode_reward,
+            'final_performance': {
+                'mean_reward_last_100': float(np.mean(episode_rewards[-100:])) if len(
+                    episode_rewards) >= 100 else float(np.mean(episode_rewards)) if episode_rewards else 0,
+                'mean_success_rate_last_100': float(np.mean(success_rates[-100:])) if len(
+                    success_rates) >= 100 else float(np.mean(success_rates)) if success_rates else 0,
+                'mean_hub_improvement_last_100': float(np.mean(hub_improvements[-100:])) if len(
+                    hub_improvements) >= 100 else float(np.mean(hub_improvements)) if hub_improvements else 0,
+                'mean_hub_score_last_100': float(np.mean(hub_scores[-100:])) if len(hub_scores) >= 100 else float(
+                    np.mean(hub_scores)) if hub_scores else 0.5,
+                'consecutive_failures': consecutive_failures,
+                'total_updates': trainer.update_count
+            },
+            'centralized_config_features': {
+                'centralized_hyperparameters': True,
+                'config_file_used': 'hyperparameters_configuration.py',
+                'reward_structure_from_config': True,
+                'training_params_from_config': True,
+                'optimization_params_from_config': True,
+                'discriminator_params_from_config': True,
+                'environment_params_from_config': True
+            }
+        }
+
         torch.save({
             'policy_state': policy.state_dict(),
             'discriminator_state': discriminator.state_dict(),
             'node_dim': node_dim,
             'edge_dim': edge_dim,
-            'enhanced_training_stats': {
+            'centralized_config_training_stats': final_stats,
+            'training_history': {
                 'episode_rewards': episode_rewards,
                 'success_rates': success_rates,
                 'hub_improvements': hub_improvements,
-                'environment_diversity_stats': environment_diversity_stats,
-                'total_episodes': num_episodes,
-                'final_discriminator_validation': validation_results
+                'hub_scores': hub_scores
             },
-            'enhanced_training_config': {
-                'num_episodes': num_episodes,
-                'num_envs': num_envs,
-                'steps_per_env': steps_per_env,
-                'update_frequency': update_frequency,
-                'environment_refresh_frequency': environment_refresh_frequency,
-                'device': str(device),
-                'gpu_optimized': True,
-                'data_loader': 'UnifiedDataLoader',
-                'feature_computation': 'IncrementalFeatureComputer',
-                'environment_diversity_enabled': True,
-                'graph_pool_size': env_manager.pool_size,
-                'total_graphs_explored': env_manager.total_graphs_seen,
-                'tensorboard_monitoring': True,
-                'feature_names': [
-                    'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
-                    'pagerank', 'betweenness_centrality', 'closeness_centrality'
-                ],
-                'update_method': 'incremental_only_affected_nodes',
-                'diverse_graph_selection': True
+            'trainer_final_metrics': trainer.get_latest_metrics(),
+            'complete_centralized_config': {
+                'rewards': reward_config.__dict__,
+                'training': training_config.__dict__,
+                'optimization': opt_config.__dict__,
+                'discriminator': disc_config.__dict__,
+                'environment': env_config.__dict__
             },
-            'environment_manager_final_stats': env_manager.get_stats(),
-            'data_consistency_validation': {
-                'consistency_report': consistency_report,
-                'dataset_statistics': stats,
-                'discriminator_pretrained_with_same_pipeline': True,
-                'hash_validation_performed': True,
-                'incremental_updates_validated': True,
-                'environment_diversity_validated': True
-            }
+            'centralized_config_advantages': [
+                'Single point of hyperparameter control',
+                'Easy configuration management',
+                'Consistent parameter usage across components',
+                'Better reproducibility',
+                'Simplified hyperparameter tuning',
+                'Clear separation of concerns'
+            ]
         }, final_save_path)
 
-        # Save enhanced training statistics
-        stats_path = results_dir / 'enhanced_rl_training_stats.json'
-        training_stats = {
-            'episode_rewards': episode_rewards,
-            'success_rates': success_rates,
-            'hub_improvements': hub_improvements,
-            'environment_diversity_stats': environment_diversity_stats,
-            'final_performance': {
-                'mean_reward_last_100': float(np.mean(episode_rewards[-100:])) if episode_rewards else 0,
-                'mean_success_rate_last_100': float(np.mean(success_rates[-100:])) if success_rates else 0,
-                'mean_hub_improvement_last_100': float(np.mean(hub_improvements[-100:])) if hub_improvements else 0,
-                'total_episodes': num_episodes,
-                'total_updates': trainer.update_count,
-                'total_graphs_explored': env_manager.total_graphs_seen
-            },
-            'discriminator_info': {
-                'pretrained_path': str(discriminator_path),
-                'cv_performance': discriminator_checkpoint.get('cv_results', {}),
-                'final_validation': validation_results,
-                'unified_pipeline_used': True
-            },
-            'enhanced_features': {
-                'environment_diversity': True,
-                'incremental_feature_updates': True,
-                'tensorboard_monitoring': True,
-                'graph_pool_management': True,
-                'dynamic_environment_refresh': True,
-                'diverse_graph_selection': True
-            },
-            'enhanced_pipeline_info': {
-                'data_loader': 'UnifiedDataLoader',
-                'feature_computer': 'IncrementalFeatureComputer',
-                'environment_manager': 'EnhancedEnvironmentManager',
-                'num_features': 7,
-                'feature_names': [
-                    'fan_in', 'fan_out', 'degree_centrality', 'in_out_ratio',
-                    'pagerank', 'betweenness_centrality', 'closeness_centrality'
-                ],
-                'no_normalization_applied': True,
-                'consistent_with_discriminator': True,
-                'intermediate_graph_feature_computation': 'incremental_updates_only',
-                'deterministic_loading': True,
-                'eliminates_warnings': True,
-                'updates_only_affected_nodes': True,
-                'environment_refresh_frequency': environment_refresh_frequency,
-                'graph_pool_size': env_manager.pool_size
-            },
-            'gpu_info': {
-                'device_used': str(device),
-                'cuda_available': torch.cuda.is_available(),
-                'gpu_count': torch.cuda.device_count() if torch.cuda.is_available() else 0
-            }
-        }
-
-        with open(stats_path, 'w') as f:
-            json.dump(training_stats, f, indent=2)
-
-        logger.info(f"📁 Enhanced models saved to: {final_save_path}")
-        logger.info(f"📊 Enhanced statistics saved to: {stats_path}")
+        logger.info(f"📁 Final centralized config model saved: {final_save_path}")
 
     except Exception as e:
-        logger.error(f"Failed to save final enhanced models: {e}")
+        logger.error(f"Failed to save final model: {e}")
 
     finally:
-        # Close TensorBoard logger
         tb_logger.close()
 
-    # Final enhanced performance summary
-    logger.info("\n" + "=" * 80)
-    logger.info("🎯 FINAL ENHANCED TRAINING SUMMARY")
     logger.info("=" * 80)
-    logger.info(f"Device used: {device}")
-    logger.info(f"Data pipeline: UnifiedDataLoader + IncrementalFeatureComputer + EnhancedEnvironmentManager")
-    logger.info(f"Feature format: 7 unified structural features ✅")
-    logger.info(f"Feature updates: INCREMENTAL (only affected nodes) ✅")
-    logger.info(f"Environment diversity: ENABLED (pool of {env_manager.pool_size} graphs) ✅")
-    logger.info(f"Environment refresh: Every {environment_refresh_frequency} episodes ✅")
-    logger.info(f"Total graphs explored: {env_manager.total_graphs_seen} ✅")
-    logger.info(f"TensorBoard monitoring: ENABLED ✅")
-    logger.info(f"Warnings eliminated: YES ✅")
-    logger.info(f"Discriminator compatibility: GUARANTEED ✅")
-    logger.info(f"Total episodes: {num_episodes}")
-    logger.info(f"Policy updates: {trainer.update_count}")
-
-    if episode_rewards:
-        final_mean_reward = np.mean(episode_rewards[-100:])
-        final_success_rate = np.mean(success_rates[-100:])
-        final_hub_improvement = np.mean(hub_improvements[-100:]) if hub_improvements else 0
-        logger.info(f"Final performance (last 100 episodes):")
-        logger.info(f"  Average reward: {final_mean_reward:.3f}")
-        logger.info(f"  Success rate: {final_success_rate:.3f}")
-        logger.info(f"  Hub improvement: {final_hub_improvement:.3f}")
-
-        if final_mean_reward > 8.0:
-            logger.info("🎉 OUTSTANDING enhanced training performance!")
-        elif final_mean_reward > 5.0:
-            logger.info("✅ EXCELLENT enhanced training performance!")
-        elif final_mean_reward > 2.0:
-            logger.info("✅ Good enhanced training performance!")
-        else:
-            logger.info("⚠️  Enhanced training performance could be improved")
-
-    if device.type == 'cuda':
-        final_memory = torch.cuda.memory_allocated() / 1e9
-        logger.info(f"🔧 Final GPU memory usage: {final_memory:.2f}GB")
-
-    logger.info("🔧 Enhanced features:")
-    logger.info("  ✅ INCREMENTAL feature updates - only affected nodes updated")
-    logger.info("  ✅ ENVIRONMENT DIVERSITY - dynamic graph pools")
-    logger.info("  ✅ TENSORBOARD monitoring - real-time metrics")
-    logger.info("  ✅ WARNINGS ELIMINATED - no more 'Failed to recompute features'")
-    logger.info("  ✅ PERFORMANCE IMPROVED - better exploration/exploitation balance")
-    logger.info("  ✅ CONSISTENCY GUARANTEED - same algorithms, maximum efficiency")
-    logger.info("=" * 80)
-    logger.info("🎉 ENHANCED RL TRAINING COMPLETED SUCCESSFULLY!")
+    logger.info("🎉 CENTRALIZED CONFIG RL TRAINING COMPLETED!")
+    logger.info("🔧 Key advantages of centralized configuration:")
+    logger.info("  ✅ Single point of hyperparameter control")
+    logger.info("  ✅ Easy configuration management and tuning")
+    logger.info("  ✅ Consistent parameter usage across all components")
+    logger.info("  ✅ Better reproducibility and experiment tracking")
+    logger.info("  ✅ Clear separation of concerns")
+    logger.info("  ✅ Simplified configuration updates")
     logger.info(f"📊 View training progress: tensorboard --logdir {tensorboard_dir}")
-    logger.info("🚀 Incremental updates + Environment diversity = Training excellence!")
+    logger.info(f"⚙️  Edit hyperparameters in: hyperparameters_configuration.py")
+    logger.info("=" * 80)
 
 
 if __name__ == "__main__":

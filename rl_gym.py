@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Updated RL Environment with Incremental Feature Computation
+Updated RL Environment with Centralized Hyperparameter Configuration
 
 Key changes:
+- Uses centralized reward configuration from hyperparameters_configuration.py
+- All reward parameters loaded from config file
 - Incremental feature updates instead of full reconstruction
 - Direct computation of affected node features
 - No dependency on UnifiedDataLoader for intermediate graphs
@@ -23,6 +25,9 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
 
 import logging
+
+# Import centralized configuration
+from hyperparameters_configuration import get_improved_config
 
 logger = logging.getLogger(__name__)
 
@@ -218,10 +223,11 @@ class IncrementalFeatureComputer:
 
 
 class HubRefactoringEnv:
-    """RL Environment with incremental feature computation for intermediate graphs"""
+    """RL Environment with centralized hyperparameter configuration and incremental feature computation"""
 
     def __init__(self, initial_data: Data, discriminator: nn.Module,
-                 max_steps: int = 20, device: torch.device = torch.device('cpu')):
+                 max_steps: int = 20, device: torch.device = torch.device('cpu'),
+                 reward_config=None):
         self.device = device
         self.discriminator = discriminator
         self.max_steps = max_steps
@@ -235,56 +241,111 @@ class HubRefactoringEnv:
         self._cached_hub_score = None
         self._graph_hash = None
 
-        # Reward parameters
-        self.REWARD_SUCCESS = 15.0
-        self.REWARD_PARTIAL_SUCCESS = 5.0
-        self.REWARD_FAILURE = -3.0
-        self.REWARD_STEP = -0.1
-        self.REWARD_HUB_REDUCTION = 8.0
-        self.REWARD_INVALID = -2.0
+        # Load centralized reward configuration
+        if reward_config is None:
+            config = get_improved_config()
+            reward_config = config['rewards']
+            logger.debug("Loaded centralized reward configuration")
+
+        self.reward_config = reward_config
+
+        # CENTRALIZED REWARD PARAMETERS - loaded from config
+        self.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
+        self.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
+        self.REWARD_FAILURE = reward_config.REWARD_FAILURE
+        self.REWARD_STEP = reward_config.REWARD_STEP
+        self.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
+        self.REWARD_INVALID = reward_config.REWARD_INVALID
+        self.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
+
+        # Hub score thresholds from config
+        self.HUB_SCORE_EXCELLENT = reward_config.HUB_SCORE_EXCELLENT
+        self.HUB_SCORE_GOOD = reward_config.HUB_SCORE_GOOD
+        self.HUB_SCORE_ACCEPTABLE = reward_config.HUB_SCORE_ACCEPTABLE
+
+        # Progressive reward scaling from config
+        self.improvement_multiplier_boost = reward_config.improvement_multiplier_boost
+        self.improvement_multiplier_decay = reward_config.improvement_multiplier_decay
+        self.improvement_multiplier_max = reward_config.improvement_multiplier_max
+        self.improvement_multiplier_min = reward_config.improvement_multiplier_min
+        self.improvement_multiplier = 1.0
 
         # Tracking
         self.action_history = []
         self.initial_hub_score = None
+        self.best_hub_score = None
+        self.hub_score_history = []
+
+        logger.debug(f"Environment initialized with centralized config:")
+        logger.debug(f"  REWARD_SUCCESS: {self.REWARD_SUCCESS}")
+        logger.debug(f"  REWARD_SMALL_IMPROVEMENT: {self.REWARD_SMALL_IMPROVEMENT}")
+        logger.debug(f"  HUB_SCORE_EXCELLENT: {self.HUB_SCORE_EXCELLENT}")
+
+    def update_reward_config(self, new_reward_config):
+        """Update reward configuration dynamically"""
+        self.reward_config = new_reward_config
+
+        # Update all reward parameters
+        self.REWARD_SUCCESS = new_reward_config.REWARD_SUCCESS
+        self.REWARD_PARTIAL_SUCCESS = new_reward_config.REWARD_PARTIAL_SUCCESS
+        self.REWARD_FAILURE = new_reward_config.REWARD_FAILURE
+        self.REWARD_STEP = new_reward_config.REWARD_STEP
+        self.REWARD_HUB_REDUCTION = new_reward_config.REWARD_HUB_REDUCTION
+        self.REWARD_INVALID = new_reward_config.REWARD_INVALID
+        self.REWARD_SMALL_IMPROVEMENT = new_reward_config.REWARD_SMALL_IMPROVEMENT
+
+        # Update thresholds
+        self.HUB_SCORE_EXCELLENT = new_reward_config.HUB_SCORE_EXCELLENT
+        self.HUB_SCORE_GOOD = new_reward_config.HUB_SCORE_GOOD
+        self.HUB_SCORE_ACCEPTABLE = new_reward_config.HUB_SCORE_ACCEPTABLE
+
+        # Update progressive scaling
+        self.improvement_multiplier_boost = new_reward_config.improvement_multiplier_boost
+        self.improvement_multiplier_decay = new_reward_config.improvement_multiplier_decay
+        self.improvement_multiplier_max = new_reward_config.improvement_multiplier_max
+        self.improvement_multiplier_min = new_reward_config.improvement_multiplier_min
+
+        logger.debug("Reward configuration updated dynamically")
 
     def _ensure_data_consistency(self, data: Data) -> Data:
-        """Ensure batch and edge_attr consistency with unified format"""
+        """Ensure batch and edge_attr consistency"""
         num_nodes = data.x.size(0)
         num_edges = data.edge_index.size(1)
 
         if not hasattr(data, 'batch') or data.batch is None or data.batch.size(0) != num_nodes:
             data.batch = torch.zeros(num_nodes, dtype=torch.long, device=data.x.device)
 
-        # Ensure edge_attr exists with correct format (weight=1.0 as in dataset creation)
         if not hasattr(data, 'edge_attr') or data.edge_attr is None or data.edge_attr.size(0) != num_edges:
             data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
 
         return data
 
     def reset(self) -> Data:
-        """Reset environment with unified data format"""
+        """Reset environment with centralized config initialization"""
         self.current_data = copy.deepcopy(self.initial_data)
         self._ensure_data_consistency(self.current_data)
         self.steps = 0
         self.action_history.clear()
+        self.hub_score_history.clear()
 
         # Reset cache
         self._cached_hub_score = None
         self._graph_hash = None
 
-        # Compute initial hub score
-        with torch.no_grad():
-            try:
-                disc_out = self.discriminator(self.current_data)
-                self.initial_hub_score = F.softmax(disc_out['logits'], dim=1)[0, 1].item()
-            except Exception as e:
-                logger.warning(f"Failed to compute initial hub score: {e}")
-                self.initial_hub_score = 0.5  # Fallback
+        # Compute initial hub score with better error handling
+        initial_score = self._get_current_hub_score()
+        self.initial_hub_score = initial_score
+        self.best_hub_score = initial_score
+        self.hub_score_history.append(initial_score)
 
+        # Reset improvement multiplier
+        self.improvement_multiplier = 1.0
+
+        logger.debug(f"Environment reset - Initial hub score: {initial_score:.4f} (centralized config)")
         return self.current_data
 
     def _get_graph_hash(self, data: Data) -> str:
-        """Generate hash for graph structure to detect changes"""
+        """Generate hash for graph structure"""
         try:
             edge_hash = hash(tuple(data.edge_index.flatten().tolist()))
             node_hash = hash(tuple(data.x.flatten().tolist()))
@@ -294,7 +355,7 @@ class HubRefactoringEnv:
             return str(hash(str(data)))
 
     def _get_current_hub_score(self) -> float:
-        """Get current hub-like score from discriminator with caching"""
+        """Hub score computation with better error handling"""
         try:
             self._ensure_data_consistency(self.current_data)
             current_hash = self._get_graph_hash(self.current_data)
@@ -303,36 +364,64 @@ class HubRefactoringEnv:
             if self._cached_hub_score is not None and self._graph_hash == current_hash:
                 return self._cached_hub_score
 
-            # Compute new score
+            # Compute new score with better error handling
             with torch.no_grad():
+                # Ensure discriminator is in eval mode
+                self.discriminator.eval()
+
+                # Get discriminator prediction
                 disc_out = self.discriminator(self.current_data)
-                score = F.softmax(disc_out['logits'], dim=1)[0, 1].item()
+
+                if disc_out is None or 'logits' not in disc_out:
+                    logger.warning("Discriminator returned invalid output")
+                    return 0.5  # Neutral fallback
+
+                logits = disc_out['logits']
+                if logits.dim() == 0 or logits.size(0) == 0:
+                    logger.warning("Discriminator logits are empty")
+                    return 0.5
+
+                # Get probability of being "smelly" (hub-like)
+                probs = F.softmax(logits, dim=1)
+                if probs.size(1) < 2:
+                    logger.warning("Discriminator output has insufficient classes")
+                    return 0.5
+
+                score = probs[0, 1].item()  # Probability of class 1 (smelly/hub-like)
+
+            # Validate score
+            if not (0.0 <= score <= 1.0) or math.isnan(score):
+                logger.warning(f"Invalid hub score computed: {score}, using fallback")
+                score = 0.5
 
             # Cache the result
             self._cached_hub_score = score
             self._graph_hash = current_hash
 
             return score
+
         except Exception as e:
             logger.warning(f"Failed to compute hub score: {e}")
             return 0.5  # Fallback to neutral score
 
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
-        """Execute refactoring action with incremental feature computation"""
+        """Step with centralized reward calculation and hub tracking"""
         source, target, pattern, terminate = action
         self.steps += 1
 
+        # Base step penalty from centralized config
         reward = self.REWARD_STEP
         done = False
-        info = {'valid': False, 'pattern': pattern, 'success': False}
+        info = {'valid': False, 'pattern': pattern, 'success': False, 'hub_improvement': 0.0}
 
         try:
-            # Check termination
+            # Check termination first
             if terminate or self.steps >= self.max_steps:
                 done = True
                 final_reward = self._evaluate_final_state()
                 reward += final_reward
                 info['termination'] = 'requested' if terminate else 'max_steps'
+                info['final_reward'] = final_reward
                 return self.current_data, reward, done, info
 
             # Validate action
@@ -341,52 +430,104 @@ class HubRefactoringEnv:
                 info['error'] = 'invalid_node_index'
                 return self.current_data, reward, done, info
 
-            # Apply refactoring pattern with incremental feature update
+            # Get current hub score BEFORE modification
             old_hub_score = self._get_current_hub_score()
+
+            # Apply refactoring pattern
             success, new_data, pattern_info = self._apply_pattern_incremental(pattern, source, target)
 
             if success and new_data is not None:
-                # Update current data with incrementally updated features
+                # Update current data
                 self.current_data = new_data
 
                 # Invalidate cache after graph modification
                 self._cached_hub_score = None
                 self._graph_hash = None
 
+                # Get NEW hub score AFTER modification
                 new_hub_score = self._get_current_hub_score()
 
-                # Calculate improvement
+                # Calculate improvement (positive = better, negative = worse)
                 hub_improvement = old_hub_score - new_hub_score
 
-                if hub_improvement > 0.1:
-                    reward += self.REWARD_HUB_REDUCTION * hub_improvement
-                elif hub_improvement > 0:
-                    reward += self.REWARD_PARTIAL_SUCCESS * hub_improvement
+                # Track best score
+                if new_hub_score < self.best_hub_score:
+                    self.best_hub_score = new_hub_score
+                    info['new_best'] = True
+                    # Apply boost from centralized config
+                    self.improvement_multiplier = min(
+                        self.improvement_multiplier * self.improvement_multiplier_boost,
+                        self.improvement_multiplier_max
+                    )
 
-                # Record action
+                # Add to history
+                self.hub_score_history.append(new_hub_score)
+
+                # CENTRALIZED CONFIG REWARD CALCULATION
+                if hub_improvement > 0.15:  # Significant improvement
+                    reward += self.REWARD_HUB_REDUCTION * hub_improvement * self.improvement_multiplier
+                    info['reward_type'] = 'significant_improvement'
+                elif hub_improvement > 0.05:  # Good improvement
+                    reward += self.REWARD_PARTIAL_SUCCESS * hub_improvement * self.improvement_multiplier
+                    info['reward_type'] = 'good_improvement'
+                elif hub_improvement > 0.01:  # Small improvement - uses centralized config value
+                    reward += self.REWARD_SMALL_IMPROVEMENT * hub_improvement * self.improvement_multiplier
+                    info['reward_type'] = 'small_improvement'
+                elif hub_improvement > -0.02:  # Neutral (no significant change)
+                    reward += 0.1  # Small positive reward for valid action
+                    info['reward_type'] = 'neutral'
+                else:  # Made it worse
+                    reward += self.REWARD_FAILURE * abs(hub_improvement)
+                    info['reward_type'] = 'worse'
+                    # Apply decay from centralized config
+                    self.improvement_multiplier = max(
+                        self.improvement_multiplier * self.improvement_multiplier_decay,
+                        self.improvement_multiplier_min
+                    )
+
+                # BONUS REWARDS based on centralized config thresholds
+                if new_hub_score < self.HUB_SCORE_EXCELLENT:
+                    reward += 5.0  # Excellent score bonus
+                    info['score_bonus'] = 'excellent'
+                elif new_hub_score < self.HUB_SCORE_GOOD:
+                    reward += 2.0  # Good score bonus
+                    info['score_bonus'] = 'good'
+                elif new_hub_score < self.HUB_SCORE_ACCEPTABLE:
+                    reward += 0.5  # Acceptable score bonus
+                    info['score_bonus'] = 'acceptable'
+
+                # Record action with improvement
                 self.action_history.append((source, target, pattern, hub_improvement))
 
                 info.update({
                     'valid': True,
                     'success': True,
                     'hub_improvement': hub_improvement,
+                    'old_hub_score': old_hub_score,
+                    'new_hub_score': new_hub_score,
+                    'best_hub_score': self.best_hub_score,
                     'pattern_info': pattern_info,
                     'features_updated_incrementally': True,
-                    'affected_nodes': pattern_info.get('affected_nodes', [])
+                    'affected_nodes': pattern_info.get('affected_nodes', []),
+                    'improvement_multiplier': self.improvement_multiplier,
+                    'reward_config_used': 'centralized'
                 })
             else:
+                # Pattern failed - penalty from centralized config
                 reward += self.REWARD_INVALID
                 info['error'] = pattern_info.get('error', 'pattern_failed')
+                info['reward_type'] = 'pattern_failed'
 
         except Exception as e:
             logger.warning(f"Error in step: {e}")
             reward += self.REWARD_INVALID
             info['error'] = f'step_error: {str(e)}'
+            info['reward_type'] = 'error'
 
         return self.current_data, reward, done, info
 
     def _apply_pattern_incremental(self, pattern: int, source: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply specific refactoring pattern with incremental feature computation"""
+        """Apply refactoring pattern with better error handling"""
         patterns = {
             0: self._extract_interface_incremental,
             1: self._dependency_injection_incremental,
@@ -400,9 +541,24 @@ class HubRefactoringEnv:
             return False, None, {'error': 'unknown_pattern'}
 
         try:
-            return patterns[pattern](source, target)
+            success, new_data, info = patterns[pattern](source, target)
+
+            # Additional validation
+            if success and new_data is not None:
+                # Ensure the new data is valid
+                if new_data.x.size(0) == 0 or new_data.edge_index.size(1) == 0:
+                    logger.warning(f"Pattern {pattern} created empty graph")
+                    return False, None, {'error': 'empty_graph_created'}
+
+                # Ensure features are valid
+                if torch.any(torch.isnan(new_data.x)) or torch.any(torch.isinf(new_data.x)):
+                    logger.warning(f"Pattern {pattern} created invalid features")
+                    return False, None, {'error': 'invalid_features_created'}
+
+            return success, new_data, info
+
         except Exception as e:
-            logger.warning(f"Pattern {pattern} failed: {e}")
+            logger.warning(f"Pattern {pattern} failed with exception: {e}")
             return False, None, {'error': f'pattern_exception: {str(e)}'}
 
     def _extract_interface_incremental(self, hub: int, client: int) -> Tuple[bool, Optional[Data], Dict]:
@@ -771,29 +927,84 @@ class HubRefactoringEnv:
             return False, None, {'error': f'remove_middleman_failed: {str(e)}'}
 
     def _evaluate_final_state(self) -> float:
-        """Evaluate final state for terminal reward"""
+        """Final state evaluation with centralized config thresholds"""
         try:
             if self.initial_hub_score is None:
                 return 0.0
 
             final_hub_score = self._get_current_hub_score()
-            improvement = self.initial_hub_score - final_hub_score
+            total_improvement = self.initial_hub_score - final_hub_score
 
-            # Success criteria
-            if final_hub_score < 0.3:  # Strong success
-                reward = self.REWARD_SUCCESS * (1.0 + improvement)
-            elif improvement > 0.15:  # Good improvement
-                reward = self.REWARD_PARTIAL_SUCCESS * (1.0 + improvement)
-            elif improvement > 0.05:  # Slight improvement
-                reward = self.REWARD_PARTIAL_SUCCESS * 0.5
+            # Calculate relative improvement
+            relative_improvement = total_improvement / (self.initial_hub_score + 1e-8)
+
+            # Base reward calculation using centralized config thresholds
+            if final_hub_score < self.HUB_SCORE_EXCELLENT:  # Excellent final state
+                base_reward = self.REWARD_SUCCESS * 1.5
+            elif final_hub_score < self.HUB_SCORE_GOOD:  # Good final state
+                base_reward = self.REWARD_SUCCESS
+            elif final_hub_score < self.HUB_SCORE_ACCEPTABLE:  # Acceptable final state
+                base_reward = self.REWARD_PARTIAL_SUCCESS
+            elif total_improvement > 0.1:  # Significant improvement but not great final state
+                base_reward = self.REWARD_PARTIAL_SUCCESS * 0.7
+            elif total_improvement > 0.05:  # Some improvement
+                base_reward = self.REWARD_PARTIAL_SUCCESS * 0.3
             else:  # No improvement or worse
-                reward = self.REWARD_FAILURE
+                base_reward = self.REWARD_FAILURE
 
-            # Efficiency bonus
+            # Efficiency bonus (fewer steps = better)
             efficiency = 1.0 - (self.steps / self.max_steps)
-            reward += efficiency * 3.0
+            efficiency_bonus = efficiency * 5.0
 
-            return reward
+            # Consistency bonus (steady improvement)
+            consistency_bonus = 0.0
+            if len(self.hub_score_history) > 1:
+                improvements = [self.hub_score_history[i - 1] - self.hub_score_history[i]
+                                for i in range(1, len(self.hub_score_history))]
+                positive_improvements = [imp for imp in improvements if imp > 0]
+                if len(positive_improvements) > len(improvements) * 0.6:  # More than 60% positive
+                    consistency_bonus = 3.0
+
+            total_reward = base_reward + efficiency_bonus + consistency_bonus
+
+            logger.debug(f"Final evaluation (centralized config) - Initial: {self.initial_hub_score:.4f}, "
+                         f"Final: {final_hub_score:.4f}, Total improvement: {total_improvement:.4f}, "
+                         f"Reward: {total_reward:.2f}")
+
+            return total_reward
+
         except Exception as e:
             logger.warning(f"Failed to evaluate final state: {e}")
             return 0.0
+
+    def get_reward_config_summary(self) -> Dict[str, Any]:
+        """Get summary of current reward configuration for debugging"""
+        return {
+            'REWARD_SUCCESS': self.REWARD_SUCCESS,
+            'REWARD_PARTIAL_SUCCESS': self.REWARD_PARTIAL_SUCCESS,
+            'REWARD_FAILURE': self.REWARD_FAILURE,
+            'REWARD_STEP': self.REWARD_STEP,
+            'REWARD_HUB_REDUCTION': self.REWARD_HUB_REDUCTION,
+            'REWARD_INVALID': self.REWARD_INVALID,
+            'REWARD_SMALL_IMPROVEMENT': self.REWARD_SMALL_IMPROVEMENT,
+            'HUB_SCORE_EXCELLENT': self.HUB_SCORE_EXCELLENT,
+            'HUB_SCORE_GOOD': self.HUB_SCORE_GOOD,
+            'HUB_SCORE_ACCEPTABLE': self.HUB_SCORE_ACCEPTABLE,
+            'improvement_multiplier_boost': self.improvement_multiplier_boost,
+            'improvement_multiplier_decay': self.improvement_multiplier_decay,
+            'improvement_multiplier_max': self.improvement_multiplier_max,
+            'improvement_multiplier_min': self.improvement_multiplier_min,
+            'current_improvement_multiplier': self.improvement_multiplier,
+            'config_source': 'centralized_hyperparameters_configuration'
+        }
+
+    def log_reward_calculation_details(self, hub_improvement: float, reward_type: str) -> None:
+        """Log detailed reward calculation for debugging"""
+        logger.debug(f"Reward calculation details (centralized config):")
+        logger.debug(f"  Hub improvement: {hub_improvement:.4f}")
+        logger.debug(f"  Reward type: {reward_type}")
+        logger.debug(f"  Improvement multiplier: {self.improvement_multiplier:.3f}")
+        logger.debug(f"  REWARD_SMALL_IMPROVEMENT: {self.REWARD_SMALL_IMPROVEMENT}")
+        logger.debug(f"  HUB_SCORE_EXCELLENT threshold: {self.HUB_SCORE_EXCELLENT}")
+        logger.debug(f"  HUB_SCORE_GOOD threshold: {self.HUB_SCORE_GOOD}")
+        logger.debug(f"  HUB_SCORE_ACCEPTABLE threshold: {self.HUB_SCORE_ACCEPTABLE}")
