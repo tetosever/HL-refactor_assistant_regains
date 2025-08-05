@@ -69,7 +69,7 @@ class ImprovedOptimizationConfig:
     """Improved optimization settings for stable learning"""
 
     # FIXED: Reduced learning rates for stability
-    policy_lr: float = 5e-5  # Reduced from 5e-4 - more stable policy learning
+    policy_lr: float = 1e-4  # Reduced from 5e-4 - more stable policy learning
     discriminator_lr: float = 1e-5  # Reduced from 1e-4 - much more stable disc learning
 
     # IMPROVED: Better optimizer settings
@@ -79,7 +79,7 @@ class ImprovedOptimizationConfig:
 
     # FIXED: More conservative PPO parameters
     clip_epsilon: float = 0.25  # Reduced from 0.2 - more conservative clipping
-    entropy_coefficient: float = 0.005  # Increased from 0.01 - more exploration
+    entropy_coefficient: float = 0.01  # Increased from 0.01 - more exploration
     value_coefficient: float = 0.5  # Keep standard value
     max_grad_norm: float = 0.5  # Keep gradient clipping
 

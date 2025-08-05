@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Enhanced GCPN Training Script with Centralized Hyperparameter Configuration
-UPDATED VERSION with centralized config management
+Enhanced GCPN Training Script with Optimized Logging
+CLEANED VERSION using TrainingLogger for intelligent logging
 
 Key Features:
-- Uses centralized hyperparameter configuration from hyperparameters_configuration.py
-- All training parameters are now configurable from a single location
+- Uses centralized hyperparameter configuration
+- TrainingLogger for optimized, intelligent logging
 - Enhanced Environment with incremental pattern-based actions
 - Discriminator-based adversarial learning with robust validation
 - PPO + GAE optimization
@@ -13,14 +13,9 @@ Key Features:
 - UNIFIED 7-feature pipeline compatibility
 """
 import datetime
-import logging
 import random
-import json
-import os
 import time
-import warnings
-import traceback
-from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -28,19 +23,19 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+import torch_geometric.data.data
 from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Batch, Data
-import torch_geometric.data.data
 
-# UPDATED IMPORTS - using incremental environment and centralized config
+# Import modules
 from data_loader import create_unified_loader, validate_dataset_consistency, UnifiedDataLoader
 from discriminator import HubDetectionDiscriminator
-from policy_network import HubRefactoringPolicy
-from rl_gym import HubRefactoringEnv  # UPDATED: using incremental version
 from hyperparameters_configuration import get_improved_config, print_config_summary
-from dataclasses import dataclass
+from policy_network import HubRefactoringPolicy
+from rl_gym import HubRefactoringEnv
+from training_logger import setup_optimized_logging, create_progress_tracker
 
 
 @dataclass
@@ -51,15 +46,6 @@ class RefactoringAction:
     pattern: int
     terminate: bool
     confidence: float = 0.0
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Suppress warnings
-warnings.filterwarnings("ignore", message="Loading .* with weights_only=False")
-warnings.filterwarnings("ignore", message=".*weights_only=False.*")
 
 
 class EnhancedEnvironmentManager:
@@ -82,12 +68,10 @@ class EnhancedEnvironmentManager:
 
     def _initialize_graph_pool(self):
         """Initialize diverse graph pool"""
-        logger.info(f"🔄 Initializing graph pool with {self.pool_size} diverse graphs...")
-
         try:
             # Load larger sample for diversity
             smelly_data, labels = self.data_loader.load_dataset(
-                max_samples_per_class=self.pool_size * 3,  # Get 3x more for selection
+                max_samples_per_class=self.pool_size * 3,
                 shuffle=True,
                 validate_all=False,
                 remove_metadata=True
@@ -97,17 +81,13 @@ class EnhancedEnvironmentManager:
             smelly_candidates = [data for data, label in zip(smelly_data, labels) if label == 1]
 
             if len(smelly_candidates) < self.pool_size:
-                logger.warning(f"Only {len(smelly_candidates)} smelly graphs available, wanted {self.pool_size}")
                 self.pool_size = len(smelly_candidates)
 
-            # Select diverse subset (by graph size, complexity, etc.)
+            # Select diverse subset
             self.smelly_pool = self._select_diverse_graphs(smelly_candidates, self.pool_size)
 
-            logger.info(f"✅ Initialized pool with {len(self.smelly_pool)} diverse smelly graphs")
-
         except Exception as e:
-            logger.error(f"❌ Failed to initialize graph pool: {e}")
-            raise
+            raise RuntimeError(f"Failed to initialize graph pool: {e}")
 
     def _select_diverse_graphs(self, candidates: List[Data], target_size: int) -> List[Data]:
         """Select diverse graphs based on size and complexity"""
@@ -123,7 +103,7 @@ class EnhancedEnvironmentManager:
         ]
 
         if not size_filtered:
-            size_filtered = candidates  # Fallback if no graphs in size range
+            size_filtered = candidates
 
         # Sort by graph size for diversity
         size_sorted = sorted(size_filtered, key=lambda x: x.x.size(0))
@@ -136,7 +116,6 @@ class EnhancedEnvironmentManager:
                 start_idx = i * bin_size
                 end_idx = min((i + 1) * bin_size, len(size_sorted))
                 if start_idx < len(size_sorted):
-                    # Select random graph from this size bin
                     bin_graphs = size_sorted[start_idx:end_idx]
                     if bin_graphs:
                         selected.append(random.choice(bin_graphs))
@@ -162,13 +141,10 @@ class EnhancedEnvironmentManager:
     def _refresh_pool(self):
         """Refresh the graph pool with new samples"""
         self.pool_refresh_counter += 1
-        logger.info(f"🔄 Refreshing graph pool (refresh #{self.pool_refresh_counter})...")
-
         try:
             self._initialize_graph_pool()
-            logger.info(f"✅ Pool refreshed with {len(self.smelly_pool)} new graphs")
         except Exception as e:
-            logger.warning(f"⚠️ Pool refresh failed: {e}, keeping old pool")
+            raise RuntimeError(f"Pool refresh failed: {e}")
 
     def should_refresh_pool(self, episode: int) -> bool:
         """Check if pool should be refreshed"""
@@ -196,8 +172,6 @@ class TensorBoardLogger:
         run_dir = self.log_dir / f"rl_training_{timestamp}"
 
         self.writer = SummaryWriter(log_dir=str(run_dir))
-        logger.info(f"📊 TensorBoard logging to: {run_dir}")
-        logger.info(f"🔗 Run: tensorboard --logdir {self.log_dir}")
 
     def log_episode_metrics(self, episode: int, metrics: Dict[str, float]):
         """Log episode-level metrics"""
@@ -295,12 +269,6 @@ class PPOTrainer:
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
 
-        logger.info(f"PPO Trainer initialized with config:")
-        logger.info(f"  - Policy LR: {opt_config.policy_lr}")
-        logger.info(f"  - Discriminator LR: {opt_config.discriminator_lr}")
-        logger.info(f"  - Clip epsilon: {opt_config.clip_epsilon}")
-        logger.info(f"  - Entropy coefficient: {opt_config.entropy_coefficient}")
-
     def compute_gae(self, rewards: List[float], values: List[float],
                     dones: List[bool]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute Generalized Advantage Estimation - GPU optimized"""
@@ -356,17 +324,15 @@ class PPOTrainer:
             )
 
             if batch_size <= 2:
-                logger.warning(f"Skipping discriminator update - insufficient samples: {min_size}")
                 continue
 
             try:
-                # Sample data with balanced sampling if enabled
+                # Sample data
                 if self.disc_config.use_balanced_sampling:
                     smelly_sample = np.random.choice(len(smelly_graphs), batch_size, replace=False).tolist()
                     clean_sample = np.random.choice(len(clean_graphs), batch_size, replace=False).tolist()
                     generated_sample = np.random.choice(len(generated_graphs), batch_size, replace=False).tolist()
                 else:
-                    # Simple random sampling
                     smelly_sample = random.sample(range(len(smelly_graphs)), batch_size)
                     clean_sample = random.sample(range(len(clean_graphs)), batch_size)
                     generated_sample = random.sample(range(len(generated_graphs)), batch_size)
@@ -393,7 +359,6 @@ class PPOTrainer:
 
                 # Validate outputs
                 if any(out is None or 'logits' not in out for out in [smelly_out, clean_out, gen_out]):
-                    logger.warning("Discriminator returned invalid output, skipping update")
                     continue
 
                 # Labels (smelly=1, clean/generated=0)
@@ -426,8 +391,7 @@ class PPOTrainer:
                             only_inputs=True
                         )[0]
                         gp_loss += (grads.norm(2, dim=1) - 1).pow(2).mean()
-                except Exception as e:
-                    logger.debug(f"Gradient penalty calculation failed: {e}")
+                except Exception:
                     gp_loss = 0.0
 
                 # Total discriminator loss
@@ -461,7 +425,6 @@ class PPOTrainer:
                         tp = ((all_preds == 1) & (all_labels == 1)).sum().float()
                         fp = ((all_preds == 1) & (all_labels == 0)).sum().float()
                         fn = ((all_preds == 0) & (all_labels == 1)).sum().float()
-                        tn = ((all_preds == 0) & (all_labels == 0)).sum().float()
 
                         precision = tp / (tp + fp + 1e-8)
                         recall = tp / (tp + fn + 1e-8)
@@ -473,11 +436,6 @@ class PPOTrainer:
                         total_metrics['recall'].append(recall.item())
                         total_metrics['f1'].append(f1.item())
 
-                        # Log confusion matrix if enabled
-                        if self.disc_config.log_confusion_matrix:
-                            logger.debug(f"Confusion Matrix - TP: {tp.item():.0f}, FP: {fp.item():.0f}, "
-                                         f"TN: {tn.item():.0f}, FN: {fn.item():.0f}")
-
                 self.disc_losses.append(disc_loss.item())
 
                 # Early stopping
@@ -486,14 +444,9 @@ class PPOTrainer:
                     current_f1 = total_metrics['f1'][-1]
 
                     if current_acc < early_stop_threshold and current_f1 < early_stop_threshold:
-                        logger.debug(f"Early stopping discriminator at epoch {epoch}: "
-                                     f"acc={current_acc:.4f}, F1={current_f1:.4f}")
                         break
 
-                logger.debug(f"Discriminator epoch {epoch}: loss={disc_loss.item():.4f}")
-
-            except Exception as e:
-                logger.warning(f"Error in discriminator update epoch {epoch}: {e}")
+            except Exception:
                 continue
 
         # Calculate average metrics across epochs
@@ -505,8 +458,6 @@ class PPOTrainer:
                 'f1': np.mean(total_metrics['f1'])
             }
             self.disc_metrics.append(avg_metrics)
-            logger.debug(f"Discriminator update complete - Avg F1: {avg_metrics['f1']:.4f}, "
-                         f"Avg Accuracy: {avg_metrics['accuracy']:.4f}")
 
         # Step learning rate scheduler
         self.disc_scheduler.step()
@@ -523,7 +474,6 @@ class PPOTrainer:
         epochs = self.opt_config.policy_epochs
 
         if len(states) == 0:
-            logger.warning("No states provided for policy update")
             return
 
         policy_losses = []
@@ -533,7 +483,7 @@ class PPOTrainer:
         for epoch in range(epochs):
             # Shuffle data for better training
             indices = torch.randperm(len(states), device=self.device)
-            batch_size = min(24, len(states))  # Could also be configurable
+            batch_size = min(24, len(states))
 
             for start in range(0, len(states), batch_size):
                 end = min(start + batch_size, len(states))
@@ -551,7 +501,7 @@ class PPOTrainer:
 
                 # Total loss with config weights
                 total_loss = (loss_info['policy_loss'] +
-                              self.value_coef * 0 +  # No value loss for now
+                              self.value_coef * 0 +
                               -self.entropy_coef * loss_info['entropy'])
 
                 # Backward pass with gradient clipping
@@ -567,7 +517,6 @@ class PPOTrainer:
 
                 # Early stopping on large KL divergence
                 if loss_info['approx_kl'] > 0.02:
-                    logger.debug(f"Early stopping policy update due to large KL: {loss_info['approx_kl']:.4f}")
                     break
 
         # Store average metrics
@@ -583,9 +532,6 @@ class PPOTrainer:
                 'kl_divergence': avg_kl,
                 'update_count': self.update_count
             })
-
-            logger.debug(f"Policy update complete - Loss: {avg_policy_loss:.4f}, "
-                         f"Entropy: {avg_entropy:.4f}, KL: {avg_kl:.4f}")
 
         self.update_count += 1
 
@@ -620,7 +566,6 @@ class PPOTrainer:
 
             # Validate 7-feature format
             if state.x.size(1) != 7:
-                logger.warning(f"State {i} has {state.x.size(1)} features, expected 7")
                 continue
 
             # Ensure batch attribute
@@ -632,7 +577,6 @@ class PPOTrainer:
             valid_indices.append(i)
 
         if not valid_states:
-            logger.warning("No valid states for policy loss computation")
             return {
                 'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
                 'entropy': torch.tensor(0.0, device=self.device),
@@ -650,8 +594,7 @@ class PPOTrainer:
             batch_data = Batch.from_data_list(valid_states)
             if batch_data.x.device != self.device:
                 batch_data = batch_data.to(self.device)
-        except Exception as e:
-            logger.warning(f"Failed to batch states: {e}")
+        except Exception:
             return {
                 'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
                 'entropy': torch.tensor(0.0, device=self.device),
@@ -663,8 +606,7 @@ class PPOTrainer:
         try:
             self.policy.train()
             policy_out = self.policy(batch_data)
-        except Exception as e:
-            logger.warning(f"Policy forward pass failed: {e}")
+        except Exception:
             return {
                 'policy_loss': torch.tensor(0.0, device=self.device, requires_grad=True),
                 'entropy': torch.tensor(0.0, device=self.device),
@@ -701,7 +643,7 @@ class PPOTrainer:
 
                 # Add numerical stability
                 hub_probs_i = hub_probs_i + 1e-8
-                hub_probs_i = hub_probs_i / hub_probs_i.sum()  # Renormalize
+                hub_probs_i = hub_probs_i / hub_probs_i.sum()
 
                 hub_dist = Categorical(hub_probs_i)
                 hub_action_tensor = torch.tensor(
@@ -716,7 +658,7 @@ class PPOTrainer:
                 pattern_idx = start_idx + min(action.source_node, hub_probs_i.size(0) - 1)
                 if pattern_idx < policy_out['pattern_probs'].size(0):
                     pattern_probs_i = policy_out['pattern_probs'][pattern_idx] + 1e-8
-                    pattern_probs_i = pattern_probs_i / pattern_probs_i.sum()  # Renormalize
+                    pattern_probs_i = pattern_probs_i / pattern_probs_i.sum()
 
                     pattern_dist = Categorical(pattern_probs_i)
                     pattern_action_tensor = torch.tensor(
@@ -733,9 +675,9 @@ class PPOTrainer:
                 # Termination with better handling
                 if i < policy_out['term_probs'].size(0):
                     term_probs_i = policy_out['term_probs'][i] + 1e-8
-                    term_probs_i = term_probs_i / term_probs_i.sum()  # Renormalize
+                    term_probs_i = term_probs_i / term_probs_i.sum()
                 else:
-                    term_probs_i = torch.tensor([0.7, 0.3], device=self.device)  # Default probs
+                    term_probs_i = torch.tensor([0.7, 0.3], device=self.device)
 
                 term_dist = Categorical(term_probs_i)
                 term_action_tensor = torch.tensor(int(action.terminate), device=self.device)
@@ -749,8 +691,7 @@ class PPOTrainer:
                 log_probs.append(total_log_prob)
                 entropies.append(total_entropy)
 
-            except Exception as e:
-                logger.debug(f"Error computing log prob for action {i}: {e}")
+            except Exception:
                 log_probs.append(torch.tensor(-5.0, device=self.device))
                 entropies.append(torch.tensor(0.1, device=self.device))
 
@@ -774,7 +715,7 @@ class PPOTrainer:
             advantages = advantages[:min_size]
 
         # PPO clipped objective with numerical stability
-        ratio = torch.exp(torch.clamp(log_probs - old_log_probs, -10, 10))  # Clamp for stability
+        ratio = torch.exp(torch.clamp(log_probs - old_log_probs, -10, 10))
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages
         policy_loss = -torch.min(surr1, surr2).mean()
@@ -824,9 +765,9 @@ def safe_torch_load(file_path: Path, device: torch.device):
         return torch.load(file_path, map_location=device, weights_only=False)
 
 
-def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tuple[nn.Module, Dict]:
+def load_pretrained_discriminator(model_path: Path, device: torch.device, logger) -> Tuple[nn.Module, Dict]:
     """Load pretrained discriminator with unified format validation"""
-    logger.info(f"Loading pretrained discriminator from {model_path}")
+    logger.log_info(f"Loading pretrained discriminator from {model_path}")
 
     if not model_path.exists():
         raise FileNotFoundError(f"Pretrained discriminator not found at {model_path}")
@@ -836,25 +777,18 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
     # Validate unified data pipeline information
     if 'unified_data_pipeline' in checkpoint:
         pipeline_info = checkpoint['unified_data_pipeline']
-        logger.info(f"✅ Model was trained with unified data pipeline:")
-        logger.info(f"  - Method: {pipeline_info.get('method', 'unknown')}")
-        logger.info(f"  - Feature computer: {pipeline_info.get('feature_computer', 'unknown')}")
-        logger.info(f"  - Normalization applied: {not pipeline_info.get('no_normalization_applied', True)}")
-        logger.info(f"  - Consistent with RL: {pipeline_info.get('consistent_with_rl_training', False)}")
-
         if not pipeline_info.get('consistent_with_rl_training', False):
-            logger.warning("⚠️ Discriminator may not be fully compatible with RL training!")
+            logger.log_warning("Discriminator may not be fully compatible with RL training")
     else:
-        logger.warning("⚠️ Model lacks unified data pipeline information - compatibility uncertain")
+        logger.log_warning("Model lacks unified data pipeline information - compatibility uncertain")
 
     # Get architecture parameters from checkpoint
     model_architecture = checkpoint.get('model_architecture', {})
-    node_dim = checkpoint.get('node_dim', 7)  # Should always be 7 for unified format
+    node_dim = checkpoint.get('node_dim', 7)
     edge_dim = checkpoint.get('edge_dim', 1)
 
     # Validate unified format expectations
     if node_dim != 7:
-        logger.error(f"❌ Expected 7 node features for unified format, got {node_dim}")
         raise ValueError(f"Discriminator has incompatible feature dimensions: {node_dim} != 7")
 
     # Use saved architecture parameters or defaults
@@ -862,8 +796,6 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
     num_layers = model_architecture.get('num_layers', 4)
     dropout = model_architecture.get('dropout', 0.15)
     heads = model_architecture.get('heads', 8)
-
-    logger.info(f"Creating discriminator with unified format: node_dim={node_dim}, hidden_dim={hidden_dim}")
 
     # Create model with correct architecture
     discriminator = HubDetectionDiscriminator(
@@ -884,7 +816,7 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device) -> Tup
     if cv_results:
         mean_f1 = cv_results.get('mean_f1', 0)
         mean_acc = cv_results.get('mean_accuracy', 0)
-        logger.info(f"Loaded discriminator with CV F1: {mean_f1:.4f}, Accuracy: {mean_acc:.4f}")
+        logger.log_info(f"Loaded discriminator with CV F1: {mean_f1:.4f}, Accuracy: {mean_acc:.4f}")
 
     return discriminator, checkpoint
 
@@ -897,7 +829,6 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
 
         # Validate unified format
         if data.x.size(1) != 7:
-            logger.warning(f"Data has {data.x.size(1)} features, expected 7")
             return None
 
         # Ensure batch attribute
@@ -917,26 +848,21 @@ def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: t
 
         return None
 
-    except Exception as e:
-        logger.warning(f"Discriminator prediction failed: {e}")
+    except Exception:
         return None
 
 
 def validate_discriminator_performance(discriminator: nn.Module, data_loader: UnifiedDataLoader,
-                                       device: torch.device, num_samples: int = 40) -> Dict[str, float]:
+                                       device: torch.device, logger, num_samples: int = 40) -> Dict[str, float]:
     """Enhanced validation with unified data loader"""
-    logger.info("🔍 Validating discriminator with unified data loader...")
-
     try:
         # Load validation data using unified loader with metadata removal
         val_data, val_labels = data_loader.load_dataset(
             max_samples_per_class=num_samples // 2,
             shuffle=True,
             validate_all=True,
-            remove_metadata=True  # Critical for batching
+            remove_metadata=True
         )
-
-        logger.info(f"Loaded {len(val_data)} samples for validation")
 
         correct_predictions = 0
         total_predictions = 0
@@ -944,14 +870,8 @@ def validate_discriminator_performance(discriminator: nn.Module, data_loader: Un
         clean_correct = 0
         failed_predictions = 0
 
-        # Test on samples with detailed logging
+        # Test on samples
         for i, (data, label) in enumerate(zip(val_data, val_labels)):
-            logger.debug(f"\n--- Testing sample {i} (label: {label}) ---")
-
-            # Get hash for consistency tracking
-            data_hash = data_loader.get_data_hash(data)
-            logger.debug(f"Data hash: {data_hash[:12]}...")
-
             prob_smelly = get_discriminator_prediction(discriminator, data, device)
 
             if prob_smelly is not None:
@@ -966,11 +886,8 @@ def validate_discriminator_performance(discriminator: nn.Module, data_loader: Un
                         clean_correct += 1
 
                 total_predictions += 1
-                logger.debug(f"{'✅' if is_correct else '❌'} Sample {i}: pred={prediction}, "
-                             f"label={label}, prob={prob_smelly:.4f}")
             else:
                 failed_predictions += 1
-                logger.debug(f"💥 Sample {i}: prediction failed")
 
         # Calculate results
         results = {
@@ -979,22 +896,17 @@ def validate_discriminator_performance(discriminator: nn.Module, data_loader: Un
             'clean_accuracy': clean_correct / max(len(val_labels) - sum(val_labels), 1),
             'failed_predictions': failed_predictions,
             'total_attempts': len(val_data),
-            'success_rate': total_predictions / len(val_data)
+            'success_rate': total_predictions / len(val_data),
+            'f1': 0.0  # Simplified for now
         }
 
-        logger.info(f"🎯 Unified validation results:")
-        logger.info(f"  - Overall accuracy: {results['accuracy']:.3f}")
-        logger.info(f"  - Smelly accuracy: {results['smelly_accuracy']:.3f}")
-        logger.info(f"  - Clean accuracy: {results['clean_accuracy']:.3f}")
-        logger.info(f"  - Success rate: {results['success_rate']:.3f}")
-        logger.info(f"  - Failed predictions: {failed_predictions}")
-
+        logger.log_discriminator_validation(results)
         return results
 
     except Exception as e:
-        logger.error(f"Unified validation failed: {e}")
+        logger.log_error(f"Unified validation failed: {e}")
         return {'accuracy': 0.0, 'smelly_accuracy': 0.0, 'clean_accuracy': 0.0,
-                'failed_predictions': -1, 'success_rate': 0.0}
+                'failed_predictions': -1, 'success_rate': 0.0, 'f1': 0.0}
 
 
 def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager,
@@ -1003,8 +915,6 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
     """Create training environments with diverse graphs using centralized config"""
     num_envs = training_config.num_envs
     max_steps = training_config.max_steps_per_episode
-
-    logger.info(f"🌍 Creating {num_envs} environments with diverse graphs...")
 
     envs = []
     for i in range(num_envs):
@@ -1015,26 +925,19 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
             # Test discriminator compatibility
             test_pred = get_discriminator_prediction(discriminator, initial_graph, device)
             if test_pred is None:
-                logger.warning(f"Environment {i}: Discriminator incompatible, trying another graph...")
                 initial_graph = env_manager.get_random_graph()
                 test_pred = get_discriminator_prediction(discriminator, initial_graph, device)
 
             if test_pred is not None:
-                logger.info(f"Environment {i}: Initial hub score = {test_pred:.4f}, nodes = {initial_graph.x.size(0)}")
-
                 # Create environment with config-based max_steps
                 env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
                 # Store reference to environment manager for dynamic resets
                 env.env_manager = env_manager
                 envs.append(env)
-            else:
-                logger.warning(f"Environment {i}: Could not create compatible environment")
 
-        except Exception as e:
-            logger.warning(f"Failed to create environment {i}: {e}")
+        except Exception:
             continue
 
-    logger.info(f"✅ Created {len(envs)} diverse training environments")
     return envs
 
 
@@ -1059,14 +962,13 @@ def enhanced_reset_environment(env: HubRefactoringEnv) -> Data:
             # Fallback to original reset
             return env.reset()
 
-    except Exception as e:
-        logger.warning(f"Enhanced reset failed: {e}, using standard reset")
+    except Exception:
         return env.reset()
 
 
 def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
-                           training_config, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
-    """FIXED: Collect rollouts with proper metric transport"""
+                     training_config, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
+    """Collect rollouts with proper metric transport"""
 
     steps_per_env = training_config.steps_per_env
 
@@ -1077,11 +979,11 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
     all_log_probs = []
     all_values = []
 
-    # FIXED: Add containers for step-level metrics
-    all_step_infos = []  # NEW: Store all step info dictionaries
-    all_hub_improvements = []  # NEW: Store hub improvements from each step
-    all_hub_scores = []  # NEW: Store hub scores from each step
-    episode_step_metrics = {  # NEW: Aggregate metrics per episode
+    # Add containers for step-level metrics
+    all_step_infos = []
+    all_hub_improvements = []
+    all_hub_scores = []
+    episode_step_metrics = {
         'total_steps': 0,
         'successful_steps': 0,
         'valid_metrics_steps': 0,
@@ -1103,24 +1005,20 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
 
             # All states should already have 7 features from unified pipeline
             if state.x.size(1) != 7:
-                logger.warning(f"Environment {i}: State has {state.x.size(1)} features, expected 7")
+                continue
 
             states.append(state)
             valid_envs.append(env)
-        except Exception as e:
-            logger.warning(f"Error resetting environment {i}: {e}")
+        except Exception:
             continue
 
     if not states:
-        logger.warning("No valid environments after reset")
         return {
             'states': [], 'actions': [], 'rewards': [], 'dones': [],
             'log_probs': torch.tensor([], device=device), 'values': [],
-            'step_infos': [],  # NEW
-            'episode_metrics': episode_step_metrics  # NEW
+            'step_infos': [],
+            'episode_metrics': episode_step_metrics
         }
-
-    logger.debug(f"Starting rollout with {len(states)} valid environments")
 
     for step in range(steps_per_env):
         # Ensure all states are on correct device
@@ -1137,8 +1035,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
             batch_data = Batch.from_data_list(states_on_device)
             if batch_data.x.device != device:
                 batch_data = batch_data.to(device)
-        except Exception as e:
-            logger.warning(f"Failed to batch data at step {step}: {e}")
+        except Exception:
             break
 
         # Policy forward pass
@@ -1151,8 +1048,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                     value = 1.0 - pred if pred is not None else 0.5
                     values.append(value)
                 values = torch.tensor(values, device=device)
-            except Exception as e:
-                logger.warning(f"Error in forward pass at step {step}: {e}")
+            except Exception:
                 break
 
         # Sample actions
@@ -1221,17 +1117,16 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                             term_dist.log_prob(torch.tensor(int(terminate), device=device)))
                 log_probs.append(log_prob)
 
-            except Exception as e:
-                logger.debug(f"Error sampling action for environment {i}: {e}")
+            except Exception:
                 action = RefactoringAction(0, 0, 0, False)
                 actions.append(action)
                 log_probs.append(torch.tensor(0.0, device=device))
 
-        # FIXED: Execute actions and COLLECT ALL STEP METRICS
+        # Execute actions and collect all step metrics
         next_states = []
         rewards = []
         dones = []
-        step_infos_batch = []  # NEW: Collect info from each step
+        step_infos_batch = []
 
         for i, (env, action) in enumerate(zip(valid_envs, actions)):
             try:
@@ -1248,10 +1143,10 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 rewards.append(reward)
                 dones.append(done)
 
-                # FIXED: Store step info for metric transport
+                # Store step info for metric transport
                 step_infos_batch.append(info)
 
-                # FIXED: Update episode metrics from step info
+                # Update episode metrics from step info
                 episode_step_metrics['total_steps'] += 1
                 if info.get('step_metrics_calculated', False):
                     episode_step_metrics['valid_metrics_steps'] += 1
@@ -1291,7 +1186,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 all_dones.append(done)
                 all_log_probs.append(log_probs[i] if i < len(log_probs) else torch.tensor(0.0, device=device))
                 all_values.append(values[i].item() if i < len(values) else 0.0)
-                all_step_infos.append(info)  # NEW: Store step info
+                all_step_infos.append(info)
 
                 # Reset if done
                 if done:
@@ -1302,13 +1197,11 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                         if not hasattr(reset_state, 'batch'):
                             reset_state.batch = torch.zeros(reset_state.x.size(0), dtype=torch.long, device=device)
                         next_states[i] = reset_state
-                    except Exception as reset_e:
-                        logger.warning(f"Error resetting environment {i}: {reset_e}")
+                    except Exception:
+                        pass
 
             except Exception as e:
-                logger.warning(f"Error in environment {i} step: {e}")
-
-                # FIXED: Create fallback info even for errors
+                # Create fallback info even for errors
                 error_info = {
                     'valid': False,
                     'success': False,
@@ -1345,7 +1238,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                     all_dones.append(False)
                     all_log_probs.append(log_probs[i] if i < len(log_probs) else torch.tensor(0.0, device=device))
                     all_values.append(0.0)
-                    all_step_infos.append(error_info)  # NEW: Store error info
+                    all_step_infos.append(error_info)
 
         states = next_states
 
@@ -1357,26 +1250,15 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         if device.type == 'cuda' and step % 10 == 0:
             torch.cuda.empty_cache()
 
-    # FIXED: Log collected metrics for debugging
-    logger.debug(f"Rollout metrics collected:")
-    logger.debug(f"  Total steps: {episode_step_metrics['total_steps']}")
-    logger.debug(f"  Successful steps: {episode_step_metrics['successful_steps']}")
-    logger.debug(f"  Valid metrics steps: {episode_step_metrics['valid_metrics_steps']}")
-    logger.debug(f"  Total hub improvements collected: {len(all_hub_improvements)}")
-    logger.debug(f"  Hub score changes: {len(episode_step_metrics['hub_score_changes'])}")
-    logger.debug(f"  Fallback scores: {episode_step_metrics['fallback_scores_count']}")
-    logger.debug(f"  Step errors: {len(episode_step_metrics['step_errors'])}")
-
     if not all_log_probs:
-        logger.warning("No valid rollouts collected")
         return {
             'states': [], 'actions': [], 'rewards': [], 'dones': [],
             'log_probs': torch.tensor([], device=device), 'values': [],
-            'step_infos': [],  # NEW
-            'episode_metrics': episode_step_metrics  # NEW
+            'step_infos': [],
+            'episode_metrics': episode_step_metrics
         }
 
-    # FIXED: Return with step-level metrics
+    # Return with step-level metrics
     return {
         'states': all_states,
         'actions': all_actions,
@@ -1384,13 +1266,14 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         'dones': all_dones,
         'log_probs': torch.stack(all_log_probs),
         'values': all_values,
-        'step_infos': all_step_infos,  # NEW: All step info dictionaries
-        'hub_improvements': all_hub_improvements,  # NEW: Direct access to improvements
-        'hub_scores': all_hub_scores,  # NEW: Direct access to scores
-        'episode_metrics': episode_step_metrics  # NEW: Aggregated episode metrics
+        'step_infos': all_step_infos,
+        'hub_improvements': all_hub_improvements,
+        'hub_scores': all_hub_scores,
+        'episode_metrics': episode_step_metrics
     }
 
-def setup_gpu_environment():
+
+def setup_gpu_environment(logger):
     """Setup optimal GPU environment"""
     if torch.cuda.is_available():
         # Set memory management
@@ -1402,10 +1285,7 @@ def setup_gpu_environment():
         gpu_name = torch.cuda.get_device_name(current_device)
         gpu_memory = torch.cuda.get_device_properties(current_device).total_memory / 1e9
 
-        logger.info(f"🚀 GPU Setup:")
-        logger.info(f"  Available GPUs: {gpu_count}")
-        logger.info(f"  Current GPU: {gpu_name}")
-        logger.info(f"  GPU Memory: {gpu_memory:.1f} GB")
+        logger.log_info(f"GPU Setup: {gpu_count} GPUs, Current: {gpu_name}, Memory: {gpu_memory:.1f} GB")
 
         # Optimize for memory
         torch.backends.cudnn.benchmark = True
@@ -1414,29 +1294,28 @@ def setup_gpu_environment():
 
         device = torch.device('cuda')
     else:
-        logger.warning("⚠️  CUDA not available, using CPU")
+        logger.log_warning("CUDA not available, using CPU")
         device = torch.device('cpu')
 
     return device
 
 
-def monitor_gpu_usage():
+def monitor_gpu_usage(logger):
     """Monitor GPU memory usage"""
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1e9
         cached = torch.cuda.memory_reserved() / 1e9
         max_memory = torch.cuda.max_memory_allocated() / 1e9
 
-        logger.info(f"GPU Memory - Allocated: {allocated:.2f}GB, Cached: {cached:.2f}GB, Max: {max_memory:.2f}GB")
-
-        # Clean up if using too much memory
         if allocated > 8.0:  # If using more than 8GB
             torch.cuda.empty_cache()
-            logger.info("🧹 GPU memory cleanup performed")
+            logger.log_info("GPU memory cleanup performed")
 
 
 def main():
-    """FIXED main training loop with proper step-level metric collection"""
+    """Main training loop with optimized logging"""
+    # Setup optimized logging
+    logger = setup_optimized_logging()
 
     # Load centralized configuration
     config = get_improved_config()
@@ -1446,11 +1325,14 @@ def main():
     disc_config = config['discriminator']
     env_config = config['environment']
 
-    # Print configuration summary
+    # Start training with config
+    logger.start_training(config)
+
+    # Print configuration summary (only once)
     print_config_summary()
 
     # Setup GPU environment
-    device = setup_gpu_environment()
+    device = setup_gpu_environment(logger)
 
     # Set random seeds for reproducibility
     torch.manual_seed(42)
@@ -1459,8 +1341,6 @@ def main():
     if device.type == 'cuda':
         torch.cuda.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-
-    logger.info(f"🎯 Starting RL training with CENTRALIZED CONFIG + FIXED METRICS on device: {device}")
 
     # Paths
     base_dir = Path(__file__).parent
@@ -1476,67 +1356,52 @@ def main():
 
     # Check if pretrained discriminator exists
     if not discriminator_path.exists():
-        logger.error(f"❌ Pretrained discriminator not found at {discriminator_path}")
-        logger.error("Please run the unified discriminator pre-training script first")
+        logger.log_error(f"Pretrained discriminator not found at {discriminator_path}")
         return
 
     # Create unified data loader
-    logger.info("📊 Creating unified data loader...")
     try:
         data_loader = create_unified_loader(data_dir, device)
         stats = data_loader.get_dataset_statistics()
-        logger.info(f"Dataset loaded with unified loader:")
-        logger.info(f"  - Total files: {stats['total_files']}")
-        logger.info(f"  - Valid files: {stats['validation_summary']['valid']}")
-        logger.info(f"  - Smelly samples: {stats['label_distribution']['smelly']}")
-        logger.info(f"  - Clean samples: {stats['label_distribution']['clean']}")
-
         consistency_report = validate_dataset_consistency(data_dir, sample_size=100)
-        if consistency_report['invalid_files'] > 0:
-            logger.warning(f"⚠️ Found {consistency_report['invalid_files']} invalid files")
-        else:
-            logger.info("✅ All sampled files passed consistency validation")
 
     except Exception as e:
-        logger.error(f"❌ Failed to create unified data loader: {e}")
+        logger.log_error(f"Failed to create unified data loader: {e}")
         return
 
     # Load pretrained discriminator
     try:
-        logger.info("🔄 Loading pretrained discriminator...")
-        discriminator, discriminator_checkpoint = load_pretrained_discriminator(discriminator_path, device)
-
-        validation_results = validate_discriminator_performance(discriminator, data_loader, device, num_samples=40)
+        discriminator, discriminator_checkpoint = load_pretrained_discriminator(discriminator_path, device, logger)
+        validation_results = validate_discriminator_performance(discriminator, data_loader, device, logger,
+                                                                num_samples=40)
 
         if validation_results['accuracy'] < 0.1:
-            logger.error("❌ Discriminator performance is critically low!")
+            logger.log_error("Discriminator performance is critically low!")
             return
         elif validation_results['failed_predictions'] > validation_results['total_attempts'] // 2:
-            logger.warning(f"⚠️ High failure rate: {validation_results['failed_predictions']} failed predictions")
-        else:
-            logger.info("✅ Discriminator validation passed!")
+            logger.log_warning(f"High failure rate: {validation_results['failed_predictions']} failed predictions")
 
     except Exception as e:
-        logger.error(f"❌ Failed to load pretrained discriminator: {e}")
+        logger.log_error(f"Failed to load pretrained discriminator: {e}")
         return
 
     # Model parameters - FIXED for unified 7-feature format
-    node_dim = 7
-    edge_dim = 1
     hidden_dim = discriminator_checkpoint.get('model_architecture', {}).get('hidden_dim', 128)
 
-    logger.info(f"🔧 Model dimensions - Node: {node_dim} (UNIFIED), Edge: {edge_dim}, Hidden: {hidden_dim}")
-
     # Create policy network
-    logger.info("🧠 Creating policy network...")
-    policy = HubRefactoringPolicy(node_dim=node_dim, edge_dim=edge_dim, hidden_dim=hidden_dim).to(device)
+    policy = HubRefactoringPolicy(
+        node_dim=7,
+        edge_dim=1,
+        hidden_dim=hidden_dim,
+        hub_bias_strength=4.0,
+        exploration_rate=0.1
+    ).to(device)
 
     total_params = sum(p.numel() for p in policy.parameters())
     trainable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
-    logger.info(f"Policy network - Total params: {total_params:,}, Trainable: {trainable_params:,}")
+    logger.log_info(f"Policy network - Total params: {total_params:,}, Trainable: {trainable_params:,}")
 
     # Setup PPO trainer
-    logger.info("🎯 Setting up PPO trainer...")
     trainer = PPOTrainer(policy, discriminator, opt_config, disc_config, device=device)
 
     # Training parameters from centralized config
@@ -1550,15 +1415,7 @@ def main():
     hub_score_improvement_threshold = training_config.hub_improvement_threshold
     consecutive_failures_threshold = training_config.consecutive_failures_threshold
 
-    logger.info("⚙️ CENTRALIZED + FIXED METRICS training configuration:")
-    logger.info(f"  Episodes: {num_episodes}")
-    logger.info(f"  Environments: {num_envs}")
-    logger.info(f"  Steps per env: {steps_per_env}")
-    logger.info(f"  Update frequency: {update_frequency}")
-    logger.info(f"  Hub improvement threshold: {hub_score_improvement_threshold}")
-
     # Create enhanced environment manager
-    logger.info("🌍 Creating enhanced environment manager...")
     try:
         env_manager = EnhancedEnvironmentManager(
             data_loader=data_loader,
@@ -1566,22 +1423,18 @@ def main():
             env_config=env_config,
             device=device
         )
-        logger.info(f"✅ Environment manager created with {env_manager.pool_size} diverse graphs")
     except Exception as e:
-        logger.error(f"❌ Failed to create environment manager: {e}")
+        logger.log_error(f"Failed to create environment manager: {e}")
         return
 
     # Create environments
-    logger.info("🌍 Creating training environments...")
     try:
         envs = create_diverse_training_environments(env_manager, discriminator, training_config, device)
-        logger.info(f"✅ Successfully created {len(envs)} diverse training environments")
     except Exception as e:
-        logger.error(f"❌ Failed to create training environments: {e}")
+        logger.log_error(f"Failed to create training environments: {e}")
         return
 
     # Update environment reward structure
-    logger.info("🎯 Updating environment reward structures...")
     for i, env in enumerate(envs):
         try:
             env.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
@@ -1600,112 +1453,71 @@ def main():
             env.improvement_multiplier_decay = reward_config.improvement_multiplier_decay
             env.improvement_multiplier_max = reward_config.improvement_multiplier_max
             env.improvement_multiplier_min = reward_config.improvement_multiplier_min
-
-            logger.debug(f"Environment {i}: Updated with centralized reward config")
         except Exception as e:
-            logger.warning(f"Failed to update environment {i} config: {e}")
+            logger.log_warning(f"Failed to update environment {i} config: {e}")
 
-    logger.info("🚀 Starting FIXED METRICS RL training...")
-
-    # Training variables
-    episode_rewards = []
-    success_rates = []
-    hub_improvements = []
-    hub_scores = []
+    # Create progress tracker
+    metrics_history = create_progress_tracker()
     consecutive_failures = 0
     best_episode_reward = float('-inf')
 
-    # FIXED: Additional metric tracking
-    valid_metrics_ratios = []
-    fallback_score_ratios = []
-    pattern_success_rates = []
-    step_error_counts = []
-
+    # Main training loop
     for episode in range(num_episodes):
         episode_start_time = time.time()
 
         # Environment refresh
         if episode % environment_refresh_frequency == 0 and episode > 0:
-            logger.info(f"🔄 Environment refresh at episode {episode}")
-
             reset_count = 0
-            initial_hub_scores = []
-
             for i, env in enumerate(envs):
                 try:
-                    new_state = enhanced_reset_environment(env)
-                    initial_score = env.initial_hub_score if hasattr(env, 'initial_hub_score') else None
-                    if initial_score is not None:
-                        initial_hub_scores.append(initial_score)
+                    enhanced_reset_environment(env)
                     reset_count += 1
-                except Exception as e:
-                    logger.warning(f"Failed to reset environment {i}: {e}")
+                except Exception:
+                    pass
 
-            logger.info(f"✅ Refreshed {reset_count} environments")
-            if initial_hub_scores:
-                avg_initial_score = np.mean(initial_hub_scores)
-                logger.info(f"📊 New environments avg initial hub score: {avg_initial_score:.4f}")
+            logger.log_environment_refresh(episode, env_manager.get_stats())
 
         # Pool refresh
         if (env_manager.should_refresh_pool(episode) or
                 consecutive_failures > consecutive_failures_threshold):
             env_manager._refresh_pool()
             consecutive_failures = 0
-            logger.info("🔄 Graph pool refreshed")
 
-        # FIXED: Collect rollouts with step-level metrics
+        # Collect rollouts with step-level metrics
         rollout_data = collect_rollouts(envs, policy, training_config, device)
 
         if len(rollout_data['rewards']) == 0:
-            logger.warning(f"No valid rollouts in episode {episode}")
             consecutive_failures += 1
             continue
 
-        # FIXED: Extract metrics directly from step-level data
+        # Extract metrics directly from step-level data
         episode_reward = np.mean(rollout_data['rewards'])
-        episode_rewards.append(episode_reward)
+        metrics_history['episode_rewards'].append(episode_reward)
 
-        # FIXED: Get step-level metrics
+        # Get step-level metrics
         step_infos = rollout_data.get('step_infos', [])
         rollout_hub_improvements = rollout_data.get('hub_improvements', [])
         rollout_hub_scores = rollout_data.get('hub_scores', [])
         episode_step_metrics = rollout_data.get('episode_metrics', {})
 
-        # FIXED: Calculate success rate from actual step improvements
+        # Calculate success rate from actual step improvements
         if rollout_hub_improvements:
             successful_improvements = [imp for imp in rollout_hub_improvements if imp > hub_score_improvement_threshold]
             success_rate = len(successful_improvements) / len(rollout_hub_improvements)
         else:
             success_rate = 0.0
-        success_rates.append(success_rate)
+        metrics_history['success_rates'].append(success_rate)
 
-        # FIXED: Calculate average improvements from step data
+        # Calculate average improvements from step data
         avg_improvement = np.mean(rollout_hub_improvements) if rollout_hub_improvements else 0.0
-        hub_improvements.append(avg_improvement)
+        metrics_history['hub_improvements'].append(avg_improvement)
 
-        # FIXED: Calculate average hub scores from step data
+        # Calculate average hub scores from step data
         avg_hub_score = np.mean(rollout_hub_scores) if rollout_hub_scores else 0.5
-        hub_scores.append(avg_hub_score)
-
-        # FIXED: Additional detailed metrics
-        total_steps = episode_step_metrics.get('total_steps', 0)
-        valid_metrics_steps = episode_step_metrics.get('valid_metrics_steps', 0)
-        fallback_scores_count = episode_step_metrics.get('fallback_scores_count', 0)
-        successful_steps = episode_step_metrics.get('successful_steps', 0)
-        step_errors = episode_step_metrics.get('step_errors', [])
-
-        # Calculate ratios
-        valid_metrics_ratio = valid_metrics_steps / max(total_steps, 1)
-        fallback_ratio = fallback_scores_count / max(total_steps, 1)
-        pattern_success_rate = successful_steps / max(total_steps, 1)
-
-        valid_metrics_ratios.append(valid_metrics_ratio)
-        fallback_score_ratios.append(fallback_ratio)
-        pattern_success_rates.append(pattern_success_rate)
-        step_error_counts.append(len(step_errors))
+        metrics_history['hub_scores'].append(avg_hub_score)
 
         # Update consecutive failures counter
-        if success_rate > 0.05 or episode_reward > -0.5 or pattern_success_rate > 0.1:
+        if success_rate > 0.05 or episode_reward > -0.5:
             consecutive_failures = 0
         else:
             consecutive_failures += 1
@@ -1714,47 +1526,15 @@ def main():
         if episode_reward > best_episode_reward:
             best_episode_reward = episode_reward
 
-        # FIXED: Enhanced logging with detailed step metrics
-        if episode % 25 == 0:  # More frequent logging for debugging
-            logger.info(f"Episode {episode:5d} DETAILED METRICS:")
-            logger.info(f"  Reward: {episode_reward:7.3f}")
-            logger.info(f"  Success Rate: {success_rate:5.3f} (threshold: {hub_score_improvement_threshold})")
-            logger.info(f"  Hub Improvement: {avg_improvement:6.4f}")
-            logger.info(f"  Hub Score: {avg_hub_score:5.3f}")
-            logger.info(f"  Pattern Success Rate: {pattern_success_rate:5.3f}")
-            logger.info(f"  Valid Metrics Ratio: {valid_metrics_ratio:5.3f}")
-            logger.info(f"  Fallback Score Ratio: {fallback_ratio:5.3f}")
-            logger.info(f"  Step Errors: {len(step_errors)}")
-            logger.info(f"  Total Steps: {total_steps}")
-            logger.info(f"  Consecutive Failures: {consecutive_failures}")
-
-            # FIXED: Log actual hub improvement values for debugging
-            if rollout_hub_improvements:
-                imp_stats = {
-                    'min': min(rollout_hub_improvements),
-                    'max': max(rollout_hub_improvements),
-                    'mean': np.mean(rollout_hub_improvements),
-                    'positive_count': sum(1 for x in rollout_hub_improvements if x > 0),
-                    'above_threshold': sum(1 for x in rollout_hub_improvements if x > hub_score_improvement_threshold)
-                }
-                logger.info(f"  Hub Improvement Stats: {imp_stats}")
-
-            # FIXED: Log hub score distribution
-            if rollout_hub_scores:
-                score_stats = {
-                    'min': min(rollout_hub_scores),
-                    'max': max(rollout_hub_scores),
-                    'mean': np.mean(rollout_hub_scores),
-                    'fallback_count': sum(1 for x in rollout_hub_scores if abs(x - 0.5) < 1e-6)
-                }
-                logger.info(f"  Hub Score Stats: {score_stats}")
-
-            # FIXED: Log sample step errors for debugging
-            if step_errors and len(step_errors) > 0:
-                logger.warning(f"  Sample step errors:")
-                for i, error in enumerate(step_errors[:3]):  # Show first 3 errors
-                    logger.warning(
-                        f"    {i + 1}. Env {error.get('env_id', '?')}, Step {error.get('step', '?')}: {error.get('error', 'unknown')[:100]}")
+        # Intelligent episode logging
+        episode_metrics = {
+            'reward': episode_reward,
+            'success_rate': success_rate,
+            'hub_improvement': avg_improvement,
+            'average_hub_score': avg_hub_score,
+            'consecutive_failures': consecutive_failures
+        }
+        logger.log_episode_progress(episode, episode_metrics)
 
         # Policy updates
         if episode % update_frequency == 0 and len(rollout_data['states']) >= 16:
@@ -1775,10 +1555,13 @@ def main():
                 returns
             )
 
-            # Log policy metrics
-            policy_metrics = trainer.get_latest_metrics()
-            if policy_metrics:
-                for key, value in policy_metrics.items():
+            # Log training metrics
+            training_metrics = trainer.get_latest_metrics()
+            logger.log_training_update(trainer.update_count, training_metrics)
+
+            # Log policy metrics to TensorBoard
+            if training_metrics:
+                for key, value in training_metrics.items():
                     if 'policy' in key:
                         tb_logger.log_policy_metrics(trainer.update_count, {key.replace('policy_', ''): value})
 
@@ -1819,80 +1602,20 @@ def main():
                                                                         {key.replace('discriminator_', ''): value})
 
                 except Exception as e:
-                    logger.warning(f"Discriminator update failed at episode {episode}: {e}")
+                    logger.log_warning(f"Discriminator update failed at episode {episode}: {e}")
 
-        # FIXED: Enhanced TensorBoard logging with step-level metrics
+        # TensorBoard logging
         tb_logger.log_episode_metrics(episode, {
             'reward': episode_reward,
             'success_rate': success_rate,
             'hub_improvement': avg_improvement,
             'average_hub_score': avg_hub_score,
             'consecutive_failures': consecutive_failures,
-            'best_reward_so_far': best_episode_reward,
-            'valid_metrics_ratio': valid_metrics_ratio,
-            'fallback_scores_ratio': fallback_ratio,
-            'pattern_success_rate': pattern_success_rate,
-            'step_errors_count': len(step_errors),
-            'total_steps': total_steps,
-            'hub_improvements_count': len(rollout_hub_improvements),
-            'positive_improvements': sum(
-                1 for x in rollout_hub_improvements if x > 0) if rollout_hub_improvements else 0
+            'best_reward_so_far': best_episode_reward
         })
 
-        # Enhanced logging every 50 episodes
-        if episode % 50 == 0:
-            recent_rewards = episode_rewards[-50:] if len(episode_rewards) >= 50 else episode_rewards
-            recent_success_rates = success_rates[-50:] if len(success_rates) >= 50 else success_rates
-            recent_improvements = hub_improvements[-50:] if len(hub_improvements) >= 50 else hub_improvements
-            recent_hub_scores = hub_scores[-50:] if len(hub_scores) >= 50 else hub_scores
-            recent_valid_ratios = valid_metrics_ratios[-50:] if len(
-                valid_metrics_ratios) >= 50 else valid_metrics_ratios
-            recent_pattern_success = pattern_success_rates[-50:] if len(
-                pattern_success_rates) >= 50 else pattern_success_rates
-
-            avg_reward_50 = np.mean(recent_rewards) if recent_rewards else 0
-            avg_success_50 = np.mean(recent_success_rates) if recent_success_rates else 0
-            avg_improvement_50 = np.mean(recent_improvements) if recent_improvements else 0
-            avg_hub_score_50 = np.mean(recent_hub_scores) if recent_hub_scores else 0.5
-            avg_valid_ratio_50 = np.mean(recent_valid_ratios) if recent_valid_ratios else 0
-            avg_pattern_success_50 = np.mean(recent_pattern_success) if recent_pattern_success else 0
-
-            latest_metrics = trainer.get_latest_metrics()
-            policy_loss = latest_metrics.get('policy_loss', 0)
-            disc_f1 = latest_metrics.get('discriminator_f1', 0)
-
-            logger.info(f"=== EPISODE {episode:5d} SUMMARY (Last 50) ===")
-            logger.info(f"Reward: {avg_reward_50:7.3f} | "
-                        f"Success: {avg_success_50:5.3f} | "
-                        f"Hub Improv: {avg_improvement_50:6.4f} | "
-                        f"Hub Score: {avg_hub_score_50:5.3f}")
-            logger.info(f"Valid Metrics: {avg_valid_ratio_50:5.3f} | "
-                        f"Pattern Success: {avg_pattern_success_50:5.3f} | "
-                        f"Policy Loss: {policy_loss:7.4f} | "
-                        f"Disc F1: {disc_f1:5.3f}")
-
-            # FIXED: Detailed diagnostic logging
-            if avg_success_50 == 0.0:
-                logger.warning("🚨 ZERO SUCCESS RATE - Potential issues:")
-                logger.warning(f"  - Average valid metrics ratio: {avg_valid_ratio_50:.3f}")
-                logger.warning(f"  - Average pattern success: {avg_pattern_success_50:.3f}")
-                logger.warning(f"  - Hub improvement threshold: {hub_score_improvement_threshold}")
-                logger.warning(f"  - Recent avg improvement: {avg_improvement_50:.6f}")
-
-                if avg_valid_ratio_50 < 0.5:
-                    logger.warning("  → Most steps are not calculating metrics properly")
-                if avg_pattern_success_50 < 0.1:
-                    logger.warning("  → Most patterns are failing to apply")
-                if abs(avg_improvement_50) < 1e-6:
-                    logger.warning("  → Hub improvements are exactly zero (likely fallback scores)")
-
-            # Early stopping conditions
-            if episode > 1000:
-                if consecutive_failures > consecutive_failures_threshold * 2:
-                    logger.warning(f"Too many consecutive failures ({consecutive_failures})")
-
-                if avg_reward_50 > 5.0 and avg_success_50 > 0.7:
-                    logger.info(f"🎉 Excellent performance achieved!")
+        # Milestone summaries
+        logger.log_milestone_summary(episode, metrics_history)
 
         # Save checkpoints
         if episode % 500 == 0 and episode > 0:
@@ -1908,15 +1631,11 @@ def main():
                         'policy_metrics': trainer.policy_metrics[-50:],
                         'disc_metrics': trainer.disc_metrics[-50:]
                     },
-                    'fixed_metrics_stats': {
-                        'episode_rewards': episode_rewards[-500:],
-                        'success_rates': success_rates[-500:],
-                        'hub_improvements': hub_improvements[-500:],
-                        'hub_scores': hub_scores[-500:],
-                        'valid_metrics_ratios': valid_metrics_ratios[-500:],
-                        'fallback_score_ratios': fallback_score_ratios[-500:],
-                        'pattern_success_rates': pattern_success_rates[-500:],
-                        'step_error_counts': step_error_counts[-500:],
+                    'metrics_stats': {
+                        'episode_rewards': metrics_history['episode_rewards'][-500:],
+                        'success_rates': metrics_history['success_rates'][-500:],
+                        'hub_improvements': metrics_history['hub_improvements'][-500:],
+                        'hub_scores': metrics_history['hub_scores'][-500:],
                         'best_episode_reward': best_episode_reward,
                         'consecutive_failures': consecutive_failures
                     },
@@ -1926,193 +1645,90 @@ def main():
                         'optimization': opt_config.__dict__,
                         'discriminator': disc_config.__dict__,
                         'environment': env_config.__dict__
-                    },
-                    'metrics_fix_applied': True,
-                    'step_level_metric_collection': True
+                    }
                 }
 
-                checkpoint_path = results_dir / f'fixed_metrics_rl_checkpoint_{episode}.pt'
+                checkpoint_path = results_dir / f'rl_checkpoint_{episode}.pt'
                 torch.save(checkpoint, checkpoint_path)
-                logger.info(f"💾 Saved FIXED METRICS checkpoint: {checkpoint_path}")
+
+                performance = {
+                    'best_reward': best_episode_reward,
+                    'current_success_rate': success_rate
+                }
+                logger.log_checkpoint_save(episode, checkpoint_path, performance)
 
             except Exception as e:
-                logger.warning(f"Failed to save checkpoint: {e}")
+                logger.log_warning(f"Failed to save checkpoint: {e}")
 
         # Memory cleanup
         if episode % 25 == 0 and device.type == 'cuda':
             torch.cuda.empty_cache()
+            monitor_gpu_usage(logger)
 
-    # Training completed - Enhanced summary
-    logger.info("🏁 FIXED METRICS RL Training completed!")
+    # Training completed
+    logger.log_info("RL Training completed!")
 
     # Final performance analysis
-    if episode_rewards:
-        final_100_rewards = episode_rewards[-100:] if len(episode_rewards) >= 100 else episode_rewards
-        final_100_success = success_rates[-100:] if len(success_rates) >= 100 else success_rates
-        final_100_improvements = hub_improvements[-100:] if len(hub_improvements) >= 100 else hub_improvements
-        final_100_hub_scores = hub_scores[-100:] if len(hub_scores) >= 100 else hub_scores
-        final_100_valid_ratios = valid_metrics_ratios[-100:] if len(
-            valid_metrics_ratios) >= 100 else valid_metrics_ratios
-        final_100_pattern_success = pattern_success_rates[-100:] if len(
-            pattern_success_rates) >= 100 else pattern_success_rates
+    if metrics_history['episode_rewards']:
+        final_100_rewards = metrics_history['episode_rewards'][-100:] if len(
+            metrics_history['episode_rewards']) >= 100 else metrics_history['episode_rewards']
+        final_100_success = metrics_history['success_rates'][-100:] if len(metrics_history['success_rates']) >= 100 else \
+        metrics_history['success_rates']
+        final_100_improvements = metrics_history['hub_improvements'][-100:] if len(
+            metrics_history['hub_improvements']) >= 100 else metrics_history['hub_improvements']
+        final_100_hub_scores = metrics_history['hub_scores'][-100:] if len(metrics_history['hub_scores']) >= 100 else \
+        metrics_history['hub_scores']
 
-        logger.info("\n" + "=" * 80)
-        logger.info("🎯 FINAL FIXED METRICS TRAINING SUMMARY")
-        logger.info("=" * 80)
-        logger.info(f"Total episodes: {num_episodes}")
-        logger.info(f"Best episode reward: {best_episode_reward:.4f}")
-        logger.info(f"Final 100 episodes performance:")
-        logger.info(f"  Average reward: {np.mean(final_100_rewards):.4f}")
-        logger.info(f"  Average success rate: {np.mean(final_100_success):.4f}")
-        logger.info(f"  Average hub improvement: {np.mean(final_100_improvements):.4f}")
-        logger.info(f"  Average hub score: {np.mean(final_100_hub_scores):.4f}")
-        logger.info(f"  Average valid metrics ratio: {np.mean(final_100_valid_ratios):.4f}")
-        logger.info(f"  Average pattern success rate: {np.mean(final_100_pattern_success):.4f}")
-        logger.info(f"  Final consecutive failures: {consecutive_failures}")
+        final_metrics = {
+            'mean_reward_last_100': float(np.mean(final_100_rewards)),
+            'mean_success_rate_last_100': float(np.mean(final_100_success)),
+            'mean_hub_improvement_last_100': float(np.mean(final_100_improvements)),
+            'mean_hub_score_last_100': float(np.mean(final_100_hub_scores)),
+            'total_updates': trainer.update_count
+        }
 
-        # FIXED: Diagnostic summary
-        logger.info(f"\nFIXED METRICS DIAGNOSTIC SUMMARY:")
-        logger.info(f"  Hub improvement threshold used: {hub_score_improvement_threshold}")
-        logger.info(
-            f"  Total step-level metrics collected: {sum(len(rollout_data.get('step_infos', [])) for _ in range(10))}")  # Approximate
-        logger.info(f"  Average fallback score usage: {np.mean(fallback_score_ratios):.3f}")
-
-        final_success = np.mean(final_100_success)
-        final_valid_ratio = np.mean(final_100_valid_ratios)
-
-        if final_success > 0.0:
-            logger.info("✅ SUCCESS: Non-zero success rate achieved with fixed metrics!")
-        else:
-            logger.warning("⚠️ Still zero success rate - possible issues:")
-            if final_valid_ratio < 0.5:
-                logger.warning("  - Low valid metrics ratio suggests discriminator/pattern issues")
-            else:
-                logger.warning("  - Valid metrics collected but no improvements above threshold")
-                logger.warning(f"  - Consider lowering threshold from {hub_score_improvement_threshold}")
+        logger.log_final_summary(num_episodes, {'final_performance': final_metrics})
 
     # Save final model
     try:
-        final_save_path = results_dir / 'final_fixed_metrics_rl_model.pt'
+        final_save_path = results_dir / 'final_rl_model.pt'
         final_stats = {
             'total_episodes': num_episodes,
             'best_episode_reward': best_episode_reward,
-            'final_performance': {
-                'mean_reward_last_100': float(np.mean(episode_rewards[-100:])) if len(
-                    episode_rewards) >= 100 else float(np.mean(episode_rewards)) if episode_rewards else 0,
-                'mean_success_rate_last_100': float(np.mean(success_rates[-100:])) if len(
-                    success_rates) >= 100 else float(np.mean(success_rates)) if success_rates else 0,
-                'mean_hub_improvement_last_100': float(np.mean(hub_improvements[-100:])) if len(
-                    hub_improvements) >= 100 else float(np.mean(hub_improvements)) if hub_improvements else 0,
-                'mean_hub_score_last_100': float(np.mean(hub_scores[-100:])) if len(hub_scores) >= 100 else float(
-                    np.mean(hub_scores)) if hub_scores else 0.5,
-                'mean_valid_metrics_ratio_last_100': float(np.mean(valid_metrics_ratios[-100:])) if len(
-                    valid_metrics_ratios) >= 100 else float(
-                    np.mean(valid_metrics_ratios)) if valid_metrics_ratios else 0,
-                'mean_pattern_success_rate_last_100': float(np.mean(pattern_success_rates[-100:])) if len(
-                    pattern_success_rates) >= 100 else float(
-                    np.mean(pattern_success_rates)) if pattern_success_rates else 0,
-                'consecutive_failures': consecutive_failures,
-                'total_updates': trainer.update_count
-            },
-            'metrics_fix_features': {
-                'step_level_metric_collection': True,
-                'fixed_metric_transport': True,
-                'detailed_step_info_tracking': True,
-                'fallback_score_detection': True,
-                'pattern_success_tracking': True,
-                'enhanced_debugging_logs': True
-            }
+            'final_performance': final_metrics if 'final_metrics' in locals() else {},
+            'consecutive_failures': consecutive_failures,
+            'total_updates': trainer.update_count
         }
 
         torch.save({
             'policy_state': policy.state_dict(),
             'discriminator_state': discriminator.state_dict(),
-            'node_dim': node_dim,
-            'edge_dim': edge_dim,
-            'fixed_metrics_training_stats': final_stats,
-            'training_history': {
-                'episode_rewards': episode_rewards,
-                'success_rates': success_rates,
-                'hub_improvements': hub_improvements,
-                'hub_scores': hub_scores,
-                'valid_metrics_ratios': valid_metrics_ratios,
-                'fallback_score_ratios': fallback_score_ratios,
-                'pattern_success_rates': pattern_success_rates,
-                'step_error_counts': step_error_counts
-            },
+            'node_dim': 7,
+            'edge_dim': 1,
+            'training_stats': final_stats,
+            'training_history': metrics_history,
             'trainer_final_metrics': trainer.get_latest_metrics(),
-            'complete_centralized_config': {
+            'centralized_config': {
                 'rewards': reward_config.__dict__,
                 'training': training_config.__dict__,
                 'optimization': opt_config.__dict__,
                 'discriminator': disc_config.__dict__,
                 'environment': env_config.__dict__
-            },
-            'metrics_fixes_applied': [
-                'Step-level metric collection in collect_rollouts_fixed()',
-                'Direct hub_improvement extraction from step infos',
-                'Enhanced success rate calculation from actual improvements',
-                'Detailed step-by-step debugging information',
-                'Fallback score detection and tracking',
-                'Pattern success rate monitoring',
-                'Comprehensive error tracking and reporting',
-                'Real-time metric validation and consistency checks'
-            ],
-            'debugging_capabilities': {
-                'step_info_collection': True,
-                'hub_score_validation': True,
-                'pattern_success_tracking': True,
-                'error_categorization': True,
-                'metric_consistency_checks': True,
-                'detailed_logging': True,
-                'fallback_detection': True
             }
         }, final_save_path)
 
-        logger.info(f"📁 Final FIXED METRICS model saved: {final_save_path}")
+        logger.log_info(f"Final model saved: {final_save_path}")
 
     except Exception as e:
-        logger.error(f"Failed to save final model: {e}")
+        logger.log_error(f"Failed to save final model: {e}")
 
     finally:
         tb_logger.close()
 
-    logger.info("=" * 80)
-    logger.info("🎉 FIXED METRICS RL TRAINING COMPLETED!")
-    logger.info("🔧 Key fixes applied:")
-    logger.info("  ✅ Step-level metric collection and transport")
-    logger.info("  ✅ Direct hub_improvement extraction from step infos")
-    logger.info("  ✅ Success rate calculation from actual step improvements")
-    logger.info("  ✅ Enhanced debugging with detailed step information")
-    logger.info("  ✅ Fallback score detection and monitoring")
-    logger.info("  ✅ Pattern success rate tracking")
-    logger.info("  ✅ Comprehensive error tracking and categorization")
-    logger.info("  ✅ Real-time metric validation")
-    logger.info(f"📊 View training progress: tensorboard --logdir {tensorboard_dir}")
-    logger.info(f"⚙️  Edit hyperparameters in: hyperparameters_configuration.py")
+    logger.log_info("RL TRAINING COMPLETED!")
+    logger.log_info(f"View training progress: tensorboard --logdir {tensorboard_dir}")
+    logger.log_info(f"Edit hyperparameters in: hyperparameters_configuration.py")
 
-    # FIXED: Final diagnostic recommendations
-    logger.info("🔍 DIAGNOSTIC RECOMMENDATIONS:")
-    if np.mean(success_rates[-100:] if success_rates else [0]) == 0:
-        logger.info("  📌 If success rate is still 0, check:")
-        logger.info("     - Are hub_improvements being calculated correctly?")
-        logger.info("     - Is the improvement threshold too high?")
-        logger.info("     - Are patterns applying successfully?")
-        logger.info("     - Is the discriminator returning valid scores?")
-
-    if np.mean(valid_metrics_ratios[-100:] if valid_metrics_ratios else [0]) < 0.5:
-        logger.info("  📌 Low valid metrics ratio suggests:")
-        logger.info("     - Discriminator compatibility issues")
-        logger.info("     - Graph structure problems")
-        logger.info("     - Pattern application failures")
-
-    if np.mean(fallback_score_ratios[-100:] if fallback_score_ratios else [0]) > 0.8:
-        logger.info("  📌 High fallback score usage suggests:")
-        logger.info("     - Discriminator is returning invalid outputs")
-        logger.info("     - Graph features may be corrupted")
-        logger.info("     - Batch processing issues")
-
-    logger.info("=" * 80)
 
 if __name__ == "__main__":
     main()
