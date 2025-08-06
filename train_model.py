@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Enhanced GCPN Training Script with Optimized Logging
-CLEANED VERSION using TrainingLogger for intelligent logging
+Enhanced GCPN Training Script with Comprehensive Discriminator Monitoring
+VERSIONE AVANZATA con controllo completo del discriminatore durante training adversariale
 
 Key Features:
-- Uses centralized hyperparameter configuration
-- TrainingLogger for optimized, intelligent logging
-- Enhanced Environment with incremental pattern-based actions
-- Discriminator-based adversarial learning with robust validation
-- PPO + GAE optimization
-- GPU/CUDA optimizations
-- UNIFIED 7-feature pipeline compatibility
+- Comprehensive discriminator performance monitoring
+- Adaptive discriminator training frequency based on performance
+- Early stopping and rollback mechanisms for discriminator degradation
+- Performance trend analysis and automatic adjustments
+- Detailed logging of all discriminator interactions
+- Safeguards against discriminator collapse
 """
 import datetime
 import random
@@ -35,7 +34,7 @@ from discriminator import HubDetectionDiscriminator
 from hyperparameters_configuration import get_improved_config, print_config_summary
 from policy_network import HubRefactoringPolicy
 from rl_gym import HubRefactoringEnv
-from training_logger import setup_optimized_logging, create_progress_tracker
+from training_logger import setup_optimized_logging, create_progress_tracker, AdvancedDiscriminatorMonitor
 
 
 @dataclass
@@ -46,7 +45,6 @@ class RefactoringAction:
     pattern: int
     terminate: bool
     confidence: float = 0.0
-
 
 class EnhancedEnvironmentManager:
     """Manages diverse graph pools for better exploration"""
@@ -210,19 +208,20 @@ class TensorBoardLogger:
 
 
 class PPOTrainer:
-    """PPO trainer with centralized hyperparameter configuration"""
+    """PPO trainer with centralized hyperparameter configuration and discriminator monitoring"""
 
-    def __init__(self, policy: nn.Module, discriminator: nn.Module,
+    def __init__(self, policy: nn.Module, discriminator: nn.Module, discriminator_monitor: AdvancedDiscriminatorMonitor,
                  opt_config, disc_config, device: torch.device = torch.device('cpu')):
         self.device = device
         self.opt_config = opt_config
         self.disc_config = disc_config
+        self.discriminator_monitor = discriminator_monitor
 
         # Move models to device
         self.policy = policy.to(device)
         self.discriminator = discriminator.to(device)
 
-        # Create optimizers with centralized config
+        # Create optimizers with adaptive parameters from monitor
         self.opt_policy = optim.AdamW(
             policy.parameters(),
             lr=opt_config.policy_lr,
@@ -230,9 +229,12 @@ class PPOTrainer:
             weight_decay=opt_config.weight_decay,
             betas=opt_config.betas
         )
+
+        # Discriminator optimizer with adaptive learning rate
+        adaptive_params = discriminator_monitor.get_adaptive_training_params()
         self.opt_disc = optim.AdamW(
             discriminator.parameters(),
-            lr=opt_config.discriminator_lr,
+            lr=adaptive_params['discriminator_lr'],
             eps=opt_config.optimizer_eps,
             weight_decay=opt_config.weight_decay,
             betas=opt_config.betas
@@ -268,6 +270,11 @@ class PPOTrainer:
         # GPU optimization settings
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
+
+    def update_discriminator_lr(self, new_lr: float):
+        """Aggiorna learning rate del discriminatore dal monitor"""
+        for param_group in self.opt_disc.param_groups:
+            param_group['lr'] = new_lr
 
     def compute_gae(self, rewards: List[float], values: List[float],
                     dones: List[bool]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -305,8 +312,25 @@ class PPOTrainer:
         return advantages, returns
 
     def update_discriminator(self, smelly_graphs: List[Data], clean_graphs: List[Data],
-                             generated_graphs: List[Data]):
-        """Discriminator update with centralized configuration"""
+                             generated_graphs: List[Data], episode: int):
+        """Discriminator update with enhanced monitoring and adaptive parameters"""
+
+        # Get adaptive parameters from monitor
+        adaptive_params = self.discriminator_monitor.get_adaptive_training_params()
+
+        # Skip update if discriminator is critically degraded
+        if adaptive_params['should_skip_update']:
+            self.discriminator_monitor.logger.log_warning(
+                f"⚠️  Skipping discriminator update due to critical degradation")
+            return
+
+        # Update learning rate if changed
+        current_lr = self.opt_disc.param_groups[0]['lr']
+        target_lr = adaptive_params['discriminator_lr']
+        if abs(current_lr - target_lr) > 1e-7:
+            self.update_discriminator_lr(target_lr)
+            self.discriminator_monitor.logger.log_info(
+                f"🔧 Discriminator LR updated: {current_lr:.2e} -> {target_lr:.2e}")
 
         epochs = self.opt_config.discriminator_epochs
         early_stop_threshold = self.disc_config.early_stop_threshold
@@ -314,6 +338,10 @@ class PPOTrainer:
         gp_lambda = self.disc_config.gradient_penalty_lambda
 
         total_metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1': []}
+        epoch_losses = []
+
+        self.discriminator_monitor.logger.log_info(
+            f"🧠 Starting discriminator update - Episode {episode} (LR: {target_lr:.2e})")
 
         for epoch in range(epochs):
             # Sample balanced batches with config-defined sizes
@@ -324,6 +352,7 @@ class PPOTrainer:
             )
 
             if batch_size <= 2:
+                self.discriminator_monitor.logger.log_warning(f"⚠️  Insufficient batch size: {batch_size}")
                 continue
 
             try:
@@ -359,6 +388,7 @@ class PPOTrainer:
 
                 # Validate outputs
                 if any(out is None or 'logits' not in out for out in [smelly_out, clean_out, gen_out]):
+                    self.discriminator_monitor.logger.log_warning(f"⚠️  Invalid discriminator outputs at epoch {epoch}")
                     continue
 
                 # Labels (smelly=1, clean/generated=0)
@@ -403,6 +433,8 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.max_grad_norm)
                 self.opt_disc.step()
 
+                epoch_losses.append(disc_loss.item())
+
                 # Calculate detailed metrics if enabled
                 if self.disc_config.calculate_detailed_metrics:
                     with torch.no_grad():
@@ -438,26 +470,48 @@ class PPOTrainer:
 
                 self.disc_losses.append(disc_loss.item())
 
-                # Early stopping
+                # Early stopping based on performance
                 if total_metrics['accuracy'] and total_metrics['f1']:
                     current_acc = total_metrics['accuracy'][-1]
                     current_f1 = total_metrics['f1'][-1]
 
+                    # Early stopping if performance is very poor
                     if current_acc < early_stop_threshold and current_f1 < early_stop_threshold:
+                        self.discriminator_monitor.logger.log_warning(
+                            f"⚠️  Early stopping at epoch {epoch} due to poor performance")
                         break
 
-            except Exception:
+                    # Early stopping if performance degradation is severe
+                    if (current_acc < 0.4 and
+                            self.discriminator_monitor.perf_state.baseline_accuracy > 0.6):
+                        self.discriminator_monitor.logger.log_warning(f"🚨 Early stopping due to severe degradation")
+                        break
+
+            except Exception as e:
+                self.discriminator_monitor.logger.log_warning(f"⚠️  Discriminator training error at epoch {epoch}: {e}")
                 continue
 
-        # Calculate average metrics across epochs
+        # Calculate and log average metrics across epochs
         if total_metrics['accuracy']:
             avg_metrics = {
                 'accuracy': np.mean(total_metrics['accuracy']),
                 'precision': np.mean(total_metrics['precision']),
                 'recall': np.mean(total_metrics['recall']),
-                'f1': np.mean(total_metrics['f1'])
+                'f1': np.mean(total_metrics['f1']),
+                'loss': np.mean(epoch_losses) if epoch_losses else 0.0
             }
+
             self.disc_metrics.append(avg_metrics)
+
+            # Log training results
+            self.discriminator_monitor.logger.log_info(
+                f"🧠 Discriminator training completed - "
+                f"Acc: {avg_metrics['accuracy']:.3f}, F1: {avg_metrics['f1']:.3f}, "
+                f"Loss: {avg_metrics['loss']:.4f}"
+            )
+        else:
+            self.discriminator_monitor.logger.log_warning(
+                "⚠️  No valid metrics calculated during discriminator training")
 
         # Step learning rate scheduler
         self.disc_scheduler.step()
@@ -750,7 +804,8 @@ class PPOTrainer:
                 'discriminator_accuracy': latest_disc['accuracy'],
                 'discriminator_f1': latest_disc['f1'],
                 'discriminator_precision': latest_disc['precision'],
-                'discriminator_recall': latest_disc['recall']
+                'discriminator_recall': latest_disc['recall'],
+                'discriminator_loss': latest_disc.get('loss', 0.0)
             })
 
         return metrics
@@ -821,94 +876,6 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device, logger
     return discriminator, checkpoint
 
 
-def get_discriminator_prediction(discriminator: nn.Module, data: Data, device: torch.device) -> Optional[float]:
-    """Get discriminator prediction for unified format data"""
-    try:
-        discriminator.eval()
-        data = data.clone().to(device)
-
-        # Validate unified format
-        if data.x.size(1) != 7:
-            return None
-
-        # Ensure batch attribute
-        if not hasattr(data, 'batch') or data.batch is None:
-            data.batch = torch.zeros(data.x.size(0), dtype=torch.long, device=device)
-
-        # Ensure edge_attr
-        if not hasattr(data, 'edge_attr') or data.edge_attr is None:
-            num_edges = data.edge_index.size(1)
-            data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=device)
-
-        with torch.no_grad():
-            output = discriminator(data)
-            if output and 'logits' in output:
-                probs = F.softmax(output['logits'], dim=1)
-                return probs[0, 1].item()
-
-        return None
-
-    except Exception:
-        return None
-
-
-def validate_discriminator_performance(discriminator: nn.Module, data_loader: UnifiedDataLoader,
-                                       device: torch.device, logger, num_samples: int = 40) -> Dict[str, float]:
-    """Enhanced validation with unified data loader"""
-    try:
-        # Load validation data using unified loader with metadata removal
-        val_data, val_labels = data_loader.load_dataset(
-            max_samples_per_class=num_samples // 2,
-            shuffle=True,
-            validate_all=True,
-            remove_metadata=True
-        )
-
-        correct_predictions = 0
-        total_predictions = 0
-        smelly_correct = 0
-        clean_correct = 0
-        failed_predictions = 0
-
-        # Test on samples
-        for i, (data, label) in enumerate(zip(val_data, val_labels)):
-            prob_smelly = get_discriminator_prediction(discriminator, data, device)
-
-            if prob_smelly is not None:
-                prediction = 1 if prob_smelly > 0.5 else 0
-                is_correct = prediction == label
-
-                if is_correct:
-                    correct_predictions += 1
-                    if label == 1:
-                        smelly_correct += 1
-                    else:
-                        clean_correct += 1
-
-                total_predictions += 1
-            else:
-                failed_predictions += 1
-
-        # Calculate results
-        results = {
-            'accuracy': correct_predictions / max(total_predictions, 1),
-            'smelly_accuracy': smelly_correct / max(sum(val_labels), 1),
-            'clean_accuracy': clean_correct / max(len(val_labels) - sum(val_labels), 1),
-            'failed_predictions': failed_predictions,
-            'total_attempts': len(val_data),
-            'success_rate': total_predictions / len(val_data),
-            'f1': 0.0  # Simplified for now
-        }
-
-        logger.log_discriminator_validation(results)
-        return results
-
-    except Exception as e:
-        logger.log_error(f"Unified validation failed: {e}")
-        return {'accuracy': 0.0, 'smelly_accuracy': 0.0, 'clean_accuracy': 0.0,
-                'failed_predictions': -1, 'success_rate': 0.0, 'f1': 0.0}
-
-
 def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager,
                                          discriminator: nn.Module, training_config,
                                          device: torch.device = torch.device('cpu')) -> List[HubRefactoringEnv]:
@@ -922,18 +889,11 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
             # Get random graph from diverse pool
             initial_graph = env_manager.get_random_graph()
 
-            # Test discriminator compatibility
-            test_pred = get_discriminator_prediction(discriminator, initial_graph, device)
-            if test_pred is None:
-                initial_graph = env_manager.get_random_graph()
-                test_pred = get_discriminator_prediction(discriminator, initial_graph, device)
-
-            if test_pred is not None:
-                # Create environment with config-based max_steps
-                env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
-                # Store reference to environment manager for dynamic resets
-                env.env_manager = env_manager
-                envs.append(env)
+            # Create environment with config-based max_steps
+            env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
+            # Store reference to environment manager for dynamic resets
+            env.env_manager = env_manager
+            envs.append(env)
 
         except Exception:
             continue
@@ -1044,7 +1004,20 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 policy_out = policy(batch_data)
                 values = []
                 for state in states_on_device:
-                    pred = get_discriminator_prediction(valid_envs[0].discriminator, state, device)
+                    # Use discriminator for value estimation
+                    pred = None
+                    for env in valid_envs:
+                        try:
+                            pred = env.discriminator.eval()
+                            with torch.no_grad():
+                                output = env.discriminator(state)
+                                if output and 'logits' in output:
+                                    probs = F.softmax(output['logits'], dim=1)
+                                    pred = probs[0, 1].item()
+                                    break
+                        except:
+                            continue
+
                     value = 1.0 - pred if pred is not None else 0.5
                     values.append(value)
                 values = torch.tensor(values, device=device)
@@ -1191,7 +1164,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 # Reset if done
                 if done:
                     try:
-                        reset_state = env.reset()
+                        reset_state = enhanced_reset_environment(env)
                         if reset_state.x.device != device:
                             reset_state = reset_state.to(device)
                         if not hasattr(reset_state, 'batch'):
@@ -1313,7 +1286,7 @@ def monitor_gpu_usage(logger):
 
 
 def main():
-    """Main training loop with optimized logging"""
+    """Main training loop with comprehensive discriminator monitoring"""
     # Setup optimized logging
     logger = setup_optimized_logging()
 
@@ -1372,14 +1345,33 @@ def main():
     # Load pretrained discriminator
     try:
         discriminator, discriminator_checkpoint = load_pretrained_discriminator(discriminator_path, device, logger)
-        validation_results = validate_discriminator_performance(discriminator, data_loader, device, logger,
-                                                                num_samples=40)
 
-        if validation_results['accuracy'] < 0.1:
+        # Initialize comprehensive discriminator monitor
+        discriminator_monitor = AdvancedDiscriminatorMonitor(
+            discriminator=discriminator,
+            data_loader=data_loader,
+            device=device,
+            logger=logger
+        )
+
+        # Set baseline from checkpoint
+        baseline_metrics = {
+            'accuracy': discriminator_checkpoint.get('cv_results', {}).get('mean_accuracy', 0.0),
+            'f1': discriminator_checkpoint.get('cv_results', {}).get('mean_f1', 0.0),
+            'precision': discriminator_checkpoint.get('cv_results', {}).get('mean_precision', 0.0),
+            'recall': discriminator_checkpoint.get('cv_results', {}).get('mean_recall', 0.0)
+        }
+        discriminator_monitor.set_baseline_performance(baseline_metrics)
+
+        # Initial validation
+        logger.log_info("🔍 Performing initial discriminator validation...")
+        initial_validation = discriminator_monitor.validate_performance(episode=0, detailed=True)
+
+        if initial_validation['accuracy'] < 0.1:
             logger.log_error("Discriminator performance is critically low!")
             return
-        elif validation_results['failed_predictions'] > validation_results['total_attempts'] // 2:
-            logger.log_warning(f"High failure rate: {validation_results['failed_predictions']} failed predictions")
+        elif initial_validation['failed_predictions'] > initial_validation['total_samples'] // 2:
+            logger.log_warning(f"High failure rate: {initial_validation['failed_predictions']} failed predictions")
 
     except Exception as e:
         logger.log_error(f"Failed to load pretrained discriminator: {e}")
@@ -1401,8 +1393,8 @@ def main():
     trainable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     logger.log_info(f"Policy network - Total params: {total_params:,}, Trainable: {trainable_params:,}")
 
-    # Setup PPO trainer
-    trainer = PPOTrainer(policy, discriminator, opt_config, disc_config, device=device)
+    # Setup PPO trainer with discriminator monitor
+    trainer = PPOTrainer(policy, discriminator, discriminator_monitor, opt_config, disc_config, device=device)
 
     # Training parameters from centralized config
     num_episodes = training_config.num_episodes
@@ -1461,9 +1453,46 @@ def main():
     consecutive_failures = 0
     best_episode_reward = float('-inf')
 
-    # Main training loop
+    # Get adaptive discriminator parameters
+    adaptive_params = discriminator_monitor.get_adaptive_training_params()
+    logger.log_info(
+        f"🔧 Initial adaptive params - LR: {adaptive_params['discriminator_lr']:.2e}, Freq: {adaptive_params['update_frequency']}")
+
+    # Main training loop with comprehensive discriminator monitoring
     for episode in range(num_episodes):
         episode_start_time = time.time()
+
+        # === DISCRIMINATOR MONITORING PHASE ===
+
+        # Regular discriminator validation
+        if discriminator_monitor.should_validate(episode):
+            logger.log_info(f"🔍 Validating discriminator at episode {episode}")
+
+            # Detailed validation every N episodes
+            detailed = (episode % discriminator_monitor.detailed_validation_frequency == 0) and episode > 0
+            validation_results = discriminator_monitor.validate_performance(episode, detailed=detailed)
+
+            # Check for degradation and handle if necessary
+            rollback_occurred = discriminator_monitor.check_and_handle_degradation(episode)
+
+            if rollback_occurred:
+                logger.log_warning(f"🔄 Discriminator rollback occurred - resetting environments")
+                # Reset all environments after rollback
+                for env in envs:
+                    try:
+                        enhanced_reset_environment(env)
+                    except Exception:
+                        pass
+
+            # Update best model backup if performance improved
+            discriminator_monitor.update_best_model(episode)
+
+            # Log discriminator status to TensorBoard
+            tb_logger.log_discriminator_metrics(episode, validation_results)
+
+        # Get updated adaptive parameters
+        adaptive_params = discriminator_monitor.get_adaptive_training_params()
+        current_disc_update_freq = adaptive_params['update_frequency']
 
         # Environment refresh
         if episode % environment_refresh_frequency == 0 and episode > 0:
@@ -1483,7 +1512,7 @@ def main():
             env_manager._refresh_pool()
             consecutive_failures = 0
 
-        # Collect rollouts with step-level metrics
+        # === ROLLOUT COLLECTION ===
         rollout_data = collect_rollouts(envs, policy, training_config, device)
 
         if len(rollout_data['rewards']) == 0:
@@ -1536,7 +1565,7 @@ def main():
         }
         logger.log_episode_progress(episode, episode_metrics)
 
-        # Policy updates
+        # === POLICY UPDATES ===
         if episode % update_frequency == 0 and len(rollout_data['states']) >= 16:
 
             # Compute GAE advantages
@@ -1565,10 +1594,14 @@ def main():
                     if 'policy' in key:
                         tb_logger.log_policy_metrics(trainer.update_count, {key.replace('policy_', ''): value})
 
-            # Discriminator fine-tuning
-            disc_update_freq = update_frequency * disc_config.update_frequency_multiplier
-            if episode % disc_update_freq == 0 and episode > 100:
+        # === DISCRIMINATOR UPDATES (with adaptive frequency) ===
+        if episode % current_disc_update_freq == 0 and episode > 100:
+            # Skip if discriminator is critically degraded
+            if not adaptive_params['should_skip_update']:
                 try:
+                    logger.log_info(
+                        f"🧠 Updating discriminator at episode {episode} (adaptive frequency: {current_disc_update_freq})")
+
                     smelly_samples, labels = data_loader.load_dataset(
                         max_samples_per_class=disc_config.max_samples_per_class,
                         shuffle=True,
@@ -1588,12 +1621,25 @@ def main():
                             len(clean_graphs) >= min_samples and
                             len(recent_states) >= min_samples):
 
+                        # Perform discriminator update with monitoring
                         trainer.update_discriminator(
                             smelly_graphs[:disc_config.max_samples_per_class],
                             clean_graphs[:disc_config.max_samples_per_class],
-                            recent_states[:disc_config.max_samples_per_class]
+                            recent_states[:disc_config.max_samples_per_class],
+                            episode
                         )
 
+                        # Immediate post-update validation to check for degradation
+                        post_update_validation = discriminator_monitor.validate_performance(
+                            episode, detailed=False
+                        )
+
+                        # Check if update caused degradation
+                        if discriminator_monitor.perf_state.is_critically_degraded():
+                            logger.log_warning(f"🚨 Critical degradation detected after discriminator update!")
+                            discriminator_monitor.check_and_handle_degradation(episode)
+
+                        # Log to TensorBoard
                         disc_metrics = trainer.get_latest_metrics()
                         if disc_metrics:
                             for key, value in disc_metrics.items():
@@ -1603,8 +1649,10 @@ def main():
 
                 except Exception as e:
                     logger.log_warning(f"Discriminator update failed at episode {episode}: {e}")
+            else:
+                logger.log_warning(f"⚠️  Skipping discriminator update due to critical performance")
 
-        # TensorBoard logging
+        # === TENSORBOARD LOGGING ===
         tb_logger.log_episode_metrics(episode, {
             'reward': episode_reward,
             'success_rate': success_rate,
@@ -1614,12 +1662,28 @@ def main():
             'best_reward_so_far': best_episode_reward
         })
 
-        # Milestone summaries
+        # Log discriminator monitoring metrics
+        monitoring_summary = discriminator_monitor.get_monitoring_summary()
+        if episode % 25 == 0:
+            perf_state = monitoring_summary['performance_state']
+            tb_logger.log_discriminator_metrics(episode, {
+                'adaptive_lr': adaptive_params['discriminator_lr'],
+                'adaptive_update_freq': adaptive_params['update_frequency'],
+                'degradation_count': perf_state['stability']['consecutive_degradations'],
+                'improvement_count': perf_state['stability']['consecutive_improvements'],
+                'vs_baseline_acc': perf_state['vs_baseline']['accuracy_diff'],
+                'vs_baseline_f1': perf_state['vs_baseline']['f1_diff']
+            })
+
+        # === MILESTONE SUMMARIES ===
         logger.log_milestone_summary(episode, metrics_history)
 
-        # Save checkpoints
+        # === CHECKPOINT SAVING ===
         if episode % 500 == 0 and episode > 0:
             try:
+                # Include discriminator monitoring data
+                discriminator_stats = discriminator_monitor.get_monitoring_summary()
+
                 checkpoint = {
                     'episode': episode,
                     'policy_state': policy.state_dict(),
@@ -1639,6 +1703,13 @@ def main():
                         'best_episode_reward': best_episode_reward,
                         'consecutive_failures': consecutive_failures
                     },
+                    'discriminator_monitoring': {
+                        'performance_state': discriminator_monitor.perf_state.get_status_summary(),
+                        'monitoring_stats': discriminator_stats['monitoring_stats'],
+                        'validation_history': discriminator_monitor.validation_history[-20:],  # Last 20 validations
+                        'adaptive_params': adaptive_params,
+                        'baseline_performance': discriminator_monitor.perf_state.baseline_accuracy
+                    },
                     'centralized_config_used': {
                         'rewards': reward_config.__dict__,
                         'training': training_config.__dict__,
@@ -1653,31 +1724,63 @@ def main():
 
                 performance = {
                     'best_reward': best_episode_reward,
-                    'current_success_rate': success_rate
+                    'current_success_rate': success_rate,
+                    'discriminator_status': 'stable' if discriminator_monitor.perf_state.is_stable() else 'unstable'
                 }
                 logger.log_checkpoint_save(episode, checkpoint_path, performance)
+
+                # Log discriminator checkpoint info
+                logger.log_info(
+                    f"🧠 Discriminator state - Acc: {discriminator_monitor.perf_state.current_accuracy:.3f}, "
+                    f"Interventions: {discriminator_monitor.emergency_interventions}, "
+                    f"Rollbacks: {discriminator_monitor.rollback_count}")
 
             except Exception as e:
                 logger.log_warning(f"Failed to save checkpoint: {e}")
 
-        # Memory cleanup
+        # === MEMORY CLEANUP ===
         if episode % 25 == 0 and device.type == 'cuda':
             torch.cuda.empty_cache()
             monitor_gpu_usage(logger)
 
-    # Training completed
+        # === EMERGENCY DISCRIMINATOR INTERVENTIONS ===
+        # Check for critical discriminator state every 50 episodes
+        if episode % 50 == 0 and episode > 200:
+            if discriminator_monitor.perf_state.is_critically_degraded():
+                logger.log_warning(f"🚨 EMERGENCY: Critical discriminator degradation detected!")
+
+                # Force validation and intervention
+                emergency_validation = discriminator_monitor.validate_performance(episode, detailed=True)
+                emergency_handled = discriminator_monitor.check_and_handle_degradation(episode)
+
+                if emergency_handled:
+                    logger.log_warning(f"🔄 Emergency intervention completed - restarting environments")
+                    # Reset all environments after emergency intervention
+                    for env in envs:
+                        try:
+                            enhanced_reset_environment(env)
+                        except Exception:
+                            pass
+
+    # === TRAINING COMPLETION ===
     logger.log_info("RL Training completed!")
+
+    # Final discriminator analysis
+    logger.log_info("🔍 Performing final comprehensive discriminator validation...")
+    final_discriminator_validation = discriminator_monitor.validate_performance(
+        episode=num_episodes, detailed=True
+    )
 
     # Final performance analysis
     if metrics_history['episode_rewards']:
         final_100_rewards = metrics_history['episode_rewards'][-100:] if len(
             metrics_history['episode_rewards']) >= 100 else metrics_history['episode_rewards']
         final_100_success = metrics_history['success_rates'][-100:] if len(metrics_history['success_rates']) >= 100 else \
-        metrics_history['success_rates']
+            metrics_history['success_rates']
         final_100_improvements = metrics_history['hub_improvements'][-100:] if len(
             metrics_history['hub_improvements']) >= 100 else metrics_history['hub_improvements']
         final_100_hub_scores = metrics_history['hub_scores'][-100:] if len(metrics_history['hub_scores']) >= 100 else \
-        metrics_history['hub_scores']
+            metrics_history['hub_scores']
 
         final_metrics = {
             'mean_reward_last_100': float(np.mean(final_100_rewards)),
@@ -1687,9 +1790,15 @@ def main():
             'total_updates': trainer.update_count
         }
 
-        logger.log_final_summary(num_episodes, {'final_performance': final_metrics})
+        # Include discriminator final analysis
+        discriminator_final_summary = discriminator_monitor.get_monitoring_summary()
 
-    # Save final model
+        logger.log_final_summary(num_episodes, {
+            'final_performance': final_metrics,
+            'discriminator_analysis': discriminator_final_summary
+        })
+
+    # === FINAL MODEL SAVING ===
     try:
         final_save_path = results_dir / 'final_rl_model.pt'
         final_stats = {
@@ -1700,6 +1809,38 @@ def main():
             'total_updates': trainer.update_count
         }
 
+        # Comprehensive discriminator statistics for final save
+        discriminator_final_stats = {
+            'final_validation': final_discriminator_validation,
+            'monitoring_summary': discriminator_monitor.get_monitoring_summary(),
+            'performance_evolution': {
+                'baseline': {
+                    'accuracy': discriminator_monitor.perf_state.baseline_accuracy,
+                    'f1': discriminator_monitor.perf_state.baseline_f1
+                },
+                'final': {
+                    'accuracy': discriminator_monitor.perf_state.current_accuracy,
+                    'f1': discriminator_monitor.perf_state.current_f1
+                },
+                'best': {
+                    'accuracy': discriminator_monitor.perf_state.best_accuracy,
+                    'f1': discriminator_monitor.perf_state.best_f1,
+                    'episode': discriminator_monitor.perf_state.best_episode
+                }
+            },
+            'interventions': {
+                'emergency_interventions': discriminator_monitor.emergency_interventions,
+                'rollbacks': discriminator_monitor.rollback_count,
+                'total_validations': len(discriminator_monitor.validation_history),
+                'failed_validations': discriminator_monitor.perf_state.failed_validations
+            },
+            'adaptive_learning': {
+                'final_lr': adaptive_params['discriminator_lr'],
+                'final_update_freq': adaptive_params['update_frequency'],
+                'lr_adjustments': discriminator_monitor.current_discriminator_lr != discriminator_monitor.base_discriminator_lr
+            }
+        }
+
         torch.save({
             'policy_state': policy.state_dict(),
             'discriminator_state': discriminator.state_dict(),
@@ -1708,6 +1849,7 @@ def main():
             'training_stats': final_stats,
             'training_history': metrics_history,
             'trainer_final_metrics': trainer.get_latest_metrics(),
+            'discriminator_comprehensive_analysis': discriminator_final_stats,
             'centralized_config': {
                 'rewards': reward_config.__dict__,
                 'training': training_config.__dict__,
@@ -1719,15 +1861,70 @@ def main():
 
         logger.log_info(f"Final model saved: {final_save_path}")
 
+        # Log final discriminator status
+        logger.log_info("🧠 FINAL DISCRIMINATOR ANALYSIS:")
+        logger.log_info(f"   Baseline Performance: Acc {discriminator_monitor.perf_state.baseline_accuracy:.3f}")
+        logger.log_info(f"   Final Performance: Acc {discriminator_monitor.perf_state.current_accuracy:.3f}")
+        logger.log_info(
+            f"   Best Performance: Acc {discriminator_monitor.perf_state.best_accuracy:.3f} (Episode {discriminator_monitor.perf_state.best_episode})")
+        logger.log_info(f"   Emergency Interventions: {discriminator_monitor.emergency_interventions}")
+        logger.log_info(f"   Model Rollbacks: {discriminator_monitor.rollback_count}")
+        logger.log_info(f"   Total Validations: {len(discriminator_monitor.validation_history)}")
+
+        # Performance verdict
+        acc_change = discriminator_monitor.perf_state.current_accuracy - discriminator_monitor.perf_state.baseline_accuracy
+        if acc_change > 0.05:
+            verdict = "✅ SIGNIFICANTLY IMPROVED"
+        elif acc_change > 0.02:
+            verdict = "✅ IMPROVED"
+        elif acc_change > -0.02:
+            verdict = "➡️  MAINTAINED"
+        elif acc_change > -0.05:
+            verdict = "⚠️  SLIGHTLY DEGRADED"
+        else:
+            verdict = "❌ SIGNIFICANTLY DEGRADED"
+
+        logger.log_info(f"   Overall Verdict: {verdict} ({acc_change:+.3f})")
+
     except Exception as e:
         logger.log_error(f"Failed to save final model: {e}")
 
     finally:
         tb_logger.close()
 
-    logger.log_info("RL TRAINING COMPLETED!")
-    logger.log_info(f"View training progress: tensorboard --logdir {tensorboard_dir}")
-    logger.log_info(f"Edit hyperparameters in: hyperparameters_configuration.py")
+    # Final recommendations based on discriminator behavior
+    logger.log_info("\n" + "=" * 70)
+    logger.log_info("🎯 TRAINING RECOMMENDATIONS BASED ON DISCRIMINATOR ANALYSIS:")
+    logger.log_info("=" * 70)
+
+    if discriminator_monitor.emergency_interventions > 3:
+        logger.log_info("⚠️  High number of emergency interventions - consider:")
+        logger.log_info("   • Lower discriminator learning rate")
+        logger.log_info("   • Increase discriminator update frequency")
+        logger.log_info("   • Review discriminator architecture complexity")
+
+    if discriminator_monitor.rollback_count > 1:
+        logger.log_info("🔄 Multiple rollbacks occurred - consider:")
+        logger.log_info("   • More conservative discriminator updates")
+        logger.log_info("   • Better discriminator regularization")
+        logger.log_info("   • Longer baseline establishment period")
+
+    if discriminator_monitor.perf_state.is_stable():
+        logger.log_info("✅ Discriminator remained stable throughout training")
+        logger.log_info("   • Current hyperparameters appear well-tuned")
+        logger.log_info("   • Consider longer training for better results")
+    else:
+        logger.log_info("⚠️  Discriminator showed instability - consider:")
+        logger.log_info("   • Review adversarial training balance")
+        logger.log_info("   • Implement more frequent validation")
+        logger.log_info("   • Adjust policy-discriminator update ratio")
+
+    logger.log_info("=" * 70)
+    logger.log_info("🏁 COMPREHENSIVE RL TRAINING WITH DISCRIMINATOR MONITORING COMPLETED!")
+    logger.log_info("=" * 70)
+    logger.log_info(f"📊 View detailed training progress: tensorboard --logdir {tensorboard_dir}")
+    logger.log_info(f"⚙️  Edit hyperparameters: hyperparameters_configuration.py")
+    logger.log_info(f"📁 Results saved in: {results_dir}")
 
 
 if __name__ == "__main__":
