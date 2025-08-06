@@ -84,9 +84,9 @@ class ImprovedOptimizationConfig:
     max_grad_norm: float = 0.5
 
     # NEW: Learning rate scheduling
-    policy_lr_decay_step: int = 1000
-    disc_lr_decay_step: int = 500
-    lr_decay_factor: float = 0.95
+    policy_lr_decay_step: int = 2000
+    disc_lr_decay_step: int = 2000
+    lr_decay_factor: float = 0.98
 
     # IMPROVED: Training epochs (reduced for stability)
     policy_epochs: int = 4
