@@ -211,30 +211,29 @@ class PPOTrainer:
     """PPO trainer with centralized hyperparameter configuration and discriminator monitoring"""
 
     def __init__(self, policy: nn.Module, discriminator: nn.Module, discriminator_monitor: AdvancedDiscriminatorMonitor,
-                 opt_config, disc_config, device: torch.device = torch.device('cpu')):
+                 opt_config, disc_config, lr_config, device: torch.device = torch.device('cpu')):
         self.device = device
         self.opt_config = opt_config
         self.disc_config = disc_config
+        self.lr_config = lr_config
         self.discriminator_monitor = discriminator_monitor
 
         # Move models to device
         self.policy = policy.to(device)
         self.discriminator = discriminator.to(device)
 
-        # Create optimizers with adaptive parameters from monitor
+        # Create optimizers with new learning rate configuration
         self.opt_policy = optim.AdamW(
             policy.parameters(),
-            lr=opt_config.policy_lr,
+            lr=lr_config.policy_base_lr,  # Start with base LR for CyclicLR
             eps=opt_config.optimizer_eps,
             weight_decay=opt_config.weight_decay,
             betas=opt_config.betas
         )
 
-        # Discriminator optimizer with adaptive learning rate
-        adaptive_params = discriminator_monitor.get_adaptive_training_params()
         self.opt_disc = optim.AdamW(
             discriminator.parameters(),
-            lr=adaptive_params['discriminator_lr'],
+            lr=lr_config.discriminator_initial_lr,  # Start with initial LR for ReduceLROnPlateau
             eps=opt_config.optimizer_eps,
             weight_decay=opt_config.weight_decay,
             betas=opt_config.betas
@@ -248,17 +247,32 @@ class PPOTrainer:
         self.entropy_coef = opt_config.entropy_coefficient
         self.max_grad_norm = opt_config.max_grad_norm
 
-        # Learning rate schedulers from config
-        self.policy_scheduler = optim.lr_scheduler.StepLR(
+        # NEW: Advanced learning rate schedulers
+        self.policy_scheduler = optim.lr_scheduler.CyclicLR(
             self.opt_policy,
-            step_size=opt_config.policy_lr_decay_step,
-            gamma=opt_config.lr_decay_factor
+            base_lr=lr_config.policy_base_lr,
+            max_lr=lr_config.policy_max_lr,
+            step_size_up=lr_config.policy_cyclical_step_size,
+            mode=lr_config.policy_cyclical_mode,
+            gamma=lr_config.policy_gamma,
+            cycle_momentum=False
         )
-        self.disc_scheduler = optim.lr_scheduler.StepLR(
+
+        self.disc_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.opt_disc,
-            step_size=opt_config.disc_lr_decay_step,
-            gamma=opt_config.lr_decay_factor
+            mode=lr_config.discriminator_monitor_mode,
+            factor=lr_config.discriminator_factor,
+            patience=lr_config.discriminator_patience,
+            threshold=lr_config.discriminator_threshold,
+            threshold_mode=lr_config.discriminator_threshold_mode,
+            cooldown=lr_config.discriminator_cooldown,
+            min_lr=lr_config.discriminator_min_lr,
+            eps=lr_config.discriminator_eps
         )
+
+        # Track metrics for discriminator scheduler
+        self.disc_metric_history = []
+        self.current_episode = 0
 
         # Training statistics
         self.update_count = 0
@@ -324,14 +338,6 @@ class PPOTrainer:
                 f"⚠️  Skipping discriminator update due to critical degradation")
             return
 
-        # Update learning rate if changed
-        current_lr = self.opt_disc.param_groups[0]['lr']
-        target_lr = adaptive_params['discriminator_lr']
-        if abs(current_lr - target_lr) > 1e-7:
-            self.update_discriminator_lr(target_lr)
-            self.discriminator_monitor.logger.log_info(
-                f"🔧 Discriminator LR updated: {current_lr:.2e} -> {target_lr:.2e}")
-
         epochs = self.opt_config.discriminator_epochs
         early_stop_threshold = self.disc_config.early_stop_threshold
         label_smoothing = self.disc_config.label_smoothing
@@ -341,7 +347,7 @@ class PPOTrainer:
         epoch_losses = []
 
         self.discriminator_monitor.logger.log_info(
-            f"🧠 Starting discriminator update - Episode {episode} (LR: {target_lr:.2e})")
+            f"🧠 Starting discriminator update - Episode {episode}")
 
         for epoch in range(epochs):
             # Sample balanced batches with config-defined sizes
@@ -503,18 +509,20 @@ class PPOTrainer:
 
             self.disc_metrics.append(avg_metrics)
 
+            # NEW: Update ReduceLROnPlateau scheduler with monitored metric
+            monitored_metric = avg_metrics[self.lr_config.discriminator_monitor_metric]
+            self.disc_scheduler.step(monitored_metric)
+
             # Log training results
+            current_lr = self.opt_disc.param_groups[0]['lr']
             self.discriminator_monitor.logger.log_info(
                 f"🧠 Discriminator training completed - "
                 f"Acc: {avg_metrics['accuracy']:.3f}, F1: {avg_metrics['f1']:.3f}, "
-                f"Loss: {avg_metrics['loss']:.4f}"
+                f"Loss: {avg_metrics['loss']:.4f}, LR: {current_lr:.2e}"
             )
         else:
             self.discriminator_monitor.logger.log_warning(
                 "⚠️  No valid metrics calculated during discriminator training")
-
-        # Step learning rate scheduler
-        self.disc_scheduler.step()
 
         # GPU memory cleanup
         if self.device.type == 'cuda':
@@ -589,7 +597,6 @@ class PPOTrainer:
 
         self.update_count += 1
 
-        # Step learning rate scheduler
         self.policy_scheduler.step()
 
         # GPU memory cleanup
@@ -1394,8 +1401,8 @@ def main():
     logger.log_info(f"Policy network - Total params: {total_params:,}, Trainable: {trainable_params:,}")
 
     # Setup PPO trainer with discriminator monitor
-    trainer = PPOTrainer(policy, discriminator, discriminator_monitor, opt_config, disc_config, device=device)
-
+    trainer = PPOTrainer(policy, discriminator, discriminator_monitor, opt_config, disc_config, config['learning_rate'],
+                         device=device)
     # Training parameters from centralized config
     num_episodes = training_config.num_episodes
     num_envs = min(training_config.num_envs if device.type == 'cuda' else 3, stats['label_distribution']['smelly'])
