@@ -19,6 +19,12 @@ from torch_geometric.utils import to_networkx
 
 import logging
 
+from global_graph_metrics import (
+    GlobalGraphMetrics,
+    AdaptiveWeightScheduler,
+    EnhancedHubScoreComputation
+)
+
 # Configurazione logging ottimizzata per questo modulo
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Solo warning ed errori per default
@@ -234,6 +240,19 @@ class HubRefactoringEnv:
         self.best_hub_score = None
         self.hub_score_history = []
 
+        # Hub score component
+        self.weight_scheduler = AdaptiveWeightScheduler()
+        self.current_episode = 0
+        self._cached_global_metrics = None
+        self._global_metrics_hash = None
+        self.last_component_scores = {
+            'gini': 0.0,
+            'degree_centralization': 0.0,
+            'betweenness_centralization': 0.0,
+            'discriminator': 0.0,
+            'composite': 0.0
+        }
+
         # Log solo inizializzazione se debug attivo
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Environment initialized with Hub-Focused patterns")
@@ -258,6 +277,8 @@ class HubRefactoringEnv:
         self.steps = 0
         self.action_history.clear()
         self.hub_score_history.clear()
+
+        self.invalidate_global_cache()
 
         # Reset cache
         self._cached_hub_score = None
@@ -288,53 +309,77 @@ class HubRefactoringEnv:
             return str(hash(str(data)))
 
     def _get_current_hub_score(self) -> float:
-        """Hub score computation with caching"""
+        """
+        Enhanced hub score computation with global structural metrics
+        Combines 4 components with adaptive weights based on training progress
+        """
         try:
-            self._ensure_data_consistency(self.current_data)
+            # Check if we can use cached composite score
             current_hash = self._get_graph_hash(self.current_data)
-
-            # Return cached score if graph hasn't changed
-            if self._cached_hub_score is not None and self._graph_hash == current_hash:
+            if (self._cached_hub_score is not None and
+                    self._graph_hash == current_hash):
                 return self._cached_hub_score
 
-            # Compute new score
-            with torch.no_grad():
-                self.discriminator.eval()
-                disc_out = self.discriminator(self.current_data)
+            # Get adaptive weights for current training phase
+            weights = self.weight_scheduler.get_weights(self.current_episode)
+            phase = self.weight_scheduler.get_phase_name(self.current_episode)
 
-                if disc_out is None or 'logits' not in disc_out:
-                    return 0.5  # Neutral fallback
+            # 1. Compute global structural metrics
+            global_metrics = self._compute_global_structural_metrics(self.current_data)
 
-                logits = disc_out['logits']
-                if logits.dim() == 0 or logits.size(0) == 0:
-                    return 0.5
+            # 2. Get discriminator score
+            discriminator_score = self._get_discriminator_score()
 
-                # Get probability of being "smelly" (hub-like)
-                probs = F.softmax(logits, dim=1)
-                if probs.size(1) < 2:
-                    return 0.5
+            # 3. Combine all components with adaptive weights
+            composite_score = (
+                    weights['gini_weight'] * global_metrics['gini_coefficient'] +
+                    weights['degree_centralization_weight'] * global_metrics['degree_centralization'] +
+                    weights['betweenness_centralization_weight'] * global_metrics['betweenness_centralization'] +
+                    weights['discriminator_weight'] * discriminator_score
+            )
 
-                score = probs[0, 1].item()
+            # Ensure score is in [0,1] range
+            composite_score = max(0.0, min(1.0, composite_score))
 
-            # Validate score
-            if not (0.0 <= score <= 1.0) or math.isnan(score):
-                score = 0.5
+            # Store component scores for debugging
+            self.last_component_scores = {
+                'gini': global_metrics['gini_coefficient'],
+                'degree_centralization': global_metrics['degree_centralization'],
+                'betweenness_centralization': global_metrics['betweenness_centralization'],
+                'discriminator': discriminator_score,
+                'composite': composite_score,
+                'weights_used': weights,
+                'training_phase': phase
+            }
 
             # Cache the result
-            self._cached_hub_score = score
+            self._cached_hub_score = composite_score
             self._graph_hash = current_hash
 
-            return score
+            # Debug logging (only if debug level enabled)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"🎯 Hub Score Components (Episode {self.current_episode}, Phase: {phase}):\n"
+                    f"   Gini: {global_metrics['gini_coefficient']:.3f} (weight: {weights['gini_weight']:.2f})\n"
+                    f"   Degree Cent: {global_metrics['degree_centralization']:.3f} (weight: {weights['degree_centralization_weight']:.2f})\n"
+                    f"   Between Cent: {global_metrics['betweenness_centralization']:.3f} (weight: {weights['betweenness_centralization_weight']:.2f})\n"
+                    f"   Discriminator: {discriminator_score:.3f} (weight: {weights['discriminator_weight']:.2f})\n"
+                    f"   💯 COMPOSITE: {composite_score:.3f}"
+                )
+
+            return composite_score
 
         except Exception as e:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Hub score computation failed: {e}")
-            return 0.5
+            logger.error(f"Enhanced hub score computation failed: {e}")
+            # Fallback to discriminator-only score
+            return self._get_discriminator_score()
 
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
         """Step with optimized logging"""
         source, target, pattern, terminate = action
         self.steps += 1
+
+        self.invalidate_global_cache()
 
         reward = self.REWARD_STEP
         done = False
@@ -1012,6 +1057,156 @@ class HubRefactoringEnv:
             3: "Extract Superclass (Pull Up) - Factor out common dependencies",
             4: "Move Method - Redistribute hub responsibilities"
         }
+
+    def set_current_episode(self, episode: int):
+        """Set current episode for adaptive weighting"""
+        self.current_episode = episode
+
+    def _compute_global_structural_metrics(self, data) -> Dict[str, float]:
+        """
+        Compute global structural metrics for hub detection
+        Returns normalized metrics where higher values indicate more hub-like structure
+        """
+        try:
+            # Check cache first
+            current_hash = self._get_graph_hash(data)
+            if (self._cached_global_metrics is not None and
+                    self._global_metrics_hash == current_hash):
+                return self._cached_global_metrics
+
+            # Convert to NetworkX
+            G = to_networkx(data, to_undirected=False)
+
+            if len(G.nodes()) < 3:
+                # Not enough nodes for meaningful global metrics
+                metrics = {
+                    'gini_coefficient': 0.0,
+                    'degree_centralization': 0.0,
+                    'betweenness_centralization': 0.0
+                }
+            else:
+                # Compute degree sequence
+                degrees = [G.degree(node) for node in G.nodes()]
+
+                # 1. Gini coefficient on degree distribution
+                gini = GlobalGraphMetrics.compute_gini_coefficient(degrees)
+
+                # 2. Degree centralization
+                degree_cent = GlobalGraphMetrics.compute_degree_centralization(G)
+
+                # 3. Betweenness centralization
+                betweenness_cent = GlobalGraphMetrics.compute_betweenness_centralization(G)
+
+                metrics = {
+                    'gini_coefficient': gini,
+                    'degree_centralization': degree_cent,
+                    'betweenness_centralization': betweenness_cent
+                }
+
+            # Cache the results
+            self._cached_global_metrics = metrics
+            self._global_metrics_hash = current_hash
+
+            return metrics
+
+        except Exception as e:
+            logger.warning(f"Global metrics computation failed: {e}")
+            return {
+                'gini_coefficient': 0.0,
+                'degree_centralization': 0.0,
+                'betweenness_centralization': 0.0
+            }
+
+    def _get_discriminator_score(self) -> float:
+        """
+        Get discriminator-based hub score (existing implementation separated)
+        Returns value in [0,1] where 1 = more hub-like/smelly
+        """
+        try:
+            self._ensure_data_consistency(self.current_data)
+
+            with torch.no_grad():
+                self.discriminator.eval()
+                disc_out = self.discriminator(self.current_data)
+
+                if disc_out is None or 'logits' not in disc_out:
+                    return 0.5  # Neutral fallback
+
+                logits = disc_out['logits']
+                if logits.dim() == 0 or logits.size(0) == 0:
+                    return 0.5
+
+                # Get probability of being "smelly" (hub-like)
+                probs = F.softmax(logits, dim=1)
+                if probs.size(1) < 2:
+                    return 0.5
+
+                score = probs[0, 1].item()
+
+            # Validate score
+            if not (0.0 <= score <= 1.0) or math.isnan(score):
+                score = 0.5
+
+            return score
+
+        except Exception as e:
+            logger.debug(f"Discriminator score computation failed: {e}")
+            return 0.5
+
+    def get_hub_score_breakdown(self) -> Dict[str, any]:
+        """
+        Get detailed breakdown of hub score components for analysis
+        Useful for debugging and understanding model behavior
+        """
+        return {
+            'component_scores': self.last_component_scores.copy(),
+            'current_episode': self.current_episode,
+            'training_phase': self.weight_scheduler.get_phase_name(self.current_episode),
+            'current_weights': self.weight_scheduler.get_weights(self.current_episode)
+        }
+
+    def log_hub_score_analysis(self, detailed: bool = False) -> str:
+        """
+        Generate formatted logging string for hub score analysis
+        """
+        breakdown = self.get_hub_score_breakdown()
+        components = breakdown['component_scores']
+
+        if not components:
+            return "Hub score breakdown not available"
+
+        log_lines = []
+        log_lines.append(f"🎯 HUB SCORE ANALYSIS (Episode {self.current_episode}):")
+        log_lines.append(f"   Training Phase: {breakdown['training_phase']}")
+        log_lines.append(f"   Final Composite Score: {components.get('composite', 0.0):.4f}")
+
+        if detailed:
+            weights = components.get('weights_used', {})
+            log_lines.append("   📊 Component Breakdown:")
+            log_lines.append(
+                f"      Gini Coefficient: {components.get('gini', 0.0):.3f} × {weights.get('gini_weight', 0.0):.2f} = {components.get('gini', 0.0) * weights.get('gini_weight', 0.0):.3f}")
+            log_lines.append(
+                f"      Degree Centralization: {components.get('degree_centralization', 0.0):.3f} × {weights.get('degree_centralization_weight', 0.0):.2f} = {components.get('degree_centralization', 0.0) * weights.get('degree_centralization_weight', 0.0):.3f}")
+            log_lines.append(
+                f"      Betweenness Centralization: {components.get('betweenness_centralization', 0.0):.3f} × {weights.get('betweenness_centralization_weight', 0.0):.2f} = {components.get('betweenness_centralization', 0.0) * weights.get('betweenness_centralization_weight', 0.0):.3f}")
+            log_lines.append(
+                f"      Discriminator Score: {components.get('discriminator', 0.0):.3f} × {weights.get('discriminator_weight', 0.0):.2f} = {components.get('discriminator', 0.0) * weights.get('discriminator_weight', 0.0):.3f}")
+        else:
+            log_lines.append(
+                f"   Components: G={components.get('gini', 0.0):.2f}, DC={components.get('degree_centralization', 0.0):.2f}, BC={components.get('betweenness_centralization', 0.0):.2f}, D={components.get('discriminator', 0.0):.2f}")
+
+        return "\n".join(log_lines)
+
+    def invalidate_global_cache(self):
+        """Invalidate global metrics cache when graph changes"""
+        self._cached_global_metrics = None
+        self._global_metrics_hash = None
+        # Also invalidate hub score cache
+        self._cached_hub_score = None
+        self._graph_hash = None
+
+    # 4. SOSTITUISCI IL METODO _get_current_hub_score ESISTENTE CON QUESTO:
+
 
 
 # Funzioni di utilità per configurare il logging

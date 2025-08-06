@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric.data.data
-from torch import nn
+from torch import nn, device
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Batch, Data
@@ -35,6 +35,8 @@ from hyperparameters_configuration import get_improved_config, print_config_summ
 from policy_network import HubRefactoringPolicy
 from rl_gym import HubRefactoringEnv
 from training_logger import setup_optimized_logging, create_progress_tracker, AdvancedDiscriminatorMonitor
+from global_graph_metrics import GlobalGraphMetrics, AdaptiveWeightScheduler
+
 
 
 @dataclass
@@ -891,6 +893,7 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
 
             # Create environment with config-based max_steps
             env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
+            env.set_current_episode(0)
             # Store reference to environment manager for dynamic resets
             env.env_manager = env_manager
             envs.append(env)
@@ -979,6 +982,8 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
             'step_infos': [],
             'episode_metrics': episode_step_metrics
         }
+
+    enhanced_hub_metrics = []
 
     for step in range(steps_per_env):
         # Ensure all states are on correct device
@@ -1173,6 +1178,18 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                     except Exception:
                         pass
 
+                if step % 5 == 0:  # Every 5th step to avoid overhead
+                    try:
+                        breakdown = env.get_hub_score_breakdown()
+                        enhanced_hub_metrics.append({
+                            'env_id': i,
+                            'step': step,
+                            'episode': env.current_episode,
+                            'breakdown': breakdown
+                        })
+                    except Exception:
+                        pass
+
             except Exception as e:
                 # Create fallback info even for errors
                 error_info = {
@@ -1237,14 +1254,73 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         'actions': all_actions,
         'rewards': all_rewards,
         'dones': all_dones,
-        'log_probs': torch.stack(all_log_probs),
+        'log_probs': torch.stack(all_log_probs) if all_log_probs else torch.tensor([], device=device),
         'values': all_values,
         'step_infos': all_step_infos,
         'hub_improvements': all_hub_improvements,
         'hub_scores': all_hub_scores,
-        'episode_metrics': episode_step_metrics
+        'episode_metrics': episode_step_metrics,
+        'enhanced_hub_metrics': enhanced_hub_metrics  # NEW
     }
 
+
+def analyze_enhanced_hub_score_trends(envs: List[HubRefactoringEnv], episode: int, logger) -> Dict[str, Any]:
+    """
+    Analyze trends in enhanced hub score components across environments
+    """
+    try:
+        all_breakdowns = []
+        phase_distribution = {}
+
+        for env in envs:
+            try:
+                breakdown = env.get_hub_score_breakdown()
+                if breakdown and 'component_scores' in breakdown:
+                    all_breakdowns.append(breakdown)
+
+                    phase = breakdown.get('training_phase', 'unknown')
+                    phase_distribution[phase] = phase_distribution.get(phase, 0) + 1
+
+            except Exception:
+                continue
+
+        if not all_breakdowns:
+            return {'status': 'no_data'}
+
+        # Calculate averages across environments
+        avg_components = {}
+        component_keys = ['gini', 'degree_centralization', 'betweenness_centralization', 'discriminator', 'composite']
+
+        for key in component_keys:
+            values = []
+            for breakdown in all_breakdowns:
+                components = breakdown.get('component_scores', {})
+                if key in components:
+                    values.append(components[key])
+
+            if values:
+                avg_components[f'avg_{key}'] = sum(values) / len(values)
+                avg_components[f'std_{key}'] = np.std(values) if len(values) > 1 else 0.0
+
+        # Get current weights (should be same across all environments)
+        current_weights = all_breakdowns[0].get('current_weights', {})
+
+        analysis = {
+            'status': 'success',
+            'episode': episode,
+            'num_environments': len(all_breakdowns),
+            'phase_distribution': phase_distribution,
+            'average_components': avg_components,
+            'current_weights': current_weights,
+            'dominant_phase': max(phase_distribution.items(), key=lambda x: x[1])[
+                0] if phase_distribution else 'unknown'
+        }
+
+        return analysis
+
+    except Exception as e:
+        logger.log_warning(f"Enhanced hub score trend analysis failed: {e}")
+        return {'status': 'error', 'error': str(e)}
 
 def setup_gpu_environment(logger):
     """Setup optimal GPU environment"""
@@ -1462,6 +1538,9 @@ def main():
     for episode in range(num_episodes):
         episode_start_time = time.time()
 
+        for env in envs:
+            env.set_current_episode(episode)
+
         # === DISCRIMINATOR MONITORING PHASE ===
 
         # Regular discriminator validation
@@ -1522,6 +1601,14 @@ def main():
         # Extract metrics directly from step-level data
         episode_reward = np.mean(rollout_data['rewards'])
         metrics_history['episode_rewards'].append(episode_reward)
+
+        if episode % 100 == 0 and episode > 0:  # Log every 100 episodes
+            for i, env in enumerate(envs):
+                try:
+                    analysis = env.log_hub_score_analysis(detailed=True)
+                    logger.log_info(f"🎯 Environment {i} Hub Score Analysis:\n{analysis}")
+                except Exception as e:
+                    logger.log_warning(f"Failed to log hub score analysis for env {i}: {e}")
 
         # Get step-level metrics
         step_infos = rollout_data.get('step_infos', [])
@@ -1662,6 +1749,33 @@ def main():
             'best_reward_so_far': best_episode_reward
         })
 
+        if episode % 50 == 0 and episode > 0:  # Every 50 episodes
+            try:
+                # Get breakdown from first environment as representative
+                breakdown = envs[0].get_hub_score_breakdown()
+                components = breakdown['component_scores']
+
+                if components:
+                    tb_logger.log_training_metrics(episode, {
+                        'hub_score_gini': components.get('gini', 0.0),
+                        'hub_score_degree_cent': components.get('degree_centralization', 0.0),
+                        'hub_score_betweenness_cent': components.get('betweenness_centralization', 0.0),
+                        'hub_score_discriminator': components.get('discriminator', 0.0),
+                        'hub_score_composite': components.get('composite', 0.0)
+                    })
+
+                    # Log current weights
+                    weights = breakdown['current_weights']
+                    tb_logger.log_training_metrics(episode, {
+                        'weight_gini': weights.get('gini_weight', 0.0),
+                        'weight_degree_cent': weights.get('degree_centralization_weight', 0.0),
+                        'weight_betweenness_cent': weights.get('betweenness_centralization_weight', 0.0),
+                        'weight_discriminator': weights.get('discriminator_weight', 0.0)
+                    })
+
+            except Exception as e:
+                logger.log_warning(f"Failed to log enhanced hub score metrics: {e}")
+
         # Log discriminator monitoring metrics
         monitoring_summary = discriminator_monitor.get_monitoring_summary()
         if episode % 25 == 0:
@@ -1678,11 +1792,47 @@ def main():
         # === MILESTONE SUMMARIES ===
         logger.log_milestone_summary(episode, metrics_history)
 
+        if episode % 250 == 0 and episode > 0:
+            try:
+                trend_analysis = analyze_enhanced_hub_score_trends(envs, episode, logger)
+
+                if trend_analysis['status'] == 'success':
+                    logger.log_info("📈 ENHANCED HUB SCORE TREND ANALYSIS:")
+                    logger.log_info(f"   Episode: {episode}")
+                    logger.log_info(f"   Dominant Phase: {trend_analysis['dominant_phase']}")
+                    logger.log_info(f"   Environments Analyzed: {trend_analysis['num_environments']}")
+
+                    avg_comps = trend_analysis['average_components']
+                    logger.log_info("   📊 Average Component Scores:")
+                    logger.log_info(
+                        f"      Gini: {avg_comps.get('avg_gini', 0.0):.3f} ± {avg_comps.get('std_gini', 0.0):.3f}")
+                    logger.log_info(
+                        f"      Degree Centralization: {avg_comps.get('avg_degree_centralization', 0.0):.3f} ± {avg_comps.get('std_degree_centralization', 0.0):.3f}")
+                    logger.log_info(
+                        f"      Betweenness Centralization: {avg_comps.get('avg_betweenness_centralization', 0.0):.3f} ± {avg_comps.get('std_betweenness_centralization', 0.0):.3f}")
+                    logger.log_info(
+                        f"      Discriminator: {avg_comps.get('avg_discriminator', 0.0):.3f} ± {avg_comps.get('std_discriminator', 0.0):.3f}")
+                    logger.log_info(
+                        f"      Composite: {avg_comps.get('avg_composite', 0.0):.3f} ± {avg_comps.get('std_composite', 0.0):.3f}")
+
+                    current_weights = trend_analysis['current_weights']
+                    logger.log_info("   ⚖️  Current Weights:")
+                    logger.log_info(f"      Gini: {current_weights.get('gini_weight', 0.0):.2f}")
+                    logger.log_info(
+                        f"      Degree Cent: {current_weights.get('degree_centralization_weight', 0.0):.2f}")
+                    logger.log_info(
+                        f"      Betweenness Cent: {current_weights.get('betweenness_centralization_weight', 0.0):.2f}")
+                    logger.log_info(f"      Discriminator: {current_weights.get('discriminator_weight', 0.0):.2f}")
+
+            except Exception as e:
+                logger.log_warning(f"Failed to perform trend analysis: {e}")
+
         # === CHECKPOINT SAVING ===
         if episode % 500 == 0 and episode > 0:
             try:
                 # Include discriminator monitoring data
                 discriminator_stats = discriminator_monitor.get_monitoring_summary()
+                final_enhanced_analysis = analyze_enhanced_hub_score_trends(envs, num_episodes, logger)
 
                 checkpoint = {
                     'episode': episode,
@@ -1716,6 +1866,16 @@ def main():
                         'optimization': opt_config.__dict__,
                         'discriminator': disc_config.__dict__,
                         'environment': env_config.__dict__
+                    },
+                    'enhanced_hub_score_analysis': {
+                        'final_trend_analysis': final_enhanced_analysis,
+                        'sample_environment_breakdown': envs[0].get_hub_score_breakdown() if envs else None,
+                        'weight_evolution_summary': {
+                            'early_weights': AdaptiveWeightScheduler().weight_configs['early'],
+                            'mid_weights': AdaptiveWeightScheduler().weight_configs['mid'],
+                            'late_weights': AdaptiveWeightScheduler().weight_configs['late'],
+                            'final_phase': AdaptiveWeightScheduler().get_phase_name(episode)
+                        }
                     }
                 }
 
