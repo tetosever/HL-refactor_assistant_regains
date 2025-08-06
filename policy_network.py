@@ -233,6 +233,13 @@ class HubRefactoringPolicy(nn.Module):
 
         self._init_weights()
 
+        self.value_head = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1)
+        )
+
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -312,7 +319,10 @@ class HubRefactoringPolicy(nn.Module):
         term_logits = self.termination_head(graph_features)
         term_probs = F.softmax(term_logits, dim=-1)
 
+        value = self.value_head(graph_features)
+
         return {
+            'value': value,
             'hub_logits': hub_logits,
             'hub_probs': hub_probs,
             'pattern_logits': pattern_logits,

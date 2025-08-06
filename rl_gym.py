@@ -239,15 +239,32 @@ class HubRefactoringEnv:
             logger.debug("Environment initialized with Hub-Focused patterns")
 
     def _ensure_data_consistency(self, data: Data) -> Data:
-        """Ensure batch and edge_attr consistency"""
+        """Ensure batch and edge_attr consistency CORRETTO"""
         num_nodes = data.x.size(0)
         num_edges = data.edge_index.size(1)
 
+        # Batch consistency
         if not hasattr(data, 'batch') or data.batch is None or data.batch.size(0) != num_nodes:
             data.batch = torch.zeros(num_nodes, dtype=torch.long, device=data.x.device)
 
-        if not hasattr(data, 'edge_attr') or data.edge_attr is None or data.edge_attr.size(0) != num_edges:
+        # ✅ CORRETTO: Edge attr consistency con preservazione semantica
+        if not hasattr(data, 'edge_attr') or data.edge_attr is None:
             data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
+        elif data.edge_attr.size(0) != num_edges:
+            if num_edges > 0:
+                # ✅ MIGLIORATO: preserva valori esistenti quando possibile
+                if data.edge_attr.size(0) > 0:
+                    # Ripeti gli attributi esistenti se necessario
+                    if num_edges > data.edge_attr.size(0):
+                        repeat_count = (num_edges // data.edge_attr.size(0)) + 1
+                        expanded_attr = data.edge_attr.repeat(repeat_count, 1)
+                        data.edge_attr = expanded_attr[:num_edges]
+                    else:
+                        data.edge_attr = data.edge_attr[:num_edges]
+                else:
+                    data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
+            else:
+                data.edge_attr = torch.empty(0, 1, dtype=torch.float32, device=data.x.device)
 
         return data
 
@@ -414,9 +431,6 @@ class HubRefactoringEnv:
                 elif hub_improvement > 0.01:
                     reward += self.REWARD_SMALL_IMPROVEMENT * hub_improvement * self.improvement_multiplier
                     info['reward_type'] = 'small_improvement'
-                elif hub_improvement > -0.02:
-                    reward += 0.1
-                    info['reward_type'] = 'neutral'
                 else:
                     reward += self.REWARD_FAILURE * abs(hub_improvement)
                     info['reward_type'] = 'worse'
@@ -427,13 +441,13 @@ class HubRefactoringEnv:
 
                 # BONUS REWARDS
                 if new_hub_score < self.HUB_SCORE_EXCELLENT:
-                    reward += 5.0
+                    reward += 1.0
                     info['score_bonus'] = 'excellent'
                 elif new_hub_score < self.HUB_SCORE_GOOD:
-                    reward += 2.0
+                    reward += 0.5
                     info['score_bonus'] = 'good'
                 elif new_hub_score < self.HUB_SCORE_ACCEPTABLE:
-                    reward += 0.5
+                    reward += 0.2
                     info['score_bonus'] = 'acceptable'
 
                 # Record action

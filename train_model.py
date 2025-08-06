@@ -292,13 +292,12 @@ class PPOTrainer:
 
     def compute_gae(self, rewards: List[float], values: List[float],
                     dones: List[bool]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute Generalized Advantage Estimation - GPU optimized"""
+
         if not rewards:
             return torch.tensor([], device=self.device), torch.tensor([], device=self.device)
 
         advantages = []
         returns = []
-
         gae = 0
         next_value = 0
 
@@ -531,77 +530,141 @@ class PPOTrainer:
     def update_policy(self, states: List[Data], actions: List[Any],
                       old_log_probs: torch.Tensor, advantages: torch.Tensor,
                       returns: torch.Tensor):
-        """Policy update with centralized configuration"""
+        """Policy update with centralized configuration and real critic update"""
 
         epochs = self.opt_config.policy_epochs
-
         if len(states) == 0:
             return
 
-        policy_losses = []
-        entropy_losses = []
-        kl_divergences = []
+        policy_losses, entropy_losses, value_losses, kl_divs = [], [], [], []
 
         for epoch in range(epochs):
-            # Shuffle data for better training
+            # shuffle indices
             indices = torch.randperm(len(states), device=self.device)
             batch_size = min(24, len(states))
 
             for start in range(0, len(states), batch_size):
-                end = min(start + batch_size, len(states))
-                batch_indices = indices[start:end].cpu().numpy()
+                end = start + batch_size
+                batch_idx = indices[start:end].cpu().numpy()
 
-                # Create batch
-                batch_states = [states[i] for i in batch_indices]
-                batch_actions = [actions[i] for i in batch_indices]
-                batch_old_log_probs = old_log_probs[batch_indices]
-                batch_advantages = advantages[batch_indices]
+                # batch states/actions
+                batch_states = [states[i] for i in batch_idx]
+                batch_actions = [actions[i] for i in batch_idx]
+                batch_old_logp = old_log_probs[batch_idx]
+                batch_adv = advantages[batch_idx]
+                batch_ret = returns[batch_idx]
 
-                # Compute losses
-                loss_info = self.compute_policy_loss(batch_states, batch_actions,
-                                                     batch_old_log_probs, batch_advantages)
+                # compute losses
+                out = self.policy(Batch.from_data_list(batch_states).to(self.device))
 
-                # Total loss with config weights
-                total_loss = (loss_info['policy_loss'] +
-                              self.value_coef * 0 +
-                              -self.entropy_coef * loss_info['entropy'])
+                # --- policy loss + entropy ---
+                logp, ent = self._compute_logp_and_entropy(out, batch_actions)
+                ratio = torch.exp(logp - batch_old_logp)
+                surr1 = ratio * batch_adv
+                surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * batch_adv
+                policy_loss = -torch.min(surr1, surr2).mean()
 
-                # Backward pass with gradient clipping
+                # --- value loss (MSE) ---
+                value_preds = out['value'].squeeze()
+                value_loss = F.mse_loss(value_preds, batch_ret)
+
+                # --- total loss ---
+                total_loss = (
+                        policy_loss
+                        + self.value_coef * value_loss
+                        - self.entropy_coef * ent.mean()
+                )
+
+                # backward & step
                 self.opt_policy.zero_grad()
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.opt_policy.step()
 
-                # Store metrics
-                policy_losses.append(loss_info['policy_loss'].item())
-                entropy_losses.append(loss_info['entropy'].item())
-                kl_divergences.append(loss_info['approx_kl'].item())
-
-                # Early stopping on large KL divergence
-                if loss_info['approx_kl'] > 0.02:
-                    break
-
-        # Store average metrics
-        if policy_losses:
-            avg_policy_loss = np.mean(policy_losses)
-            avg_entropy = np.mean(entropy_losses)
-            avg_kl = np.mean(kl_divergences)
-
-            self.policy_losses.append(avg_policy_loss)
-            self.policy_metrics.append({
-                'policy_loss': avg_policy_loss,
-                'entropy': avg_entropy,
-                'kl_divergence': avg_kl,
-                'update_count': self.update_count
-            })
-
-        self.update_count += 1
+                # record
+                policy_losses.append(policy_loss.item())
+                entropy_losses.append(ent.mean().item())
+                value_losses.append(value_loss.item())
+                with torch.no_grad():
+                    kl_divs.append((batch_old_logp - logp).mean().item())
 
         self.policy_scheduler.step()
+
+        # aggregate metrics
+        self.policy_losses.append(np.mean(policy_losses))
+        self.policy_metrics.append({
+            'policy_loss': np.mean(policy_losses),
+            'value_loss': np.mean(value_losses),
+            'entropy': np.mean(entropy_losses),
+            'kl_divergence': np.mean(kl_divs)
+        })
+        self.update_count += 1
 
         # GPU memory cleanup
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
+
+    def _compute_logp_and_entropy(self, policy_out: Dict, actions: List) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Compute log probabilities and entropy for actions"""
+        log_probs = []
+        entropies = []
+
+        # Get output dimensions
+        num_nodes = policy_out['hub_probs'].size(0)
+
+        for i, action in enumerate(actions):
+            try:
+                # Hub selection log prob
+                if i < policy_out['hub_probs'].size(0):
+                    hub_probs = policy_out['hub_probs'][i:i + 1] + 1e-8
+                    hub_probs = hub_probs / hub_probs.sum()
+                    hub_dist = Categorical(hub_probs)
+
+                    hub_action = min(action.source_node, hub_probs.size(0) - 1)
+                    log_prob_hub = hub_dist.log_prob(torch.tensor(hub_action, device=self.device))
+                    entropy_hub = hub_dist.entropy()
+                else:
+                    log_prob_hub = torch.tensor(-5.0, device=self.device)
+                    entropy_hub = torch.tensor(0.1, device=self.device)
+
+                # Pattern selection log prob
+                if i < policy_out['pattern_probs'].size(0):
+                    pattern_probs = policy_out['pattern_probs'][i] + 1e-8
+                    pattern_probs = pattern_probs / pattern_probs.sum()
+                    pattern_dist = Categorical(pattern_probs)
+
+                    pattern_action = min(action.pattern, pattern_probs.size(0) - 1)
+                    log_prob_pattern = pattern_dist.log_prob(torch.tensor(pattern_action, device=self.device))
+                    entropy_pattern = pattern_dist.entropy()
+                else:
+                    log_prob_pattern = torch.tensor(-2.0, device=self.device)
+                    entropy_pattern = torch.tensor(0.1, device=self.device)
+
+                # Termination log prob
+                if i < policy_out['term_probs'].size(0):
+                    term_probs = policy_out['term_probs'][i] + 1e-8
+                    term_probs = term_probs / term_probs.sum()
+                    term_dist = Categorical(term_probs)
+
+                    term_action = int(action.terminate)
+                    log_prob_term = term_dist.log_prob(torch.tensor(term_action, device=self.device))
+                    entropy_term = term_dist.entropy()
+                else:
+                    log_prob_term = torch.tensor(-1.0, device=self.device)
+                    entropy_term = torch.tensor(0.1, device=self.device)
+
+                # Combine
+                total_log_prob = log_prob_hub + log_prob_pattern + log_prob_term
+                total_entropy = entropy_hub + entropy_pattern + entropy_term
+
+                log_probs.append(total_log_prob)
+                entropies.append(total_entropy)
+
+            except Exception as e:
+                log_probs.append(torch.tensor(-5.0, device=self.device))
+                entropies.append(torch.tensor(0.1, device=self.device))
+
+        return torch.stack(log_probs), torch.stack(entropies)
 
     def compute_policy_loss(self, states: List[Data], actions: List[Any],
                             old_log_probs: torch.Tensor, advantages: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -908,8 +971,8 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
     return envs
 
 
-def enhanced_reset_environment(env: HubRefactoringEnv) -> Data:
-    """Enhanced reset that picks new graph from pool"""
+def enhanced_reset_environment(env: HubRefactoringEnv) -> Optional[Data]:
+    """Enhanced reset CORRETTO con gestione errori robusta"""
     try:
         if hasattr(env, 'env_manager'):
             # Get new diverse graph
@@ -924,14 +987,29 @@ def enhanced_reset_environment(env: HubRefactoringEnv) -> Data:
             env._graph_hash = None
 
             # Reset with new graph
-            return env.reset()
+            reset_state = env.reset()
+
+            # ✅ VALIDAZIONE: verifica che il reset sia valido
+            if reset_state is not None and hasattr(reset_state, 'x') and reset_state.x.size(0) > 0:
+                return reset_state
+            else:
+                raise ValueError("Reset produced invalid state")
         else:
             # Fallback to original reset
+            reset_state = env.reset()
+            if reset_state is not None and hasattr(reset_state, 'x') and reset_state.x.size(0) > 0:
+                return reset_state
+            else:
+                raise ValueError("Fallback reset produced invalid state")
+
+    except Exception as e:
+        if hasattr(env, 'logger'):
+            env.logger.log_warning(f"Environment reset failed: {e}")
+
+        try:
             return env.reset()
-
-    except Exception:
-        return env.reset()
-
+        except:
+            return None
 
 def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                      training_config, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
@@ -1009,27 +1087,31 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         with torch.no_grad():
             try:
                 policy_out = policy(batch_data)
-                values = []
-                for state in states_on_device:
-                    # Use discriminator for value estimation
-                    pred = None
-                    for env in valid_envs:
-                        try:
-                            pred = env.discriminator.eval()
-                            with torch.no_grad():
-                                output = env.discriminator(state)
-                                if output and 'logits' in output:
-                                    probs = F.softmax(output['logits'], dim=1)
-                                    pred = probs[0, 1].item()
-                                    break
-                        except:
-                            continue
 
-                    value = 1.0 - pred if pred is not None else 0.5
-                    values.append(value)
-                values = torch.tensor(values, device=device)
+                # FIX: Gestione corretta del value network
+                if 'value' in policy_out:
+                    values = policy_out['value'].squeeze(-1)
+                else:
+                    # Fallback usando discriminator
+                    values = []
+                    for state in states_on_device:
+                        pred = None
+                        for env in valid_envs:
+                            try:
+                                with torch.no_grad():
+                                    output = env.discriminator(state)
+                                    if output and 'logits' in output:
+                                        probs = F.softmax(output['logits'], dim=1)
+                                        pred = 1.0 - probs[0, 1].item()  # Inverted for value
+                                        break
+                            except:
+                                continue
+
+                        value = pred if pred is not None else 0.5
+                        values.append(value)
+                    values = torch.tensor(values, device=device)
             except Exception:
-                break
+                values = torch.zeros(len(states_on_device), device=device)
 
         # Sample actions
         actions = []
@@ -1113,6 +1195,8 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 state, reward, done, info = env.step(
                     (action.source_node, action.target_node, action.pattern, action.terminate)
                 )
+
+                env.current_data = state
 
                 if state.x.device != device:
                     state = state.to(device)
@@ -1474,32 +1558,32 @@ def main():
         # Regular discriminator validation
         if discriminator_monitor.should_validate(episode):
             logger.log_info(f"🔍 Validating discriminator at episode {episode}")
-
-            # Detailed validation every N episodes
             detailed = (episode % discriminator_monitor.detailed_validation_frequency == 0) and episode > 0
             validation_results = discriminator_monitor.validate_performance(episode, detailed=detailed)
-
-            # Check for degradation and handle if necessary
             rollback_occurred = discriminator_monitor.check_and_handle_degradation(episode)
 
             if rollback_occurred:
                 logger.log_warning(f"🔄 Discriminator rollback occurred - resetting environments")
-                # Reset all environments after rollback
+                valid_envs = []
                 for env in envs:
                     try:
-                        enhanced_reset_environment(env)
-                    except Exception:
-                        pass
+                        reset_state = enhanced_reset_environment(env)
+                        if reset_state is not None:
+                            valid_envs.append(env)
+                    except Exception as e:
+                        logger.log_warning(f"Failed to reset environment: {e}")
+                envs = valid_envs  # ✅ Usa solo environments validi
 
-            # Update best model backup if performance improved
             discriminator_monitor.update_best_model(episode)
-
-            # Log discriminator status to TensorBoard
             tb_logger.log_discriminator_metrics(episode, validation_results)
 
         # Get updated adaptive parameters
         adaptive_params = discriminator_monitor.get_adaptive_training_params()
         current_disc_update_freq = adaptive_params['update_frequency']
+
+        if adaptive_params['discriminator_lr'] != trainer.opt_disc.param_groups[0]['lr']:
+            trainer.update_discriminator_lr(adaptive_params['discriminator_lr'])
+            logger.log_info(f"🔧 Updated discriminator LR to {adaptive_params['discriminator_lr']:.2e}")
 
         # Environment refresh
         if episode % environment_refresh_frequency == 0 and episode > 0:
@@ -1574,40 +1658,38 @@ def main():
 
         # === POLICY UPDATES ===
         if episode % update_frequency == 0 and len(rollout_data['states']) >= 16:
-
-            # Compute GAE advantages
+            # ✅ CORRETTO: GAE con tensor conversion
             advantages, returns = trainer.compute_gae(
-                rollout_data['rewards'],
-                rollout_data['values'],
-                rollout_data['dones']
+                rollout_data['rewards'],  # List[float]
+                rollout_data['values'],  # List[float]
+                rollout_data['dones']  # List[bool]
             )
 
-            # Update policy
-            trainer.update_policy(
-                rollout_data['states'],
-                rollout_data['actions'],
-                rollout_data['log_probs'],
-                advantages,
-                returns
-            )
+            # ✅ VALIDAZIONE: controlla che abbiamo dati validi
+            if advantages.numel() > 0 and returns.numel() > 0:
+                trainer.update_policy(
+                    rollout_data['states'],
+                    rollout_data['actions'],
+                    rollout_data['log_probs'],
+                    advantages,
+                    returns
+                )
 
-            # Log training metrics
-            training_metrics = trainer.get_latest_metrics()
-            logger.log_training_update(trainer.update_count, training_metrics)
+                training_metrics = trainer.get_latest_metrics()
+                logger.log_training_update(trainer.update_count, training_metrics)
 
-            # Log policy metrics to TensorBoard
-            if training_metrics:
-                for key, value in training_metrics.items():
-                    if 'policy' in key:
-                        tb_logger.log_policy_metrics(trainer.update_count, {key.replace('policy_', ''): value})
+                if training_metrics:
+                    for key, value in training_metrics.items():
+                        if 'policy' in key:
+                            tb_logger.log_policy_metrics(trainer.update_count, {key.replace('policy_', ''): value})
+            else:
+                logger.log_warning(f"⚠️  Skipping policy update - insufficient valid data")
 
         # === DISCRIMINATOR UPDATES (with adaptive frequency) ===
         if episode % current_disc_update_freq == 0 and episode > 100:
-            # Skip if discriminator is critically degraded
             if not adaptive_params['should_skip_update']:
                 try:
-                    logger.log_info(
-                        f"🧠 Updating discriminator at episode {episode} (adaptive frequency: {current_disc_update_freq})")
+                    logger.log_info(f"🧠 Updating discriminator at episode {episode} (freq: {current_disc_update_freq})")
 
                     smelly_samples, labels = data_loader.load_dataset(
                         max_samples_per_class=disc_config.max_samples_per_class,
@@ -1653,9 +1735,22 @@ def main():
                                 if 'discriminator' in key:
                                     tb_logger.log_discriminator_metrics(episode,
                                                                         {key.replace('discriminator_', ''): value})
+                    else:
+                        logger.log_warning(f"⚠️  Insufficient samples for discriminator update")
 
                 except Exception as e:
                     logger.log_warning(f"Discriminator update failed at episode {episode}: {e}")
+
+                    # Recovery: reset discriminator a stato precedente se disponibile
+                    if hasattr(discriminator_monitor,
+                               'best_model_state') and discriminator_monitor.best_model_state is not None:
+                        logger.log_info("🔄 Attempting discriminator recovery from best state")
+                        try:
+                            trainer.discriminator.load_state_dict(discriminator_monitor.best_model_state)
+                            discriminator_monitor.emergency_interventions += 1
+                            logger.log_info("✅ Discriminator recovery successful")
+                        except Exception as recovery_error:
+                            logger.log_error(f"❌ Recovery failed: {recovery_error}")
             else:
                 logger.log_warning(f"⚠️  Skipping discriminator update due to critical performance")
 
@@ -1688,7 +1783,7 @@ def main():
         # === CHECKPOINT SAVING ===
         if episode % 500 == 0 and episode > 0:
             try:
-                # Include discriminator monitoring data
+                # ✅ AGGIUNTO: Salva stato discriminator completo
                 discriminator_stats = discriminator_monitor.get_monitoring_summary()
 
                 checkpoint = {
@@ -1713,9 +1808,13 @@ def main():
                     'discriminator_monitoring': {
                         'performance_state': discriminator_monitor.perf_state.get_status_summary(),
                         'monitoring_stats': discriminator_stats['monitoring_stats'],
-                        'validation_history': discriminator_monitor.validation_history[-20:],  # Last 20 validations
+                        'validation_history': discriminator_monitor.validation_history[-20:],
                         'adaptive_params': adaptive_params,
-                        'baseline_performance': discriminator_monitor.perf_state.baseline_accuracy
+                        'baseline_performance': discriminator_monitor.perf_state.baseline_accuracy,
+                        # ✅ AGGIUNTO: stato per recovery
+                        'best_model_available': discriminator_monitor.best_model_state is not None,
+                        'emergency_interventions': discriminator_monitor.emergency_interventions,
+                        'rollback_count': discriminator_monitor.rollback_count
                     },
                     'centralized_config_used': {
                         'rewards': reward_config.__dict__,
@@ -1736,7 +1835,6 @@ def main():
                 }
                 logger.log_checkpoint_save(episode, checkpoint_path, performance)
 
-                # Log discriminator checkpoint info
                 logger.log_info(
                     f"🧠 Discriminator state - Acc: {discriminator_monitor.perf_state.current_accuracy:.3f}, "
                     f"Interventions: {discriminator_monitor.emergency_interventions}, "
