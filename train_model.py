@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Enhanced GCPN Training Script with Comprehensive Discriminator Monitoring
-VERSIONE AVANZATA con controllo completo del discriminatore durante training adversariale
+Enhanced GCPN Training Script with Hub-Centric Reward System
+VERSIONE HUB-CENTRIC con sistema di reward semplificato basato solo su hub improvement
 
 Key Features:
+- Hub-centric reward system (eliminato sistema complesso precedente)
 - Comprehensive discriminator performance monitoring
 - Adaptive discriminator training frequency based on performance
 - Early stopping and rollback mechanisms for discriminator degradation
@@ -31,12 +32,11 @@ from torch_geometric.data import Batch, Data
 # Import modules
 from data_loader import create_unified_loader, validate_dataset_consistency, UnifiedDataLoader
 from discriminator import HubDetectionDiscriminator
-from hyperparameters_configuration import get_improved_config, print_config_summary
+from hyperparameters_configuration import get_hub_centric_config, print_config_summary
 from policy_network import HubRefactoringPolicy
 from rl_gym import HubRefactoringEnv
 from training_logger import setup_optimized_logging, create_progress_tracker, AdvancedDiscriminatorMonitor
 from global_graph_metrics import GlobalGraphMetrics, AdaptiveWeightScheduler
-
 
 
 @dataclass
@@ -47,6 +47,7 @@ class RefactoringAction:
     pattern: int
     terminate: bool
     confidence: float = 0.0
+
 
 class EnhancedEnvironmentManager:
     """Manages diverse graph pools for better exploration"""
@@ -94,7 +95,7 @@ class EnhancedEnvironmentManager:
         if len(candidates) <= target_size:
             return candidates
 
-        env_config = get_improved_config()['environment']
+        env_config = get_hub_centric_config()['environment']
 
         # Filter by size range
         size_filtered = [
@@ -210,7 +211,7 @@ class TensorBoardLogger:
 
 
 class PPOTrainer:
-    """PPO trainer with centralized hyperparameter configuration and discriminator monitoring"""
+    """PPO trainer with hub-centric reward system and discriminator monitoring"""
 
     def __init__(self, policy: nn.Module, discriminator: nn.Module, discriminator_monitor: AdvancedDiscriminatorMonitor,
                  opt_config, disc_config, lr_config, device: torch.device = torch.device('cpu')):
@@ -888,7 +889,7 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device, logger
 def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager,
                                          discriminator: nn.Module, training_config,
                                          device: torch.device = torch.device('cpu')) -> List[HubRefactoringEnv]:
-    """Create training environments with diverse graphs using centralized config"""
+    """Create training environments with hub-centric reward system"""
     num_envs = training_config.num_envs
     max_steps = training_config.max_steps_per_episode
 
@@ -898,7 +899,7 @@ def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager
             # Get random graph from diverse pool
             initial_graph = env_manager.get_random_graph()
 
-            # Create environment with config-based max_steps
+            # Create environment with hub-centric rewards
             env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
             env.set_current_episode(0)
             # Store reference to environment manager for dynamic resets
@@ -938,7 +939,7 @@ def enhanced_reset_environment(env: HubRefactoringEnv) -> Data:
 
 def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                      training_config, device: torch.device = torch.device('cpu')) -> Dict[str, List]:
-    """Collect rollouts with proper metric transport"""
+    """Collect rollouts with hub-centric reward tracking"""
 
     steps_per_env = training_config.steps_per_env
 
@@ -949,7 +950,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
     all_log_probs = []
     all_values = []
 
-    # Add containers for step-level metrics
+    # Hub-centric metrics tracking
     all_step_infos = []
     all_hub_improvements = []
     all_hub_scores = []
@@ -960,7 +961,11 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         'total_hub_improvement': 0.0,
         'hub_score_changes': [],
         'step_errors': [],
-        'fallback_scores_count': 0
+        'significant_improvements': 0,  # NEW: track reward types
+        'good_improvements': 0,
+        'small_improvements': 0,
+        'degradations': 0,
+        'neutral_actions': 0
     }
 
     # Reset environments
@@ -1107,7 +1112,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 actions.append(action)
                 log_probs.append(torch.tensor(0.0, device=device))
 
-        # Execute actions and collect all step metrics
+        # Execute actions and collect hub-centric metrics
         next_states = []
         rewards = []
         dones = []
@@ -1139,6 +1144,19 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 if info.get('success', False):
                     episode_step_metrics['successful_steps'] += 1
 
+                # Hub-centric reward type tracking
+                reward_type = info.get('reward_type', 'unknown')
+                if reward_type == 'significant_improvement':
+                    episode_step_metrics['significant_improvements'] += 1
+                elif reward_type == 'good_improvement':
+                    episode_step_metrics['good_improvements'] += 1
+                elif reward_type == 'small_improvement':
+                    episode_step_metrics['small_improvements'] += 1
+                elif reward_type == 'degradation':
+                    episode_step_metrics['degradations'] += 1
+                elif reward_type == 'neutral':
+                    episode_step_metrics['neutral_actions'] += 1
+
                 if 'hub_improvement' in info:
                     hub_improvement = info['hub_improvement']
                     episode_step_metrics['total_hub_improvement'] += hub_improvement
@@ -1151,11 +1169,10 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                         'step': step,
                         'old_score': info.get('old_hub_score', 0.5),
                         'new_score': info['new_hub_score'],
-                        'improvement': info.get('hub_improvement', 0.0)
+                        'improvement': info.get('hub_improvement', 0.0),
+                        'reward_type': reward_type,
+                        'hub_reward': info.get('hub_reward', 0.0)  # NEW: track hub reward component
                     })
-
-                if info.get('hub_score_is_fallback', False):
-                    episode_step_metrics['fallback_scores_count'] += 1
 
                 if 'step_error' in info and info['step_error']:
                     episode_step_metrics['step_errors'].append({
@@ -1185,7 +1202,8 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                     except Exception:
                         pass
 
-                if step % 5 == 0:  # Every 5th step to avoid overhead
+                # Collect enhanced hub metrics periodically
+                if step % 5 == 0:
                     try:
                         breakdown = env.get_hub_score_breakdown()
                         enhanced_hub_metrics.append({
@@ -1206,7 +1224,8 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                     'old_hub_score': 0.5,
                     'new_hub_score': 0.5,
                     'step_error': str(e),
-                    'step_metrics_calculated': False
+                    'step_metrics_calculated': False,
+                    'reward_type': 'error'
                 }
                 step_infos_batch.append(error_info)
                 episode_step_metrics['step_errors'].append({
@@ -1255,7 +1274,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
             'episode_metrics': episode_step_metrics
         }
 
-    # Return with step-level metrics
+    # Return with hub-centric step-level metrics
     return {
         'states': all_states,
         'actions': all_actions,
@@ -1267,7 +1286,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
         'hub_improvements': all_hub_improvements,
         'hub_scores': all_hub_scores,
         'episode_metrics': episode_step_metrics,
-        'enhanced_hub_metrics': enhanced_hub_metrics  # NEW
+        'enhanced_hub_metrics': enhanced_hub_metrics
     }
 
 
@@ -1329,6 +1348,7 @@ def analyze_enhanced_hub_score_trends(envs: List[HubRefactoringEnv], episode: in
         logger.log_warning(f"Enhanced hub score trend analysis failed: {e}")
         return {'status': 'error', 'error': str(e)}
 
+
 def setup_gpu_environment(logger):
     """Setup optimal GPU environment"""
     if torch.cuda.is_available():
@@ -1369,13 +1389,13 @@ def monitor_gpu_usage(logger):
 
 
 def main():
-    """Main training loop with comprehensive discriminator monitoring"""
+    """Main training loop with hub-centric reward system and comprehensive discriminator monitoring"""
     # Setup optimized logging
     logger = setup_optimized_logging()
 
-    # Load centralized configuration
-    config = get_improved_config()
-    reward_config = config['rewards']
+    # Load hub-centric configuration
+    config = get_hub_centric_config()
+    reward_config = config['rewards']  # NEW: Hub-centric reward config
     training_config = config['training']
     opt_config = config['optimization']
     disc_config = config['discriminator']
@@ -1384,7 +1404,7 @@ def main():
     # Start training with config
     logger.start_training(config)
 
-    # Print configuration summary (only once)
+    # Print hub-centric configuration summary
     print_config_summary()
 
     # Setup GPU environment
@@ -1479,6 +1499,7 @@ def main():
     # Setup PPO trainer with discriminator monitor
     trainer = PPOTrainer(policy, discriminator, discriminator_monitor, opt_config, disc_config, config['learning_rate'],
                          device=device)
+
     # Training parameters from centralized config
     num_episodes = training_config.num_episodes
     num_envs = min(training_config.num_envs if device.type == 'cuda' else 3, stats['label_distribution']['smelly'])
@@ -1486,7 +1507,7 @@ def main():
     update_frequency = training_config.update_frequency
     environment_refresh_frequency = training_config.environment_refresh_frequency
 
-    # Hub score tracking parameters
+    # Hub-centric tracking parameters
     hub_score_improvement_threshold = training_config.hub_improvement_threshold
     consecutive_failures_threshold = training_config.consecutive_failures_threshold
 
@@ -1502,46 +1523,47 @@ def main():
         logger.log_error(f"Failed to create environment manager: {e}")
         return
 
-    # Create environments
+    # Create environments with hub-centric rewards
     try:
         envs = create_diverse_training_environments(env_manager, discriminator, training_config, device)
+
+        # Log hub-centric reward system initialization
+        logger.log_info("🎯 HUB-CENTRIC REWARD SYSTEM INITIALIZED:")
+        logger.log_info(
+            f"   Significant improvement (>{reward_config.SIGNIFICANT_THRESHOLD}): {reward_config.SIGNIFICANT_IMPROVEMENT_MULTIPLIER}x")
+        logger.log_info(
+            f"   Good improvement (>{reward_config.GOOD_THRESHOLD}): {reward_config.GOOD_IMPROVEMENT_MULTIPLIER}x")
+        logger.log_info(
+            f"   Small improvement (>{reward_config.SMALL_THRESHOLD}): {reward_config.SMALL_IMPROVEMENT_MULTIPLIER}x")
+        logger.log_info(
+            f"   Degradation penalty (<{reward_config.NEUTRAL_THRESHOLD}): {reward_config.DEGRADATION_PENALTY_MULTIPLIER}x")
+        logger.log_info(f"   Step penalty: {reward_config.STEP_PENALTY}")
+
     except Exception as e:
         logger.log_error(f"Failed to create training environments: {e}")
         return
-
-    # Update environment reward structure
-    for i, env in enumerate(envs):
-        try:
-            env.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
-            env.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
-            env.REWARD_FAILURE = reward_config.REWARD_FAILURE
-            env.REWARD_STEP = reward_config.REWARD_STEP
-            env.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
-            env.REWARD_INVALID = reward_config.REWARD_INVALID
-            env.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
-
-            env.HUB_SCORE_EXCELLENT = reward_config.HUB_SCORE_EXCELLENT
-            env.HUB_SCORE_GOOD = reward_config.HUB_SCORE_GOOD
-            env.HUB_SCORE_ACCEPTABLE = reward_config.HUB_SCORE_ACCEPTABLE
-
-            env.improvement_multiplier_boost = reward_config.improvement_multiplier_boost
-            env.improvement_multiplier_decay = reward_config.improvement_multiplier_decay
-            env.improvement_multiplier_max = reward_config.improvement_multiplier_max
-            env.improvement_multiplier_min = reward_config.improvement_multiplier_min
-        except Exception as e:
-            logger.log_warning(f"Failed to update environment {i} config: {e}")
 
     # Create progress tracker
     metrics_history = create_progress_tracker()
     consecutive_failures = 0
     best_episode_reward = float('-inf')
 
+    # Hub-centric reward tracking
+    hub_reward_stats = {
+        'significant_improvements': 0,
+        'good_improvements': 0,
+        'small_improvements': 0,
+        'degradations': 0,
+        'neutral_actions': 0,
+        'total_hub_improvement': 0.0
+    }
+
     # Get adaptive discriminator parameters
     adaptive_params = discriminator_monitor.get_adaptive_training_params()
     logger.log_info(
         f"🔧 Initial adaptive params - LR: {adaptive_params['discriminator_lr']:.2e}, Freq: {adaptive_params['update_frequency']}")
 
-    # Main training loop with comprehensive discriminator monitoring
+    # Main training loop with hub-centric reward system
     for episode in range(num_episodes):
         episode_start_time = time.time()
 
@@ -1598,32 +1620,32 @@ def main():
             env_manager._refresh_pool()
             consecutive_failures = 0
 
-        # === ROLLOUT COLLECTION ===
+        # === ROLLOUT COLLECTION WITH HUB-CENTRIC TRACKING ===
         rollout_data = collect_rollouts(envs, policy, training_config, device)
 
         if len(rollout_data['rewards']) == 0:
             consecutive_failures += 1
             continue
 
-        # Extract metrics directly from step-level data
+        # Extract hub-centric metrics
         episode_reward = np.mean(rollout_data['rewards'])
         metrics_history['episode_rewards'].append(episode_reward)
+        episode_step_metrics = rollout_data.get('episode_metrics', {})
 
-        if episode % 100 == 0 and episode > 0:  # Log every 100 episodes
-            for i, env in enumerate(envs):
-                try:
-                    analysis = env.log_hub_score_analysis(detailed=True)
-                    logger.log_info(f"🎯 Environment {i} Hub Score Analysis:\n{analysis}")
-                except Exception as e:
-                    logger.log_warning(f"Failed to log hub score analysis for env {i}: {e}")
+        # Update hub-centric reward statistics
+        hub_reward_stats['significant_improvements'] += episode_step_metrics.get('significant_improvements', 0)
+        hub_reward_stats['good_improvements'] += episode_step_metrics.get('good_improvements', 0)
+        hub_reward_stats['small_improvements'] += episode_step_metrics.get('small_improvements', 0)
+        hub_reward_stats['degradations'] += episode_step_metrics.get('degradations', 0)
+        hub_reward_stats['neutral_actions'] += episode_step_metrics.get('neutral_actions', 0)
+        hub_reward_stats['total_hub_improvement'] += episode_step_metrics.get('total_hub_improvement', 0.0)
 
         # Get step-level metrics
         step_infos = rollout_data.get('step_infos', [])
         rollout_hub_improvements = rollout_data.get('hub_improvements', [])
         rollout_hub_scores = rollout_data.get('hub_scores', [])
-        episode_step_metrics = rollout_data.get('episode_metrics', {})
 
-        # Calculate success rate from actual step improvements
+        # Calculate success rate based on hub improvements
         if rollout_hub_improvements:
             successful_improvements = [imp for imp in rollout_hub_improvements if imp > hub_score_improvement_threshold]
             success_rate = len(successful_improvements) / len(rollout_hub_improvements)
@@ -1649,13 +1671,18 @@ def main():
         if episode_reward > best_episode_reward:
             best_episode_reward = episode_reward
 
-        # Intelligent episode logging
+        # Enhanced episode logging with hub-centric metrics
         episode_metrics = {
             'reward': episode_reward,
             'success_rate': success_rate,
             'hub_improvement': avg_improvement,
             'average_hub_score': avg_hub_score,
-            'consecutive_failures': consecutive_failures
+            'consecutive_failures': consecutive_failures,
+            'significant_improvements': episode_step_metrics.get('significant_improvements', 0),
+            'good_improvements': episode_step_metrics.get('good_improvements', 0),
+            'small_improvements': episode_step_metrics.get('small_improvements', 0),
+            'degradations': episode_step_metrics.get('degradations', 0),
+            'neutral_actions': episode_step_metrics.get('neutral_actions', 0)
         }
         logger.log_episode_progress(episode, episode_metrics)
 
@@ -1746,17 +1773,24 @@ def main():
             else:
                 logger.log_warning(f"⚠️  Skipping discriminator update due to critical performance")
 
-        # === TENSORBOARD LOGGING ===
+        # === TENSORBOARD LOGGING WITH HUB-CENTRIC METRICS ===
         tb_logger.log_episode_metrics(episode, {
             'reward': episode_reward,
             'success_rate': success_rate,
             'hub_improvement': avg_improvement,
             'average_hub_score': avg_hub_score,
             'consecutive_failures': consecutive_failures,
-            'best_reward_so_far': best_episode_reward
+            'best_reward_so_far': best_episode_reward,
+            # Hub-centric reward type counts
+            'significant_improvements': episode_step_metrics.get('significant_improvements', 0),
+            'good_improvements': episode_step_metrics.get('good_improvements', 0),
+            'small_improvements': episode_step_metrics.get('small_improvements', 0),
+            'degradations': episode_step_metrics.get('degradations', 0),
+            'neutral_actions': episode_step_metrics.get('neutral_actions', 0)
         })
 
-        if episode % 50 == 0 and episode > 0:  # Every 50 episodes
+        # Enhanced hub score breakdown logging
+        if episode % 50 == 0 and episode > 0:
             try:
                 # Get breakdown from first environment as representative
                 breakdown = envs[0].get_hub_score_breakdown()
@@ -1796,9 +1830,54 @@ def main():
                 'vs_baseline_f1': perf_state['vs_baseline']['f1_diff']
             })
 
-        # === MILESTONE SUMMARIES ===
+        # === HUB-CENTRIC MILESTONE SUMMARIES ===
+        if episode % 100 == 0 and episode > 0:
+            # Log detailed hub-centric progress
+            logger.log_info("🎯 HUB-CENTRIC PROGRESS SUMMARY:")
+            logger.log_info(f"   Episode: {episode}")
+            logger.log_info(f"   Average Episode Reward: {episode_reward:.3f}")
+            logger.log_info(f"   Success Rate: {success_rate:.3f}")
+            logger.log_info(f"   Average Hub Score: {avg_hub_score:.3f}")
+            logger.log_info(f"   Average Hub Improvement: {avg_improvement:.4f}")
+            logger.log_info("   📊 Reward Type Distribution (Last 100 episodes):")
+
+            # Calculate proportions
+            total_actions = sum([
+                hub_reward_stats['significant_improvements'],
+                hub_reward_stats['good_improvements'],
+                hub_reward_stats['small_improvements'],
+                hub_reward_stats['degradations'],
+                hub_reward_stats['neutral_actions']
+            ])
+
+            if total_actions > 0:
+                logger.log_info(
+                    f"      Significant: {hub_reward_stats['significant_improvements']:4d} ({100 * hub_reward_stats['significant_improvements'] / total_actions:.1f}%)")
+                logger.log_info(
+                    f"      Good:        {hub_reward_stats['good_improvements']:4d} ({100 * hub_reward_stats['good_improvements'] / total_actions:.1f}%)")
+                logger.log_info(
+                    f"      Small:       {hub_reward_stats['small_improvements']:4d} ({100 * hub_reward_stats['small_improvements'] / total_actions:.1f}%)")
+                logger.log_info(
+                    f"      Neutral:     {hub_reward_stats['neutral_actions']:4d} ({100 * hub_reward_stats['neutral_actions'] / total_actions:.1f}%)")
+                logger.log_info(
+                    f"      Degradation: {hub_reward_stats['degradations']:4d} ({100 * hub_reward_stats['degradations'] / total_actions:.1f}%)")
+
+            logger.log_info(f"   Total Hub Improvement: {hub_reward_stats['total_hub_improvement']:.4f}")
+
+            # Reset stats for next 100 episodes
+            if episode % 500 == 0:
+                hub_reward_stats = {
+                    'significant_improvements': 0,
+                    'good_improvements': 0,
+                    'small_improvements': 0,
+                    'degradations': 0,
+                    'neutral_actions': 0,
+                    'total_hub_improvement': 0.0
+                }
+
         logger.log_milestone_summary(episode, metrics_history)
 
+        # Enhanced hub score trend analysis every 250 episodes
         if episode % 250 == 0 and episode > 0:
             try:
                 trend_analysis = analyze_enhanced_hub_score_trends(envs, episode, logger)
@@ -1834,10 +1913,10 @@ def main():
             except Exception as e:
                 logger.log_warning(f"Failed to perform trend analysis: {e}")
 
-        # === CHECKPOINT SAVING ===
+        # === CHECKPOINT SAVING WITH HUB-CENTRIC DATA ===
         if episode % 500 == 0 and episode > 0:
             try:
-                # Include discriminator monitoring data
+                # Include discriminator monitoring data and hub-centric stats
                 discriminator_stats = discriminator_monitor.get_monitoring_summary()
                 final_enhanced_analysis = analyze_enhanced_hub_score_trends(envs, num_episodes, logger)
 
@@ -1860,14 +1939,15 @@ def main():
                         'best_episode_reward': best_episode_reward,
                         'consecutive_failures': consecutive_failures
                     },
+                    'hub_centric_reward_stats': hub_reward_stats.copy(),  # NEW: Hub-centric reward statistics
                     'discriminator_monitoring': {
                         'performance_state': discriminator_monitor.perf_state.get_status_summary(),
                         'monitoring_stats': discriminator_stats['monitoring_stats'],
-                        'validation_history': discriminator_monitor.validation_history[-20:],  # Last 20 validations
+                        'validation_history': discriminator_monitor.validation_history[-20:],
                         'adaptive_params': adaptive_params,
                         'baseline_performance': discriminator_monitor.perf_state.baseline_accuracy
                     },
-                    'centralized_config_used': {
+                    'hub_centric_config_used': {  # NEW: Hub-centric config
                         'rewards': reward_config.__dict__,
                         'training': training_config.__dict__,
                         'optimization': opt_config.__dict__,
@@ -1892,7 +1972,8 @@ def main():
                 performance = {
                     'best_reward': best_episode_reward,
                     'current_success_rate': success_rate,
-                    'discriminator_status': 'stable' if discriminator_monitor.perf_state.is_stable() else 'unstable'
+                    'discriminator_status': 'stable' if discriminator_monitor.perf_state.is_stable() else 'unstable',
+                    'hub_centric_reward_distribution': hub_reward_stats
                 }
                 logger.log_checkpoint_save(episode, checkpoint_path, performance)
 
@@ -1911,7 +1992,6 @@ def main():
             monitor_gpu_usage(logger)
 
         # === EMERGENCY DISCRIMINATOR INTERVENTIONS ===
-        # Check for critical discriminator state every 50 episodes
         if episode % 50 == 0 and episode > 200:
             if discriminator_monitor.perf_state.is_critically_degraded():
                 logger.log_warning(f"🚨 EMERGENCY: Critical discriminator degradation detected!")
@@ -1929,8 +2009,8 @@ def main():
                         except Exception:
                             pass
 
-    # === TRAINING COMPLETION ===
-    logger.log_info("RL Training completed!")
+    # === TRAINING COMPLETION WITH HUB-CENTRIC ANALYSIS ===
+    logger.log_info("🎯 HUB-CENTRIC RL Training completed!")
 
     # Final discriminator analysis
     logger.log_info("🔍 Performing final comprehensive discriminator validation...")
@@ -1938,7 +2018,7 @@ def main():
         episode=num_episodes, detailed=True
     )
 
-    # Final performance analysis
+    # Final performance analysis with hub-centric metrics
     if metrics_history['episode_rewards']:
         final_100_rewards = metrics_history['episode_rewards'][-100:] if len(
             metrics_history['episode_rewards']) >= 100 else metrics_history['episode_rewards']
@@ -1954,7 +2034,8 @@ def main():
             'mean_success_rate_last_100': float(np.mean(final_100_success)),
             'mean_hub_improvement_last_100': float(np.mean(final_100_improvements)),
             'mean_hub_score_last_100': float(np.mean(final_100_hub_scores)),
-            'total_updates': trainer.update_count
+            'total_updates': trainer.update_count,
+            'hub_centric_final_stats': hub_reward_stats.copy()
         }
 
         # Include discriminator final analysis
@@ -1962,18 +2043,21 @@ def main():
 
         logger.log_final_summary(num_episodes, {
             'final_performance': final_metrics,
-            'discriminator_analysis': discriminator_final_summary
+            'discriminator_analysis': discriminator_final_summary,
+            'hub_centric_reward_analysis': hub_reward_stats
         })
 
-    # === FINAL MODEL SAVING ===
+    # === FINAL MODEL SAVING WITH HUB-CENTRIC DATA ===
     try:
-        final_save_path = results_dir / 'final_rl_model.pt'
+        final_save_path = results_dir / 'final_rl_model_hub_centric.pt'
         final_stats = {
             'total_episodes': num_episodes,
             'best_episode_reward': best_episode_reward,
             'final_performance': final_metrics if 'final_metrics' in locals() else {},
             'consecutive_failures': consecutive_failures,
-            'total_updates': trainer.update_count
+            'total_updates': trainer.update_count,
+            'hub_centric_reward_system': True,  # Mark as hub-centric
+            'final_hub_reward_stats': hub_reward_stats
         }
 
         # Comprehensive discriminator statistics for final save
@@ -2017,16 +2101,45 @@ def main():
             'training_history': metrics_history,
             'trainer_final_metrics': trainer.get_latest_metrics(),
             'discriminator_comprehensive_analysis': discriminator_final_stats,
-            'centralized_config': {
+            'hub_centric_configuration': {  # NEW: Hub-centric specific config
                 'rewards': reward_config.__dict__,
                 'training': training_config.__dict__,
                 'optimization': opt_config.__dict__,
                 'discriminator': disc_config.__dict__,
-                'environment': env_config.__dict__
+                'environment': env_config.__dict__,
+                'reward_system_type': 'hub_centric',
+                'reward_formula': {
+                    'significant_improvement_multiplier': reward_config.SIGNIFICANT_IMPROVEMENT_MULTIPLIER,
+                    'good_improvement_multiplier': reward_config.GOOD_IMPROVEMENT_MULTIPLIER,
+                    'small_improvement_multiplier': reward_config.SMALL_IMPROVEMENT_MULTIPLIER,
+                    'degradation_penalty_multiplier': reward_config.DEGRADATION_PENALTY_MULTIPLIER,
+                    'step_penalty': reward_config.STEP_PENALTY,
+                    'thresholds': {
+                        'significant': reward_config.SIGNIFICANT_THRESHOLD,
+                        'good': reward_config.GOOD_THRESHOLD,
+                        'small': reward_config.SMALL_THRESHOLD,
+                        'neutral': reward_config.NEUTRAL_THRESHOLD
+                    }
+                }
+            },
+            'final_hub_centric_analysis': {
+                'reward_distribution': hub_reward_stats,
+                'hub_improvement_summary': {
+                    'total_improvement': hub_reward_stats['total_hub_improvement'],
+                    'improvement_actions_ratio': (
+                                                         hub_reward_stats['significant_improvements'] +
+                                                         hub_reward_stats['good_improvements'] +
+                                                         hub_reward_stats['small_improvements']
+                                                 ) / max(1, sum(hub_reward_stats.values()) - hub_reward_stats[
+                        'total_hub_improvement']),
+                    'degradation_ratio': hub_reward_stats['degradations'] / max(1, sum(hub_reward_stats.values()) -
+                                                                                hub_reward_stats[
+                                                                                    'total_hub_improvement'])
+                }
             }
         }, final_save_path)
 
-        logger.log_info(f"Final model saved: {final_save_path}")
+        logger.log_info(f"🎯 Final hub-centric model saved: {final_save_path}")
 
         # Log final discriminator status
         logger.log_info("🧠 FINAL DISCRIMINATOR ANALYSIS:")
@@ -2053,25 +2166,84 @@ def main():
 
         logger.log_info(f"   Overall Verdict: {verdict} ({acc_change:+.3f})")
 
+        # NEW: Hub-centric reward analysis
+        logger.log_info("\n🎯 FINAL HUB-CENTRIC REWARD ANALYSIS:")
+        total_actions = sum([
+            hub_reward_stats['significant_improvements'],
+            hub_reward_stats['good_improvements'],
+            hub_reward_stats['small_improvements'],
+            hub_reward_stats['degradations'],
+            hub_reward_stats['neutral_actions']
+        ])
+
+        if total_actions > 0:
+            logger.log_info(f"   Total Actions Taken: {total_actions}")
+            logger.log_info(
+                f"   Significant Improvements: {hub_reward_stats['significant_improvements']:4d} ({100 * hub_reward_stats['significant_improvements'] / total_actions:.1f}%)")
+            logger.log_info(
+                f"   Good Improvements:        {hub_reward_stats['good_improvements']:4d} ({100 * hub_reward_stats['good_improvements'] / total_actions:.1f}%)")
+            logger.log_info(
+                f"   Small Improvements:       {hub_reward_stats['small_improvements']:4d} ({100 * hub_reward_stats['small_improvements'] / total_actions:.1f}%)")
+            logger.log_info(
+                f"   Neutral Actions:          {hub_reward_stats['neutral_actions']:4d} ({100 * hub_reward_stats['neutral_actions'] / total_actions:.1f}%)")
+            logger.log_info(
+                f"   Degradations:             {hub_reward_stats['degradations']:4d} ({100 * hub_reward_stats['degradations'] / total_actions:.1f}%)")
+
+            improvement_actions = (
+                    hub_reward_stats['significant_improvements'] +
+                    hub_reward_stats['good_improvements'] +
+                    hub_reward_stats['small_improvements']
+            )
+            improvement_ratio = improvement_actions / total_actions
+            logger.log_info(f"   Overall Improvement Ratio: {improvement_ratio:.3f}")
+
+        logger.log_info(f"   Total Hub Improvement: {hub_reward_stats['total_hub_improvement']:.4f}")
+
     except Exception as e:
         logger.log_error(f"Failed to save final model: {e}")
 
     finally:
         tb_logger.close()
 
-    # Final recommendations based on discriminator behavior
+    # Final recommendations based on discriminator behavior and hub-centric performance
     logger.log_info("\n" + "=" * 70)
-    logger.log_info("🎯 TRAINING RECOMMENDATIONS BASED ON DISCRIMINATOR ANALYSIS:")
+    logger.log_info("🎯 HUB-CENTRIC TRAINING RECOMMENDATIONS:")
     logger.log_info("=" * 70)
 
+    # Hub-centric specific recommendations
+    if total_actions > 0:
+        improvement_ratio = improvement_actions / total_actions
+        degradation_ratio = hub_reward_stats['degradations'] / total_actions
+
+        if improvement_ratio > 0.6:
+            logger.log_info("✅ Hub-centric reward system working well:")
+            logger.log_info("   • High ratio of improvement actions achieved")
+            logger.log_info("   • Consider extending training for better results")
+        elif improvement_ratio > 0.4:
+            logger.log_info("⚠️  Moderate hub-centric performance:")
+            logger.log_info("   • Consider adjusting improvement thresholds")
+            logger.log_info("   • Review hub score computation weights")
+        else:
+            logger.log_info("❌ Poor hub-centric performance:")
+            logger.log_info("   • Consider lowering improvement thresholds")
+            logger.log_info("   • Review reward multipliers")
+            logger.log_info("   • Check hub score computation accuracy")
+
+        if degradation_ratio > 0.3:
+            logger.log_info("⚠️  High degradation rate detected:")
+            logger.log_info("   • Consider reducing degradation penalty")
+            logger.log_info("   • Review pattern effectiveness")
+            logger.log_info("   • Check for discriminator instability")
+
+    # Discriminator-based recommendations
     if discriminator_monitor.emergency_interventions > 3:
-        logger.log_info("⚠️  High number of emergency interventions - consider:")
+        logger.log_info("⚠️  High number of emergency interventions:")
         logger.log_info("   • Lower discriminator learning rate")
         logger.log_info("   • Increase discriminator update frequency")
         logger.log_info("   • Review discriminator architecture complexity")
 
     if discriminator_monitor.rollback_count > 1:
-        logger.log_info("🔄 Multiple rollbacks occurred - consider:")
+        logger.log_info("🔄 Multiple rollbacks occurred:")
         logger.log_info("   • More conservative discriminator updates")
         logger.log_info("   • Better discriminator regularization")
         logger.log_info("   • Longer baseline establishment period")
@@ -2081,17 +2253,48 @@ def main():
         logger.log_info("   • Current hyperparameters appear well-tuned")
         logger.log_info("   • Consider longer training for better results")
     else:
-        logger.log_info("⚠️  Discriminator showed instability - consider:")
+        logger.log_info("⚠️  Discriminator showed instability:")
         logger.log_info("   • Review adversarial training balance")
         logger.log_info("   • Implement more frequent validation")
         logger.log_info("   • Adjust policy-discriminator update ratio")
 
+    # Hub-centric system evaluation
+    logger.log_info("\n🔬 HUB-CENTRIC SYSTEM EVALUATION:")
+    if 'final_metrics' in locals():
+        avg_reward = final_metrics['mean_reward_last_100']
+        avg_improvement = final_metrics['mean_hub_improvement_last_100']
+
+        if avg_improvement > 0.02:
+            system_verdict = "✅ EXCELLENT - Consistent hub improvements"
+        elif avg_improvement > 0.01:
+            system_verdict = "✅ GOOD - Moderate hub improvements"
+        elif avg_improvement > 0.005:
+            system_verdict = "⚠️  ACCEPTABLE - Small hub improvements"
+        elif avg_improvement > 0:
+            system_verdict = "⚠️  POOR - Minimal hub improvements"
+        else:
+            system_verdict = "❌ FAILED - Net hub degradation"
+
+        logger.log_info(f"   System Verdict: {system_verdict}")
+        logger.log_info(f"   Average Final Reward: {avg_reward:.3f}")
+        logger.log_info(f"   Average Hub Improvement: {avg_improvement:.4f}")
+
+        if avg_improvement <= 0:
+            logger.log_info("🚨 CRITICAL: Hub-centric system not achieving improvements!")
+            logger.log_info("   • Review hub score computation accuracy")
+            logger.log_info("   • Consider different reward thresholds")
+            logger.log_info("   • Check discriminator-hub score alignment")
+
     logger.log_info("=" * 70)
-    logger.log_info("🏁 COMPREHENSIVE RL TRAINING WITH DISCRIMINATOR MONITORING COMPLETED!")
+    logger.log_info("🏁 COMPREHENSIVE HUB-CENTRIC RL TRAINING COMPLETED!")
     logger.log_info("=" * 70)
     logger.log_info(f"📊 View detailed training progress: tensorboard --logdir {tensorboard_dir}")
-    logger.log_info(f"⚙️  Edit hyperparameters: hyperparameters_configuration.py")
+    logger.log_info(f"⚙️  Edit hub-centric hyperparameters: hyperparameters_configuration.py")
     logger.log_info(f"📁 Results saved in: {results_dir}")
+    logger.log_info("🎯 Model trained with simplified hub-centric reward system")
+    logger.log_info("   • REMOVED: Complex multi-component reward system")
+    logger.log_info("   • ADDED: Simple hub-improvement based rewards only")
+    logger.log_info("   • FOCUS: Pure hub reduction optimization")
 
 
 if __name__ == "__main__":

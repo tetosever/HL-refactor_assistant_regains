@@ -193,6 +193,7 @@ class HubRefactoringEnv:
     def __init__(self, initial_data: Data, discriminator: nn.Module,
                  max_steps: int = 20, device: torch.device = torch.device('cpu'),
                  reward_config=None):
+        """Initialize HubRefactoringEnv with hub-centric reward system"""
         self.device = device
         self.discriminator = discriminator
         self.max_steps = max_steps
@@ -206,41 +207,55 @@ class HubRefactoringEnv:
         self._cached_hub_score = None
         self._graph_hash = None
 
-        # Load centralized reward configuration
+        # Load centralized reward configuration - HUB-CENTRIC VERSION
         if reward_config is None:
-            config = get_improved_config()
+            from hyperparameters_configuration import get_hub_centric_config
+            config = get_hub_centric_config()
             reward_config = config['rewards']
 
         self.reward_config = reward_config
 
-        # CENTRALIZED REWARD PARAMETERS
-        self.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
-        self.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
-        self.REWARD_FAILURE = reward_config.REWARD_FAILURE
-        self.REWARD_STEP = reward_config.REWARD_STEP
-        self.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
-        self.REWARD_INVALID = reward_config.REWARD_INVALID
-        self.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
+        # === HUB-CENTRIC REWARD PARAMETERS ===
+        # SOLO questi parametri per il reward
+        self.SIGNIFICANT_IMPROVEMENT_MULTIPLIER = reward_config.SIGNIFICANT_IMPROVEMENT_MULTIPLIER  # 10.0
+        self.GOOD_IMPROVEMENT_MULTIPLIER = reward_config.GOOD_IMPROVEMENT_MULTIPLIER  # 5.0
+        self.SMALL_IMPROVEMENT_MULTIPLIER = reward_config.SMALL_IMPROVEMENT_MULTIPLIER  # 2.0
+        self.DEGRADATION_PENALTY_MULTIPLIER = reward_config.DEGRADATION_PENALTY_MULTIPLIER  # -3.0
 
-        # Hub score thresholds
-        self.HUB_SCORE_EXCELLENT = reward_config.HUB_SCORE_EXCELLENT
-        self.HUB_SCORE_GOOD = reward_config.HUB_SCORE_GOOD
-        self.HUB_SCORE_ACCEPTABLE = reward_config.HUB_SCORE_ACCEPTABLE
+        # Soglie di miglioramento
+        self.SIGNIFICANT_THRESHOLD = reward_config.SIGNIFICANT_THRESHOLD  # 0.05
+        self.GOOD_THRESHOLD = reward_config.GOOD_THRESHOLD  # 0.01
+        self.SMALL_THRESHOLD = reward_config.SMALL_THRESHOLD  # 0.005
+        self.NEUTRAL_THRESHOLD = reward_config.NEUTRAL_THRESHOLD  # -0.01
 
-        # Progressive reward scaling
-        self.improvement_multiplier_boost = reward_config.improvement_multiplier_boost
-        self.improvement_multiplier_decay = reward_config.improvement_multiplier_decay
-        self.improvement_multiplier_max = reward_config.improvement_multiplier_max
-        self.improvement_multiplier_min = reward_config.improvement_multiplier_min
-        self.improvement_multiplier = 1.0
+        # Solo step penalty
+        self.STEP_PENALTY = reward_config.STEP_PENALTY  # -0.05
 
-        # Tracking
+        # === PARAMETRI RIMOSSI ===
+        # Tutti questi parametri sono stati ELIMINATI dal sistema hub-centric:
+        # - self.REWARD_SUCCESS
+        # - self.REWARD_PARTIAL_SUCCESS
+        # - self.REWARD_FAILURE
+        # - self.REWARD_HUB_REDUCTION
+        # - self.REWARD_INVALID
+        # - self.REWARD_SMALL_IMPROVEMENT
+        # - self.HUB_SCORE_EXCELLENT
+        # - self.HUB_SCORE_GOOD
+        # - self.HUB_SCORE_ACCEPTABLE
+        # - self.improvement_multiplier_boost
+        # - self.improvement_multiplier_decay
+        # - self.improvement_multiplier_max
+        # - self.improvement_multiplier_min
+        # - self.improvement_multiplier = 1.0
+
+        # === TRACKING (invariato) ===
         self.action_history = []
         self.initial_hub_score = None
         self.best_hub_score = None
         self.hub_score_history = []
 
-        # Hub score component
+        # === HUB SCORE COMPONENTS (invariato) ===
+        # Il sistema di hub-score multi-componente rimane identico
         self.weight_scheduler = AdaptiveWeightScheduler()
         self.current_episode = 0
         self._cached_global_metrics = None
@@ -255,7 +270,15 @@ class HubRefactoringEnv:
 
         # Log solo inizializzazione se debug attivo
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Environment initialized with Hub-Focused patterns")
+            logger.debug("Environment initialized with Hub-Centric reward system")
+            logger.debug(f"Reward multipliers: Sig={self.SIGNIFICANT_IMPROVEMENT_MULTIPLIER}, "
+                         f"Good={self.GOOD_IMPROVEMENT_MULTIPLIER}, "
+                         f"Small={self.SMALL_IMPROVEMENT_MULTIPLIER}, "
+                         f"Penalty={self.DEGRADATION_PENALTY_MULTIPLIER}")
+            logger.debug(f"Thresholds: Sig={self.SIGNIFICANT_THRESHOLD}, "
+                         f"Good={self.GOOD_THRESHOLD}, "
+                         f"Small={self.SMALL_THRESHOLD}, "
+                         f"Neutral={self.NEUTRAL_THRESHOLD}")
 
     def _ensure_data_consistency(self, data: Data) -> Data:
         """Ensure batch and edge_attr consistency"""
@@ -375,13 +398,14 @@ class HubRefactoringEnv:
             return self._get_discriminator_score()
 
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
-        """Step with optimized logging"""
+        """Step with hub-centric reward system - SEMPLIFICATO"""
         source, target, pattern, terminate = action
         self.steps += 1
 
         self.invalidate_global_cache()
 
-        reward = self.REWARD_STEP
+        # SOLO step penalty
+        reward = self.STEP_PENALTY  # Nuovo parametro più piccolo
         done = False
 
         # Initialize info with default values
@@ -401,7 +425,8 @@ class HubRefactoringEnv:
             # Check termination
             if terminate or self.steps >= self.max_steps:
                 done = True
-                final_reward = self._evaluate_final_state()
+                # SEMPLIFICATO: Solo hub improvement finale
+                final_reward = self._evaluate_final_state_hub_centric()
                 reward += final_reward
                 info.update({
                     'termination': 'requested' if terminate else 'max_steps',
@@ -410,12 +435,12 @@ class HubRefactoringEnv:
                 })
                 return self.current_data, reward, done, info
 
-            # Validate action - non loggare come errore, è normale
+            # Validate action
             if source >= self.current_data.x.size(0) or target >= self.current_data.x.size(0):
-                reward += self.REWARD_INVALID
+                reward += -0.5  # Invalid action penalty
                 info.update({
                     'error': 'invalid_node_index',
-                    'step_error': f'Invalid indices: source={source}, target={target}, max_nodes={self.current_data.x.size(0)}'
+                    'step_error': f'Invalid indices: source={source}, target={target}'
                 })
                 return self.current_data, reward, done, info
 
@@ -429,8 +454,6 @@ class HubRefactoringEnv:
             if success and new_data is not None:
                 # Update current data
                 self.current_data = new_data
-
-                # Invalidate cache after graph modification
                 self._cached_hub_score = None
                 self._graph_hash = None
 
@@ -438,48 +461,29 @@ class HubRefactoringEnv:
                 new_hub_score = self._get_current_hub_score_safe()
                 hub_improvement = old_hub_score - new_hub_score
 
-                # Track best score
+                # Track best score (per debugging)
                 if new_hub_score < self.best_hub_score:
                     self.best_hub_score = new_hub_score
                     info['new_best'] = True
-                    self.improvement_multiplier = min(
-                        self.improvement_multiplier * self.improvement_multiplier_boost,
-                        self.improvement_multiplier_max
-                    )
 
                 self.hub_score_history.append(new_hub_score)
 
-                # REWARD CALCULATION
-                if hub_improvement > 0.15:
-                    reward += self.REWARD_HUB_REDUCTION * hub_improvement * self.improvement_multiplier
+                # === HUB-CENTRIC REWARD CALCULATION ===
+                # UNICA logica di reward basata su hub improvement
+                hub_reward = self._compute_hub_centric_reward(hub_improvement)
+                reward += hub_reward
+
+                # Determina reward type per logging
+                if hub_improvement > self.SIGNIFICANT_THRESHOLD:
                     info['reward_type'] = 'significant_improvement'
-                elif hub_improvement > 0.05:
-                    reward += self.REWARD_PARTIAL_SUCCESS * hub_improvement * self.improvement_multiplier
+                elif hub_improvement > self.GOOD_THRESHOLD:
                     info['reward_type'] = 'good_improvement'
-                elif hub_improvement > 0.01:
-                    reward += self.REWARD_SMALL_IMPROVEMENT * hub_improvement * self.improvement_multiplier
+                elif hub_improvement > self.SMALL_THRESHOLD:
                     info['reward_type'] = 'small_improvement'
-                elif hub_improvement > -0.02:
-                    reward += 0.1
+                elif hub_improvement > self.NEUTRAL_THRESHOLD:
                     info['reward_type'] = 'neutral'
                 else:
-                    reward += self.REWARD_FAILURE * abs(hub_improvement)
-                    info['reward_type'] = 'worse'
-                    self.improvement_multiplier = max(
-                        self.improvement_multiplier * self.improvement_multiplier_decay,
-                        self.improvement_multiplier_min
-                    )
-
-                # BONUS REWARDS
-                if new_hub_score < self.HUB_SCORE_EXCELLENT:
-                    reward += 5.0
-                    info['score_bonus'] = 'excellent'
-                elif new_hub_score < self.HUB_SCORE_GOOD:
-                    reward += 2.0
-                    info['score_bonus'] = 'good'
-                elif new_hub_score < self.HUB_SCORE_ACCEPTABLE:
-                    reward += 0.5
-                    info['score_bonus'] = 'acceptable'
+                    info['reward_type'] = 'degradation'
 
                 # Record action
                 self.action_history.append((source, target, pattern, hub_improvement))
@@ -487,7 +491,7 @@ class HubRefactoringEnv:
                 # Update info
                 info.update({
                     'valid': True,
-                    'success': True,
+                    'success': True,  # Success = pattern applicato, indipendentemente da reward
                     'hub_improvement': hub_improvement,
                     'old_hub_score': old_hub_score,
                     'new_hub_score': new_hub_score,
@@ -495,22 +499,22 @@ class HubRefactoringEnv:
                     'pattern_info': pattern_info,
                     'features_updated_incrementally': True,
                     'affected_nodes': pattern_info.get('affected_nodes', []),
-                    'improvement_multiplier': self.improvement_multiplier,
                     'step_metrics_calculated': True,
-                    'hub_score_is_fallback': old_hub_score == 0.5 and new_hub_score == 0.5
+                    'hub_reward': hub_reward,  # Per debugging
+                    'total_reward': reward
                 })
             else:
                 # Pattern failed
-                reward += self.REWARD_INVALID
+                reward += -0.5  # Invalid pattern penalty
                 info.update({
                     'error': pattern_info.get('error', 'pattern_failed'),
                     'reward_type': 'pattern_failed',
-                    'step_error': f"Pattern {pattern} failed: {pattern_info.get('error', 'unknown')}"
+                    'step_error': f"Pattern {pattern} failed"
                 })
 
         except Exception as e:
             logger.error(f"Critical error in step: {e}")
-            reward += self.REWARD_INVALID
+            reward += -0.5
             info.update({
                 'error': f'step_error: {str(e)}',
                 'reward_type': 'error',
@@ -518,6 +522,46 @@ class HubRefactoringEnv:
             })
 
         return self.current_data, reward, done, info
+
+    def _compute_hub_centric_reward(self, hub_improvement: float) -> float:
+        """
+        NUOVO: Compute reward basato SOLO su hub improvement
+        """
+        if hub_improvement > self.SIGNIFICANT_THRESHOLD:
+            return self.SIGNIFICANT_IMPROVEMENT_MULTIPLIER * hub_improvement
+        elif hub_improvement > self.GOOD_THRESHOLD:
+            return self.GOOD_IMPROVEMENT_MULTIPLIER * hub_improvement
+        elif hub_improvement > self.SMALL_THRESHOLD:
+            return self.SMALL_IMPROVEMENT_MULTIPLIER * hub_improvement
+        elif hub_improvement > self.NEUTRAL_THRESHOLD:
+            return 0.0
+        else:
+            # Penalizza peggioramenti significativi
+            return self.DEGRADATION_PENALTY_MULTIPLIER * abs(hub_improvement)
+
+    def _evaluate_final_state_hub_centric(self) -> float:
+        """
+        SEMPLIFICATO: Final state evaluation basata SOLO su hub improvement totale
+        """
+        try:
+            if self.initial_hub_score is None:
+                return 0.0
+
+            final_hub_score = self._get_current_hub_score()
+            total_improvement = self.initial_hub_score - final_hub_score
+
+            # SOLO hub improvement conta per final reward
+            final_reward = self._compute_hub_centric_reward(total_improvement)
+
+            # Piccolo bonus per efficienza (molto ridotto)
+            efficiency = 1.0 - (self.steps / self.max_steps)
+            efficiency_bonus = efficiency * 0.5  # Era 5.0 → ora 0.5
+
+            return final_reward + efficiency_bonus
+
+        except Exception as e:
+            logger.error(f"Final state evaluation failed: {e}")
+            return 0.0
 
     def _apply_pattern_incremental(self, pattern: int, source: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
         """Apply hub-focused refactoring pattern"""
