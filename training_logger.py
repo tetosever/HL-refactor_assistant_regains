@@ -173,7 +173,7 @@ class TrainingLogger:
 
     def log_discriminator_training_update(self, episode: int, validation_results: Dict[str, float],
                                           training_metrics: Optional[Dict[str, float]] = None):
-        """Log aggiornamenti del discriminatore durante il training RL"""
+        """Log aggiornamenti del discriminatore durante il training RL - VERSIONE RIDOTTA"""
 
         accuracy = validation_results.get('accuracy', 0)
         f1 = validation_results.get('f1', 0)
@@ -219,7 +219,7 @@ class TrainingLogger:
         else:
             disc_status = "🔄 FLUCTUATING"
 
-        # Log principale
+        # REDUCED LOGGING: Solo log base, meno dettagli
         self.logger.info(f"🧠 DISCRIMINATOR UPDATE [Episode {episode}] {disc_status}")
         self.logger.info(f"   Current:  Acc: {accuracy:.3f} | F1: {f1:.3f} | Prec: {precision:.3f} | Rec: {recall:.3f}")
         self.logger.info(f"   vs Base:  Acc: {acc_change:+.3f} | F1: {f1_change:+.3f}")
@@ -227,26 +227,21 @@ class TrainingLogger:
         if improved:
             self.logger.info(f"   🎉 NEW BEST PERFORMANCE!")
 
-        # Log metriche di training se disponibili
-        if training_metrics:
-            disc_loss = training_metrics.get('discriminator_loss', 0)
-            if disc_loss > 0:
-                self.logger.info(f"   Training Loss: {disc_loss:.4f}")
-
-        # Analisi del trend se abbiamo abbastanza dati
+        # REMOVED: Log dettagliato del trend (troppo spam)
+        # ONLY: Analisi del trend se ci sono problemi SIGNIFICATIVI
         if len(self.discriminator_history['accuracies']) >= self.discriminator_trend_window:
-            self._analyze_discriminator_trend(episode)
+            if accuracy < baseline_acc - 0.08:  # Solo se degradazione importante
+                self._analyze_discriminator_trend(episode)
 
-        # Warning per degradazione significativa
-        if accuracy < baseline_acc - self.discriminator_degradation_threshold:
+        # REDUCED: Warning per degradazione SOLO se molto significativa
+        if accuracy < baseline_acc - 0.08:  # ERA 0.05 → ORA 0.08
             self.logger.warning(f"   🚨 SIGNIFICANT DEGRADATION from baseline (-{abs(acc_change):.3f})")
             self.logger.warning(f"   Consider adjusting discriminator learning rate or update frequency")
 
     def _analyze_discriminator_trend(self, episode: int):
-        """Analizza il trend delle performance del discriminatore"""
+
         window = self.discriminator_trend_window
         recent_accs = self.discriminator_history['accuracies'][-window:]
-        recent_f1s = self.discriminator_history['f1_scores'][-window:]
 
         if len(recent_accs) < window:
             return
@@ -254,12 +249,11 @@ class TrainingLogger:
         # Calcola trend lineare semplice
         x = np.arange(len(recent_accs))
         acc_slope = np.polyfit(x, recent_accs, 1)[0]
-        f1_slope = np.polyfit(x, recent_f1s, 1)[0]
 
-        # Determina significatività del trend
+        # REDUCED: Solo trend molto significativi
         acc_trend_strength = abs(acc_slope) * window  # Cambiamento totale stimato
 
-        if acc_trend_strength > 0.05:  # Trend significativo
+        if acc_trend_strength > 0.08:  # ERA 0.05 → ORA 0.08 (solo trend forti)
             if acc_slope > 0:
                 trend_desc = f"📈 STRONG UPWARD trend (+{acc_slope * window:.3f} over {window} validations)"
             else:
@@ -267,11 +261,9 @@ class TrainingLogger:
 
             self.logger.info(f"   {trend_desc}")
 
-            # Raccomandazioni basate sul trend
-            if acc_slope < -0.01:  # Forte degradazione
+            # Raccomandazioni solo per forte degradazione
+            if acc_slope < -0.02:  # ERA -0.01 → ORA -0.02 (più tollerante)
                 self.logger.warning(f"   💡 RECOMMENDATION: Consider reducing discriminator learning rate")
-            elif acc_slope > 0.01:  # Forte miglioramento
-                self.logger.info(f"   💡 GOOD: Discriminator is adapting well to policy improvements")
 
     def log_discriminator_summary(self, episode: int):
         """Log riassunto delle performance del discriminatore ogni milestone"""
@@ -853,10 +845,18 @@ class AdvancedDiscriminatorMonitor:
         # Stato delle performance
         self.perf_state = DiscriminatorPerformanceState()
 
-        # Configurazione monitoring
-        self.validation_frequency = 25  # Validazione ogni N episodi
-        self.detailed_validation_frequency = 100  # Validazione dettagliata ogni N episodi
-        self.emergency_validation_threshold = 5  # Validazione d'emergenza dopo N degradazioni
+        # MODIFIED: Configurazione monitoring con frequenze ridotte
+        self.validation_frequency = 75  # ERA 25 → ORA 75 (3x meno frequente)
+        self.detailed_validation_frequency = 200  # ERA 100 → ORA 200 (2x meno frequente)
+        self.emergency_validation_threshold = 8  # ERA 5 → ORA 8 (più tollerante)
+
+        # NEW: Rate limiting per warning
+        self.last_warning_episode = 0
+        self.min_warning_interval = 50  # Minimo 50 episodi tra warning simili
+
+        # NEW: Soglie più stringenti per evitare warning frequenti
+        self.degradation_warning_threshold = 0.08  # ERA 0.05 → ORA 0.08
+        self.critical_warning_threshold = 0.12  # ERA 0.10 → ORA 0.12
 
         # Backup del modello per rollback
         self.best_model_state = None
@@ -889,16 +889,23 @@ class AdvancedDiscriminatorMonitor:
 
     def should_validate(self, episode: int) -> bool:
         """Determina se eseguire validazione in questo episodio"""
-        # Validazione regolare
+        # Validazione regolare (RIDOTTA)
         if episode % self.validation_frequency == 0:
             return True
 
-        # Validazione d'emergenza se degradazione consecutiva
+        # Validazione d'emergenza se degradazione consecutiva (PIÙ TOLLERANTE)
         if self.perf_state.consecutive_degradations >= self.emergency_validation_threshold:
             self.logger.log_warning(
                 f"🚨 Emergency validation triggered - {self.perf_state.consecutive_degradations} consecutive degradations")
             return True
 
+        return False
+
+    def _should_log_warning(self, episode: int) -> bool:
+        """Rate limiting per warning ripetitivi"""
+        if episode - self.last_warning_episode >= self.min_warning_interval:
+            self.last_warning_episode = episode
+            return True
         return False
 
     def validate_performance(self, episode: int, detailed: bool = False) -> Dict[str, float]:
@@ -1042,11 +1049,22 @@ class AdvancedDiscriminatorMonitor:
         }
 
     def _log_validation_results(self, episode: int, results: Dict[str, float], detailed: bool):
-        """Log risultati validazione con livello appropriato"""
-        # Always log to discriminator training update for tracking
+        """Log risultati validazione con livello appropriato e RATE LIMITING"""
+
+        # SEMPRE traccia per il training logger (senza spam)
         self.logger.log_discriminator_training_update(episode, results)
 
-        if detailed or self.perf_state.is_degrading():
+        # Log dettagliato SOLO se:
+        # 1. È specificatamente richiesto (detailed=True)
+        # 2. C'è degradazione critica (non solo moderata)
+        # 3. È abbastanza tempo passato dall'ultimo log dettagliato
+        should_detailed_log = (
+                detailed or
+                self.perf_state.is_critically_degraded() or
+                (self.perf_state.is_degrading() and self._should_log_warning(episode))
+        )
+
+        if should_detailed_log:
             self.logger.log_info(f"🔍 DETAILED DISCRIMINATOR VALIDATION [Episode {episode}]")
             self.logger.log_info(f"   Accuracy: {results['accuracy']:.3f} | F1: {results['f1']:.3f}")
             self.logger.log_info(f"   Precision: {results['precision']:.3f} | Recall: {results['recall']:.3f}")
@@ -1068,9 +1086,14 @@ class AdvancedDiscriminatorMonitor:
                 self.logger.log_warning(f"   🚨 CRITICAL degradation - intervention needed")
 
     def check_and_handle_degradation(self, episode: int) -> bool:
-        """Controlla e gestisce degradazione del discriminatore"""
+        """Controlla e gestisce degradazione del discriminatore con RATE LIMITING"""
         if not self.perf_state.is_degrading():
             return False
+
+        # RATE LIMITING: Log warning solo se abbastanza tempo è passato
+        if not self._should_log_warning(episode):
+            # Gestisci la degradazione senza logging eccessivo
+            return self._handle_degradation_silently(episode)
 
         self.logger.log_warning(f"🚨 Discriminator degradation detected at episode {episode}")
 
@@ -1084,14 +1107,22 @@ class AdvancedDiscriminatorMonitor:
             self.logger.log_warning(f"⚠️  Moderate degradation - Adjusting training parameters")
             return self._handle_moderate_degradation(episode)
 
-    def _handle_critical_degradation(self, episode: int) -> bool:
+    def _handle_degradation_silently(self, episode: int) -> bool:
+        """Gestisce degradazione senza logging per evitare spam"""
+        if self.perf_state.is_critically_degraded():
+            return self._handle_critical_degradation(episode, silent=True)
+        else:
+            return self._handle_moderate_degradation(episode, silent=True)
+
+    def _handle_critical_degradation(self, episode: int, silent: bool = False) -> bool:
         """Gestisce degradazione critica con misure d'emergenza"""
         self.emergency_interventions += 1
 
         # Opzione 1: Rollback al miglior modello
         if self.best_model_state is not None and episode - self.backup_episode > 100:
-            self.logger.log_warning(
-                f"🔄 ROLLBACK: Restoring best discriminator state from episode {self.backup_episode}")
+            if not silent:
+                self.logger.log_warning(
+                    f"🔄 ROLLBACK: Restoring best discriminator state from episode {self.backup_episode}")
             self.discriminator.load_state_dict(self.best_model_state)
             self.rollback_count += 1
 
@@ -1103,13 +1134,14 @@ class AdvancedDiscriminatorMonitor:
 
         # Opzione 2: Riduzione drastica learning rate
         else:
-            self.logger.log_warning(f"🔧 EMERGENCY: Reducing discriminator learning rate")
+            if not silent:
+                self.logger.log_warning(f"🔧 EMERGENCY: Reducing discriminator learning rate")
             self.current_discriminator_lr *= 0.1
             self.current_update_frequency *= 3
 
             return False
 
-    def _handle_moderate_degradation(self, episode: int) -> bool:
+    def _handle_moderate_degradation(self, episode: int, silent: bool = False) -> bool:
         """Gestisce degradazione moderata con aggiustamenti graduali"""
         # Riduce learning rate del discriminatore
         self.current_discriminator_lr *= 0.8
@@ -1117,8 +1149,9 @@ class AdvancedDiscriminatorMonitor:
         # Aumenta frequenza di update
         self.current_update_frequency = max(25, int(self.current_update_frequency * 0.8))
 
-        self.logger.log_info(
-            f"🔧 Adjusted: LR={self.current_discriminator_lr:.2e}, Freq={self.current_update_frequency}")
+        if not silent:
+            self.logger.log_info(
+                f"🔧 Adjusted: LR={self.current_discriminator_lr:.2e}, Freq={self.current_update_frequency}")
 
         return False
 

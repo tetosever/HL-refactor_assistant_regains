@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Optimized Hyperparameters for Stable RL Training
+Optimized Hyperparameters for Stable RL Training with Advanced Learning Rate Strategies
 
 This file contains the improved hyperparameters that fix the issues in your training:
 1. Hub improvement tracking
 2. F1 score logging
 3. Better reward structure
-4. More stable learning rates
+4. Advanced learning rate strategies (CyclicLR + ReduceLROnPlateau)
 5. Improved exploration/exploitation balance
+6. Better adversarial stability
 """
 
 from dataclasses import dataclass
@@ -65,32 +66,75 @@ class ImprovedTrainingConfig:
 
 
 @dataclass
+class AdvancedLearningRateConfig:
+    """NEW: Advanced learning rate strategies for better adversarial stability"""
+
+    # === POLICY LEARNING RATE (CyclicLR) ===
+    policy_base_lr: float = 1e-6
+    policy_max_lr: float = 3e-5
+    policy_cyclical_step_size: int = 150  # Episodes per half cycle
+    policy_cyclical_mode: str = 'triangular2'  # Decaying max_lr over time
+    policy_gamma: float = 0.99994  # Decay factor for triangular2 mode
+
+    # === DISCRIMINATOR LEARNING RATE (ReduceLROnPlateau) ===
+    discriminator_initial_lr: float = 2e-5
+    discriminator_patience: int = 20  # Episodes to wait before reducing
+    discriminator_factor: float = 0.6  # Reduction factor
+    discriminator_min_lr: float = 1e-7
+    discriminator_threshold: float = 0.015  # Minimum change to qualify as improvement
+    discriminator_threshold_mode: str = 'abs'  # Absolute change
+    discriminator_cooldown: int = 10  # Episodes to wait after reduction
+    discriminator_eps: float = 1e-8  # Minimum decay
+
+    # === MONITORING METRICS FOR LR SCHEDULING ===
+    # For ReduceLROnPlateau - what metric to monitor for discriminator
+    discriminator_monitor_metric: str = 'f1'  # Options: 'accuracy', 'f1', 'loss'
+    discriminator_monitor_mode: str = 'max'  # 'max' for accuracy/f1, 'min' for loss
+
+    # === ADVANCED OPTIONS ===
+    # Enable learning rate warmup for both networks
+    enable_warmup: bool = True
+    warmup_episodes_policy: int = 100
+    warmup_episodes_discriminator: int = 150
+    warmup_factor: float = 0.1  # Start at 10% of base LR
+
+    # Enable learning rate restart for CyclicLR
+    enable_cyclical_restart: bool = True
+    restart_frequency_episodes: int = 1000  # Reset cycle every N episodes
+
+    # Adaptive learning rate based on adversarial balance
+    enable_adaptive_lr: bool = True
+    adaptive_factor_min: float = 0.5
+    adaptive_factor_max: float = 1.5
+    balance_threshold: float = 0.1  # When discriminator vs policy balance is off
+
+
+@dataclass
 class ImprovedOptimizationConfig:
-    """Improved optimization settings for stable learning"""
+    """Improved optimization settings for stable learning - integrated with advanced LR"""
 
-    # FIXED: Reduced learning rates for stability
-    policy_lr: float = 1e-5
-    discriminator_lr: float = 5e-6
-
-    # IMPROVED: Better optimizer settings
+    # BASE OPTIMIZER SETTINGS (the LR will be managed by schedulers)
     optimizer_eps: float = 1e-5
     weight_decay: float = 1e-4
     betas: tuple = (0.9, 0.999)
 
-    # FIXED: More conservative PPO parameters
+    # PPO PARAMETERS - more conservative for stability
     clip_epsilon: float = 0.15
     entropy_coefficient: float = 0.03
     value_coefficient: float = 0.5
     max_grad_norm: float = 0.5
 
-    # NEW: Learning rate scheduling
-    policy_lr_decay_step: int = 1000
-    disc_lr_decay_step: int = 500
-    lr_decay_factor: float = 0.95
-
-    # IMPROVED: Training epochs (reduced for stability)
+    # TRAINING EPOCHS - reduced for stability
     policy_epochs: int = 4
     discriminator_epochs: int = 4
+
+    # === DEPRECATED: Old LR parameters (kept for backward compatibility) ===
+    # These will be overridden by AdvancedLearningRateConfig
+    policy_lr: float = 1e-5  # Will be ignored if using CyclicLR
+    discriminator_lr: float = 5e-6  # Will be ignored if using ReduceLROnPlateau
+    policy_lr_decay_step: int = 2000  # Will be ignored
+    disc_lr_decay_step: int = 2000  # Will be ignored
+    lr_decay_factor: float = 0.98  # Will be ignored
 
 
 @dataclass
@@ -111,6 +155,12 @@ class ImprovedDiscriminatorConfig:
     calculate_detailed_metrics: bool = True
     log_confusion_matrix: bool = True
     use_balanced_sampling: bool = True
+
+    # NEW: Enhanced metrics for ReduceLROnPlateau
+    track_metric_history: bool = True
+    metric_history_window: int = 50  # Episodes to keep in history
+    enable_metric_smoothing: bool = True
+    smoothing_factor: float = 0.1  # EMA smoothing for noisy metrics
 
 
 @dataclass
@@ -133,20 +183,21 @@ class ImprovedEnvironmentConfig:
 
 
 def get_improved_config() -> Dict[str, Any]:
-    """Get complete improved configuration dictionary"""
+    """Get complete improved configuration dictionary with advanced learning rates"""
     return {
         'rewards': ImprovedRewardConfig(),
         'training': ImprovedTrainingConfig(),
         'optimization': ImprovedOptimizationConfig(),
         'discriminator': ImprovedDiscriminatorConfig(),
-        'environment': ImprovedEnvironmentConfig()
+        'environment': ImprovedEnvironmentConfig(),
+        'learning_rate': AdvancedLearningRateConfig()  # NEW: Advanced LR configuration
     }
 
 
 def print_config_summary():
-    """Print summary of key improvements"""
+    """Print summary of key improvements including advanced learning rate strategies"""
     print("🔧 KEY IMPROVEMENTS IN HYPERPARAMETERS:")
-    print("=" * 60)
+    print("=" * 70)
 
     print("1. FIXED HUB IMPROVEMENT TRACKING:")
     print(f"   - Lower threshold: {ImprovedTrainingConfig.hub_improvement_threshold}")
@@ -164,15 +215,26 @@ def print_config_summary():
     print(f"   - Increased success rewards: {ImprovedRewardConfig.REWARD_SUCCESS} (was 15.0)")
     print(f"   - NEW small improvement reward: {ImprovedRewardConfig.REWARD_SMALL_IMPROVEMENT}")
 
-    print("\n4. MORE STABLE LEARNING RATES:")
-    print(f"   - Policy LR: {ImprovedOptimizationConfig.policy_lr} (was 5e-4)")
-    print(f"   - Discriminator LR: {ImprovedOptimizationConfig.discriminator_lr} (was 1e-4)")
-    print(f"   - Clip epsilon: {ImprovedOptimizationConfig.clip_epsilon} (was 0.2)")
+    print("\n4. 🆕 ADVANCED LEARNING RATE STRATEGIES:")
+    lr_config = AdvancedLearningRateConfig()
+    print("   POLICY (CyclicLR):")
+    print(f"     - Base LR: {lr_config.policy_base_lr}")
+    print(f"     - Max LR: {lr_config.policy_max_lr}")
+    print(f"     - Cycle length: {lr_config.policy_cyclical_step_size * 2} episodes")
+    print(f"     - Mode: {lr_config.policy_cyclical_mode} (decaying peaks)")
 
-    print("\n5. BETTER TRAINING STABILITY:")
-    print(f"   - Reduced batch sizes: {ImprovedTrainingConfig.policy_batch_size}")
+    print("   DISCRIMINATOR (ReduceLROnPlateau):")
+    print(f"     - Initial LR: {lr_config.discriminator_initial_lr}")
+    print(f"     - Monitor: {lr_config.discriminator_monitor_metric} ({lr_config.discriminator_monitor_mode})")
+    print(f"     - Patience: {lr_config.discriminator_patience} episodes")
+    print(f"     - Reduction factor: {lr_config.discriminator_factor}")
+    print(f"     - Min LR: {lr_config.discriminator_min_lr}")
+
+    print("\n5. MORE STABLE TRAINING:")
+    print(f"   - Better batch sizes: {ImprovedTrainingConfig.policy_batch_size}")
     print(f"   - More frequent updates: every {ImprovedTrainingConfig.update_frequency} episodes")
     print(f"   - Reduced training epochs: {ImprovedOptimizationConfig.policy_epochs}")
+    print(f"   - Conservative PPO clip: {ImprovedOptimizationConfig.clip_epsilon}")
 
     print("\n6. IMPROVED ENVIRONMENT DIVERSITY:")
     print(f"   - More frequent refresh: every {ImprovedTrainingConfig.environment_refresh_frequency} episodes")
@@ -180,11 +242,39 @@ def print_config_summary():
     print(
         f"   - Better graph size range: {ImprovedEnvironmentConfig.min_graph_size}-{ImprovedEnvironmentConfig.max_graph_size} nodes")
 
-    print("=" * 60)
+    print("\n7. 🆕 ADDITIONAL ADVANCED FEATURES:")
+    print(f"   - Warmup enabled: {lr_config.enable_warmup}")
+    print(f"   - Adaptive LR balancing: {lr_config.enable_adaptive_lr}")
+    print(f"   - Cyclical restarts: {lr_config.enable_cyclical_restart}")
+    print(f"   - Metric smoothing: {ImprovedDiscriminatorConfig.enable_metric_smoothing}")
+
+    print("=" * 70)
+
+
+def get_scheduler_info() -> Dict[str, str]:
+    """Get information about the learning rate scheduling strategy"""
+    return {
+        'policy_scheduler': 'CyclicLR',
+        'policy_description': 'Oscillates between base_lr and max_lr with triangular2 mode (decaying peaks)',
+        'discriminator_scheduler': 'ReduceLROnPlateau',
+        'discriminator_description': 'Reduces LR when F1/accuracy plateaus, with patience and minimum thresholds',
+        'strategy_rationale': 'Policy maintains exploration via oscillations, discriminator stabilizes when struggling',
+        'adversarial_benefit': 'Prevents discriminator collapse while keeping policy dynamic'
+    }
 
 
 if __name__ == "__main__":
     print_config_summary()
+
+    print("\n" + "=" * 70)
+    print("🧠 LEARNING RATE STRATEGY EXPLANATION:")
+    print("=" * 70)
+
+    scheduler_info = get_scheduler_info()
+    print(f"Policy: {scheduler_info['policy_description']}")
+    print(f"Discriminator: {scheduler_info['discriminator_description']}")
+    print(f"Rationale: {scheduler_info['strategy_rationale']}")
+    print(f"Benefit: {scheduler_info['adversarial_benefit']}")
 
     # Example usage
     config = get_improved_config()
@@ -194,9 +284,15 @@ if __name__ == "__main__":
         reward = rewards.REWARD_SMALL_IMPROVEMENT * 0.05
         print(f"   Reward: {reward:.3f} (vs 0.0 in old system)")
 
-    print(f"\n📊 Example F1 calculation will now include:")
-    disc_config = config['discriminator']
-    if disc_config.calculate_detailed_metrics:
-        print("   ✅ True Positives, False Positives, True Negatives, False Negatives")
-        print("   ✅ Precision, Recall, F1 score")
-        print("   ✅ Balanced sampling for accurate metrics")
+    print(f"\n📊 Advanced LR example - CyclicLR for Policy:")
+    lr_config = config['learning_rate']
+    print(f"   Episode 0: LR = {lr_config.policy_base_lr:.2e}")
+    print(f"   Episode 150: LR = {lr_config.policy_max_lr:.2e} (peak)")
+    print(f"   Episode 300: LR = {lr_config.policy_base_lr:.2e} (valley)")
+    print(f"   Episode 450: LR = {lr_config.policy_max_lr * lr_config.gamma ** 150:.2e} (decayed peak)")
+
+    print(f"\n📊 Advanced LR example - ReduceLROnPlateau for Discriminator:")
+    print(f"   Starts at: {lr_config.discriminator_initial_lr:.2e}")
+    print(f"   If F1 doesn't improve for {lr_config.discriminator_patience} episodes:")
+    print(f"   Reduces to: {lr_config.discriminator_initial_lr * lr_config.discriminator_factor:.2e}")
+    print(f"   Minimum LR: {lr_config.discriminator_min_lr:.2e}")
