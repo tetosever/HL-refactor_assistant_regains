@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-Optimized Hyperparameters for Stable RL Training with Advanced Learning Rate Strategies
+STRUCTURED Adversarial Training with Warm-up and Phased Updates
 
-This file contains the improved hyperparameters that fix the issues in your training:
-1. Hub improvement tracking
-2. F1 score logging
-3. Better reward structure
-4. Advanced learning rate strategies (CyclicLR + ReduceLROnPlateau)
-5. Improved exploration/exploitation balance
-6. Better adversarial stability
+Strategia:
+1. WARM-UP (episodi 0-N): Solo roll-out, no updates
+2. POLICY UPDATES: Ogni 5 episodi, 4 epoche PPO
+3. DISCRIMINATOR UPDATES: Ogni 10 policy updates (50 episodi), 2 epoche
 """
 
 from dataclasses import dataclass
@@ -17,74 +14,84 @@ from typing import Dict, Any
 
 @dataclass
 class ImprovedRewardConfig:
-    """Balanced reward structure with stronger incentives for partial gains"""
+    """Balanced reward structure"""
     REWARD_SUCCESS: float = 5.0
-    REWARD_PARTIAL_SUCCESS: float = 2.0  # increased to motivate partial improvements
+    REWARD_PARTIAL_SUCCESS: float = 2.0
     REWARD_FAILURE: float = -1.0
     REWARD_STEP: float = -0.02
     REWARD_HUB_REDUCTION: float = 10.0
     REWARD_INVALID: float = -0.5
     REWARD_SMALL_IMPROVEMENT: float = 0.5
 
-    HUB_SCORE_EXCELLENT: float = 0.05  # lowered threshold for more frequent rewards
+    HUB_SCORE_EXCELLENT: float = 0.05
     HUB_SCORE_GOOD: float = 0.3
     HUB_SCORE_ACCEPTABLE: float = 0.6
 
     improvement_multiplier_boost: float = 1.1
-    improvement_multiplier_decay: float = 0.90  # faster decay to prevent runaway scaling
+    improvement_multiplier_decay: float = 0.90
     improvement_multiplier_max: float = 2.0
     improvement_multiplier_min: float = 0.5
 
 
 @dataclass
-class ImprovedTrainingConfig:
-    """Episode and update scheduling for improved learning stability"""
+class StructuredTrainingConfig:
+    """🆕 STRUCTURED training with explicit phases"""
     num_episodes: int = 8000
     num_envs: int = 16
     steps_per_env: int = 24
     max_steps_per_episode: int = 20
 
-    update_frequency: int = 8
+    # 🔥 WARM-UP PHASE
+    warmup_episodes: int = 100  # Solo roll-out per i primi 100 episodi
+
+    # 🔥 POLICY UPDATE SCHEDULE
+    policy_update_frequency: int = 5  # Ogni 5 episodi
+    policy_epochs_per_update: int = 4  # 4 epoche PPO
+    policy_batch_size: int = 32
+
+    # 🔥 DISCRIMINATOR UPDATE SCHEDULE
+    discriminator_update_frequency: int = 10  # Ogni 10 policy updates (= 50 episodi)
+    discriminator_epochs_per_update: int = 2  # 2 epoche per update
+    discriminator_batch_size: int = 16
+
+    # Environment settings
     environment_refresh_frequency: int = 300
     hub_improvement_threshold: float = 0.005
     consecutive_failures_threshold: int = 50
 
-    policy_batch_size: int = 32  # increased for smoother gradients
-    discriminator_batch_size: int = 16
-
 
 @dataclass
 class ImprovedOptimizationConfig:
-    """Conservative PPO and optimizer settings"""
+    """Conservative PPO settings for structured training"""
     optimizer_eps: float = 1e-5
     weight_decay: float = 1e-4
     betas: tuple = (0.9, 0.999)
 
-    clip_epsilon: float = 0.10  # tighter clipping
-    entropy_coefficient: float = 0.015  # reduced entropy bonus
+    # Tighter PPO settings for more stable updates
+    clip_epsilon: float = 0.15  # Slightly more permissive
+    entropy_coefficient: float = 0.02  # Bit more exploration
     value_coefficient: float = 0.5
     max_grad_norm: float = 0.5
 
-    policy_epochs: int = 4
-    discriminator_epochs: int = 4
+    # Note: epochs now controlled by StructuredTrainingConfig
 
 
 @dataclass
 class ImprovedDiscriminatorConfig:
-    """Fixed discriminator training to avoid early stops"""
-    early_stop_threshold: float = 0.60  # stricter early-stop threshold
-    label_smoothing: float = 0.05
-    gradient_penalty_lambda: float = 5.0
-    update_frequency_multiplier: int = 75  # more batches before retraining
-    min_samples_per_class: int = 8
-    max_samples_per_class: int = 16
+    """Discriminator config optimized for structured updates"""
+    early_stop_threshold: float = 0.45  # More permissive
+    label_smoothing: float = 0.1  # More smoothing for stability
+    gradient_penalty_lambda: float = 1.0  # Reduced for gentler training
+
+    min_samples_per_class: int = 12  # Slightly more data per update
+    max_samples_per_class: int = 24
     calculate_detailed_metrics: bool = True
-    log_confusion_matrix: bool = True
+    log_confusion_matrix: bool = False  # Reduce log spam
     use_balanced_sampling: bool = True
     track_metric_history: bool = True
-    metric_history_window: int = 50
+    metric_history_window: int = 20
     enable_metric_smoothing: bool = True
-    smoothing_factor: float = 0.1
+    smoothing_factor: float = 0.3
 
 
 @dataclass
@@ -99,113 +106,190 @@ class ImprovedEnvironmentConfig:
     track_pattern_usage: bool = True
 
 
-# ✅ FIX CRITICO 1: Aggiunta classe mancante
 @dataclass
-class AdvancedLearningRateConfig:
-    """Advanced learning rate configuration with multiple strategies"""
+class StructuredLearningRateConfig:
+    """Learning rates optimized for structured training"""
 
-    # Policy Learning Rate (CyclicLR)
-    policy_base_lr: float = 3e-4
-    policy_max_lr: float = 1e-3
-    policy_cyclical_step_size: int = 150
-    policy_cyclical_mode: str = 'triangular2'
-    policy_gamma: float = 0.99
+    # Policy Learning Rate - Più stabile per update frequenti
+    policy_initial_lr: float = 3e-4
+    policy_min_lr: float = 1e-5
+    policy_decay_factor: float = 0.95  # Gentle decay ogni tot policy updates
+    policy_decay_frequency: int = 20  # Decay ogni 20 policy updates
 
-    # Discriminator Learning Rate (ReduceLROnPlateau)
-    discriminator_initial_lr: float = 1e-4
-    discriminator_monitor_metric: str = 'f1'
-    discriminator_monitor_mode: str = 'max'
-    discriminator_factor: float = 0.5
-    discriminator_patience: int = 10
-    discriminator_threshold: float = 0.01
-    discriminator_threshold_mode: str = 'rel'
-    discriminator_cooldown: int = 5
-    discriminator_min_lr: float = 1e-6
-    discriminator_eps: float = 1e-8
+    # Discriminator Learning Rate - Stabile e conservativo
+    discriminator_lr: float = 2e-4  # Fisso - no scheduling complesso
+    discriminator_min_lr: float = 1e-5
+    discriminator_max_lr: float = 5e-4
 
-    # Advanced features
-    enable_warmup: bool = True
-    enable_adaptive_lr: bool = True
-    enable_cyclical_restart: bool = True
+
+@dataclass
+class StructuredAdversarialConfig:
+    """🆕 Configurazione per adversarial training strutturato"""
+
+    # Buffer Management
+    experience_buffer_size: int = 1000  # Mantieni ultimi 1000 roll-out examples
+    discriminator_real_data_ratio: float = 0.5  # 50% real, 50% generated
+
+    # Safety checks
+    max_discriminator_accuracy: float = 0.92  # Pausa se troppo forte
+    min_discriminator_accuracy: float = 0.58  # Force update se troppo debole
+
+    # Phase tracking
+    track_phase_metrics: bool = True
+    log_phase_transitions: bool = True
+
+    # Emergency controls
+    enable_discriminator_pause: bool = True
+    discriminator_pause_episodes: int = 25  # Pausa per 25 episodi se troppo forte
+
+
+@dataclass
+class ExperienceBuffer:
+    """🆕 Buffer per mantenere esempi di roll-out"""
+
+    def __init__(self, max_size: int = 1000):
+        self.max_size = max_size
+        self.buffer = []
+        self.pointer = 0
+
+    def add_rollout_data(self, states, rewards, hub_scores):
+        """Aggiungi dati di roll-out al buffer"""
+        rollout_data = {
+            'states': states,
+            'rewards': rewards,
+            'hub_scores': hub_scores,
+            'episode': len(self.buffer)
+        }
+
+        if len(self.buffer) < self.max_size:
+            self.buffer.append(rollout_data)
+        else:
+            self.buffer[self.pointer] = rollout_data
+            self.pointer = (self.pointer + 1) % self.max_size
+
+    def get_recent_states(self, num_samples: int = 50):
+        """Ottieni stati recenti per discriminatore"""
+        all_states = []
+        for rollout in self.buffer[-10:]:  # Ultimi 10 roll-out
+            all_states.extend(rollout['states'])
+
+        if len(all_states) >= num_samples:
+            import random
+            return random.sample(all_states, num_samples)
+        return all_states
+
+    def get_buffer_stats(self):
+        """Statistiche del buffer"""
+        return {
+            'size': len(self.buffer),
+            'total_states': sum(len(r['states']) for r in self.buffer),
+            'avg_reward': sum(sum(r['rewards']) for r in self.buffer) / max(len(self.buffer), 1),
+            'latest_episode': self.buffer[-1]['episode'] if self.buffer else 0
+        }
 
 
 def get_improved_config() -> Dict[str, Any]:
     return {
         'rewards': ImprovedRewardConfig(),
-        'training': ImprovedTrainingConfig(),
+        'training': StructuredTrainingConfig(),
         'optimization': ImprovedOptimizationConfig(),
         'discriminator': ImprovedDiscriminatorConfig(),
         'environment': ImprovedEnvironmentConfig(),
-        'learning_rate': AdvancedLearningRateConfig()
+        'learning_rate': StructuredLearningRateConfig(),
+        'adversarial': StructuredAdversarialConfig()
     }
 
 
 def print_config_summary():
-    """Print summary of key improvements including advanced learning rate strategies"""
-    print("🔧 KEY IMPROVEMENTS IN HYPERPARAMETERS:")
+    """Print summary of structured training approach"""
+    print("🔧 STRUCTURED ADVERSARIAL TRAINING STRATEGY:")
     print("=" * 70)
 
-    print("1. FIXED HUB IMPROVEMENT TRACKING:")
-    print(f"   - Lower threshold: {ImprovedTrainingConfig.hub_improvement_threshold}")
-    print(f"   - New reward for small improvements: {ImprovedRewardConfig.REWARD_SMALL_IMPROVEMENT}")
-    print(f"   - Progressive reward multipliers: {ImprovedRewardConfig.improvement_multiplier_boost}")
+    config = get_improved_config()
+    training_config = config['training']
+    lr_config = config['learning_rate']
+    adv_config = config['adversarial']
 
-    print("\n2. FIXED F1 SCORE LOGGING:")
-    print(f"   - Detailed metrics calculation: {ImprovedDiscriminatorConfig.calculate_detailed_metrics}")
-    print(f"   - Confusion matrix logging: {ImprovedDiscriminatorConfig.log_confusion_matrix}")
-    print(f"   - Balanced sampling: {ImprovedDiscriminatorConfig.use_balanced_sampling}")
+    print(f"🌅 1. WARM-UP PHASE (Episodes 0-{training_config.warmup_episodes}):")
+    print("   - ONLY rollout collection")
+    print("   - NO policy updates")
+    print("   - NO discriminator updates")
+    print("   - Build experience buffer")
+    print("   - Let discriminator see initial 'real' examples")
 
-    print("\n3. BETTER REWARD STRUCTURE:")
-    print(f"   - Reduced step penalty: {ImprovedRewardConfig.REWARD_STEP} (was -0.1)")
-    print(f"   - Reduced failure penalty: {ImprovedRewardConfig.REWARD_FAILURE} (was -3.0)")
-    print(f"   - Increased success rewards: {ImprovedRewardConfig.REWARD_SUCCESS} (was 15.0)")
-    print(f"   - NEW small improvement reward: {ImprovedRewardConfig.REWARD_SMALL_IMPROVEMENT}")
+    print(f"\n🎯 2. POLICY UPDATE PHASE (Every {training_config.policy_update_frequency} episodes):")
+    print(f"   - {training_config.policy_epochs_per_update} epochs of PPO")
+    print(f"   - Batch size: {training_config.policy_batch_size}")
+    print(f"   - Learning rate: {lr_config.policy_initial_lr:.2e}")
+    print(f"   - Tight clipping: {config['optimization'].clip_epsilon}")
+    print("   - Small, stable steps")
 
-    print("\n4. 🆕 ADVANCED LEARNING RATE STRATEGIES:")
-    lr_config = AdvancedLearningRateConfig()
-    print("   POLICY (CyclicLR):")
-    print(f"     - Base LR: {lr_config.policy_base_lr}")
-    print(f"     - Max LR: {lr_config.policy_max_lr}")
-    print(f"     - Cycle length: {lr_config.policy_cyclical_step_size * 2} episodes")
-    print(f"     - Mode: {lr_config.policy_cyclical_mode} (decaying peaks)")
-
-    print("   DISCRIMINATOR (ReduceLROnPlateau):")
-    print(f"     - Initial LR: {lr_config.discriminator_initial_lr}")
-    print(f"     - Monitor: {lr_config.discriminator_monitor_metric} ({lr_config.discriminator_monitor_mode})")
-    print(f"     - Patience: {lr_config.discriminator_patience} episodes")
-    print(f"     - Reduction factor: {lr_config.discriminator_factor}")
-    print(f"     - Min LR: {lr_config.discriminator_min_lr}")
-
-    print("\n5. MORE STABLE TRAINING:")
-    print(f"   - Better batch sizes: {ImprovedTrainingConfig.policy_batch_size}")
-    print(f"   - More frequent updates: every {ImprovedTrainingConfig.update_frequency} episodes")
-    print(f"   - Reduced training epochs: {ImprovedOptimizationConfig.policy_epochs}")
-    print(f"   - Conservative PPO clip: {ImprovedOptimizationConfig.clip_epsilon}")
-
-    print("\n6. IMPROVED ENVIRONMENT DIVERSITY:")
-    print(f"   - More frequent refresh: every {ImprovedTrainingConfig.environment_refresh_frequency} episodes")
-    print(f"   - Failure detection: reset after {ImprovedTrainingConfig.consecutive_failures_threshold} failures")
+    print(f"\n🧠 3. DISCRIMINATOR UPDATE PHASE (Every {training_config.discriminator_update_frequency} policy updates):")
     print(
-        f"   - Better graph size range: {ImprovedEnvironmentConfig.min_graph_size}-{ImprovedEnvironmentConfig.max_graph_size} nodes")
+        f"   - Frequency: Every {training_config.policy_update_frequency * training_config.discriminator_update_frequency} episodes")
+    print(f"   - {training_config.discriminator_epochs_per_update} epochs per update")
+    print(
+        f"   - Mix: {adv_config.discriminator_real_data_ratio:.0%} real + {1 - adv_config.discriminator_real_data_ratio:.0%} generated")
+    print(f"   - Learning rate: {lr_config.discriminator_lr:.2e} (fixed)")
+    print("   - Stays aligned but doesn't become too strong")
 
-    print("\n7. 🆕 ADDITIONAL ADVANCED FEATURES:")
-    print(f"   - Warmup enabled: {lr_config.enable_warmup}")
-    print(f"   - Adaptive LR balancing: {lr_config.enable_adaptive_lr}")
-    print(f"   - Cyclical restarts: {lr_config.enable_cyclical_restart}")
-    print(f"   - Metric smoothing: {ImprovedDiscriminatorConfig.enable_metric_smoothing}")
+    print(f"\n📊 4. TIMELINE EXAMPLE (first 200 episodes):")
+    warmup = training_config.warmup_episodes
+    policy_freq = training_config.policy_update_frequency
+    disc_freq = training_config.discriminator_update_frequency
 
+    print(f"   Episodes 0-{warmup}: Warm-up only")
+    print(f"   Episode {warmup + policy_freq}: First policy update")
+    print(f"   Episode {warmup + 2 * policy_freq}: Second policy update")
+    print(f"   Episode {warmup + policy_freq * disc_freq}: First discriminator update")
+    print(f"   Episode {warmup + policy_freq * disc_freq * 2}: Second discriminator update")
+
+    print(f"\n⚖️  5. ADVERSARIAL BALANCE CONTROLS:")
+    print(f"   - Experience buffer size: {adv_config.experience_buffer_size}")
+    print(f"   - Discriminator pause if accuracy > {adv_config.max_discriminator_accuracy}")
+    print(f"   - Force update if accuracy < {adv_config.min_discriminator_accuracy}")
+    print(f"   - Emergency pause duration: {adv_config.discriminator_pause_episodes} episodes")
+
+    print("\n" + "=" * 70)
+    print("🎯 EXPECTED BENEFITS:")
+    print("✅ Stable warm-up prevents early instability")
+    print("✅ Regular policy updates with tight control")
+    print("✅ Discriminator stays aligned but not overpowering")
+    print("✅ Clear phase separation prevents conflicts")
+    print("✅ Experience buffer maintains training diversity")
     print("=" * 70)
 
 
-def get_scheduler_info() -> Dict[str, str]:
-    """Get information about the learning rate scheduling strategy"""
+def get_training_schedule_info(episode: int) -> Dict[str, Any]:
+    """Get training schedule information for current episode"""
+    config = get_improved_config()
+    training_config = config['training']
+
+    warmup = training_config.warmup_episodes
+    policy_freq = training_config.policy_update_frequency
+    disc_freq = training_config.discriminator_update_frequency
+
+    if episode < warmup:
+        phase = "warmup"
+        next_policy_update = warmup + policy_freq
+        next_disc_update = warmup + (policy_freq * disc_freq)
+    else:
+        episodes_since_warmup = episode - warmup
+        policy_updates_so_far = episodes_since_warmup // policy_freq
+
+        phase = "training"
+        next_policy_update = warmup + ((policy_updates_so_far + 1) * policy_freq)
+        next_disc_update = warmup + (((policy_updates_so_far // disc_freq) + 1) * policy_freq * disc_freq)
+
     return {
-        'policy_scheduler': 'CyclicLR',
-        'policy_description': 'Oscillates between base_lr and max_lr with triangular2 mode (decaying peaks)',
-        'discriminator_scheduler': 'ReduceLROnPlateau',
-        'discriminator_description': 'Reduces LR when F1/accuracy plateaus, with patience and minimum thresholds',
-        'strategy_rationale': 'Policy maintains exploration via oscillations, discriminator stabilizes when struggling',
-        'adversarial_benefit': 'Prevents discriminator collapse while keeping policy dynamic'
+        'phase': phase,
+        'policy_updates_completed': max(0, (episode - warmup) // policy_freq) if episode >= warmup else 0,
+        'discriminator_updates_completed': max(0, (episode - warmup) // (
+                    policy_freq * disc_freq)) if episode >= warmup else 0,
+        'next_policy_update_episode': next_policy_update,
+        'next_discriminator_update_episode': next_disc_update,
+        'episodes_until_next_policy': max(0, next_policy_update - episode),
+        'episodes_until_next_discriminator': max(0, next_disc_update - episode)
     }
 
 
@@ -213,32 +297,18 @@ if __name__ == "__main__":
     print_config_summary()
 
     print("\n" + "=" * 70)
-    print("🧠 LEARNING RATE STRATEGY EXPLANATION:")
+    print("📅 TRAINING SCHEDULE EXAMPLES:")
     print("=" * 70)
 
-    scheduler_info = get_scheduler_info()
-    print(f"Policy: {scheduler_info['policy_description']}")
-    print(f"Discriminator: {scheduler_info['discriminator_description']}")
-    print(f"Rationale: {scheduler_info['strategy_rationale']}")
-    print(f"Benefit: {scheduler_info['adversarial_benefit']}")
+    # Show schedule for key episodes
+    key_episodes = [0, 50, 100, 105, 110, 155, 200, 255]
 
-    # Example usage
-    config = get_improved_config()
-    print(f"\n📊 Example reward for 0.05 hub improvement:")
-    rewards = config['rewards']
-    if 0.05 > 0.01:  # Above small improvement threshold
-        reward = rewards.REWARD_SMALL_IMPROVEMENT * 0.05
-        print(f"   Reward: {reward:.3f} (vs 0.0 in old system)")
+    for ep in key_episodes:
+        schedule = get_training_schedule_info(ep)
+        print(f"Episode {ep:3d}: {schedule['phase']:>8} | "
+              f"Policy: {schedule['policy_updates_completed']:2d} | "
+              f"Disc: {schedule['discriminator_updates_completed']:2d} | "
+              f"Next P: {schedule['episodes_until_next_policy']:2d} | "
+              f"Next D: {schedule['episodes_until_next_discriminator']:2d}")
 
-    print(f"\n📊 Advanced LR example - CyclicLR for Policy:")
-    lr_config = config['learning_rate']
-    print(f"   Episode 0: LR = {lr_config.policy_base_lr:.2e}")
-    print(f"   Episode 150: LR = {lr_config.policy_max_lr:.2e} (peak)")
-    print(f"   Episode 300: LR = {lr_config.policy_base_lr:.2e} (valley)")
-    print(f"   Episode 450: LR = {lr_config.policy_max_lr * lr_config.gamma ** 150:.2e} (decayed peak)")
-
-    print(f"\n📊 Advanced LR example - ReduceLROnPlateau for Discriminator:")
-    print(f"   Starts at: {lr_config.discriminator_initial_lr:.2e}")
-    print(f"   If F1 doesn't improve for {lr_config.discriminator_patience} episodes:")
-    print(f"   Reduces to: {lr_config.discriminator_initial_lr * lr_config.discriminator_factor:.2e}")
-    print(f"   Minimum LR: {lr_config.discriminator_min_lr:.2e}")
+    print("\nLegend: P=Policy updates, D=Discriminator updates, Next=episodes until next update")
