@@ -45,30 +45,83 @@ class RefactoringAction:
     terminate: bool
     confidence: float = 0.0
 
-class EnhancedEnvironmentManager:
-    """Manages diverse graph pools for better exploration"""
+
+@dataclass
+class AdaptiveDifficultyConfig:
+    """🎯 Configuration for adaptive difficulty curriculum"""
+
+    # Target performance metrics
+    target_success_rate: float = 0.65  # Optimal success rate (65%)
+    success_rate_window: int = 100  # Episodes to measure success
+
+    # Difficulty adjustment thresholds
+    difficulty_increase_threshold: float = 0.80  # Increase difficulty if success > 80%
+    difficulty_decrease_threshold: float = 0.45  # Decrease if success < 45%
+
+    # Adjustment parameters
+    adjustment_strength: float = 0.08  # How much to adjust difficulty
+    min_difficulty: float = 0.0  # Minimum difficulty (easiest graphs)
+    max_difficulty: float = 1.0  # Maximum difficulty (hardest graphs)
+
+    # Graph sharing for stability
+    same_graph_policy_updates: int = 2  # Same graph for 2 policy updates
+
+    # Complexity factors for difficulty calculation
+    size_weight: float = 0.4  # Weight for graph size
+    connectivity_weight: float = 0.4  # Weight for connectivity density
+    hub_strength_weight: float = 0.2  # Weight for hub strength
+
+    # Stability features
+    difficulty_smoothing: float = 0.7  # Exponential smoothing for difficulty changes
+    min_episodes_before_adjustment: int = 50  # Minimum episodes before first adjustment
+
+
+class AdaptiveDifficultyEnvironmentManager:
+    """🎯 Enhanced Environment Manager with Adaptive Difficulty Curriculum"""
 
     def __init__(self, data_loader: UnifiedDataLoader, discriminator: nn.Module,
-                 env_config, device: torch.device = torch.device('cpu')):
+                 adaptive_config: AdaptiveDifficultyConfig, device: torch.device = torch.device('cpu')):
         self.data_loader = data_loader
         self.discriminator = discriminator
-        self.pool_size = env_config.graph_pool_size
+        self.adaptive_config = adaptive_config
         self.device = device
-        self.pool_refresh_episodes = env_config.pool_refresh_episodes
 
-        # Graph pools
-        self.smelly_pool = []
-        self.pool_refresh_counter = 0
+        # Adaptive difficulty state
+        self.current_difficulty = 0.3  # Start with moderate difficulty
+        self.success_rate_history = []
+        self.difficulty_history = []
+        self.difficulty_adjustments = []
+
+        # Graph pools organized by difficulty levels
+        self.difficulty_pools = {}  # {difficulty_level: [graphs]}
+        self.graph_complexity_scores = {}  # {graph_id: complexity_score}
+
+        # Shared graph management for stability
+        self.current_shared_graph = None
+        self.policy_updates_with_current_graph = 0
+        self.shared_graph_history = []
+
+        # Statistics
         self.total_graphs_seen = 0
+        self.pool_refresh_counter = 0
+        self.complexity_distribution_stats = {}
 
-        self._initialize_graph_pool()
+        # Logger (will be set externally)
+        self.logger = None
 
-    def _initialize_graph_pool(self):
-        """Initialize diverse graph pool"""
+        # Initialize difficulty-based pools
+        self._initialize_difficulty_pools()
+
+    def set_logger(self, logger):
+        """Set logger for curriculum tracking"""
+        self.logger = logger
+
+    def _initialize_difficulty_pools(self):
+        """Initialize graph pools organized by difficulty levels"""
         try:
-            # Load larger sample for diversity
+            # Load comprehensive dataset for analysis
             smelly_data, labels = self.data_loader.load_dataset(
-                max_samples_per_class=self.pool_size * 3,
+                max_samples_per_class=1000,  # Large sample for good distribution
                 shuffle=True,
                 validate_all=False,
                 remove_metadata=True
@@ -77,85 +130,284 @@ class EnhancedEnvironmentManager:
             # Filter smelly graphs only
             smelly_candidates = [data for data, label in zip(smelly_data, labels) if label == 1]
 
-            if len(smelly_candidates) < self.pool_size:
-                self.pool_size = len(smelly_candidates)
+            if self.logger:
+                self.logger.log_info(f"🎯 ADAPTIVE DIFFICULTY: Analyzing {len(smelly_candidates)} smelly graphs")
 
-            # Select diverse subset
-            self.smelly_pool = self._select_diverse_graphs(smelly_candidates, self.pool_size)
+            # Compute complexity scores for all graphs
+            complexity_scores = []
+            for i, graph in enumerate(smelly_candidates):
+                complexity_score = self._compute_complexity_score(graph)
+                complexity_scores.append((i, graph, complexity_score))
+                self.graph_complexity_scores[i] = complexity_score
+
+            # Sort by complexity
+            complexity_scores.sort(key=lambda x: x[2])
+
+            # Create 10 difficulty bins (0.0-0.1, 0.1-0.2, ..., 0.9-1.0)
+            num_bins = 10
+            graphs_per_bin = len(complexity_scores) // num_bins
+
+            for bin_idx in range(num_bins):
+                difficulty_level = bin_idx / (num_bins - 1)  # 0.0 to 1.0
+
+                start_idx = bin_idx * graphs_per_bin
+                end_idx = start_idx + graphs_per_bin if bin_idx < num_bins - 1 else len(complexity_scores)
+
+                # Extract graphs for this difficulty level
+                bin_graphs = [complexity_scores[i][1] for i in range(start_idx, end_idx)]
+                self.difficulty_pools[difficulty_level] = bin_graphs
+
+                # Statistics
+                bin_complexities = [complexity_scores[i][2] for i in range(start_idx, end_idx)]
+                self.complexity_distribution_stats[difficulty_level] = {
+                    'count': len(bin_graphs),
+                    'avg_complexity': np.mean(bin_complexities),
+                    'min_complexity': min(bin_complexities),
+                    'max_complexity': max(bin_complexities),
+                    'avg_size': np.mean([g.x.size(0) for g in bin_graphs]),
+                    'size_range': [min([g.x.size(0) for g in bin_graphs]), max([g.x.size(0) for g in bin_graphs])]
+                }
+
+            if self.logger:
+                self.logger.log_info(f"✅ Created {num_bins} difficulty pools:")
+                for difficulty, stats in self.complexity_distribution_stats.items():
+                    self.logger.log_info(f"   Difficulty {difficulty:.1f}: {stats['count']} graphs, "
+                                         f"avg complexity {stats['avg_complexity']:.3f}, "
+                                         f"avg size {stats['avg_size']:.1f}")
 
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize graph pool: {e}")
+            raise RuntimeError(f"Failed to initialize adaptive difficulty pools: {e}")
 
-    def _select_diverse_graphs(self, candidates: List[Data], target_size: int) -> List[Data]:
-        """Select diverse graphs based on size and complexity"""
-        if len(candidates) <= target_size:
-            return candidates
-
-        env_config = get_improved_config()['environment']
-
-        # Filter by size range
-        size_filtered = [
-            g for g in candidates
-            if env_config.min_graph_size <= g.x.size(0) <= env_config.max_graph_size
-        ]
-
-        if not size_filtered:
-            size_filtered = candidates
-
-        # Sort by graph size for diversity
-        size_sorted = sorted(size_filtered, key=lambda x: x.x.size(0))
-
-        # Select spread across sizes using diversity bins
-        selected = []
-        if env_config.size_diversity_bins > 0:
-            bin_size = len(size_sorted) // env_config.size_diversity_bins
-            for i in range(env_config.size_diversity_bins):
-                start_idx = i * bin_size
-                end_idx = min((i + 1) * bin_size, len(size_sorted))
-                if start_idx < len(size_sorted):
-                    bin_graphs = size_sorted[start_idx:end_idx]
-                    if bin_graphs:
-                        selected.append(random.choice(bin_graphs))
-
-        # Fill remaining with random selection
-        remaining = [g for g in size_filtered if g not in selected]
-        while len(selected) < target_size and remaining:
-            selected.append(remaining.pop(random.randint(0, len(remaining) - 1)))
-
-        return selected[:target_size]
-
-    def get_random_graph(self) -> Data:
-        """Get random graph from pool"""
-        if not self.smelly_pool:
-            self._refresh_pool()
-
-        graph = random.choice(self.smelly_pool).clone()
-        graph = graph.to(self.device)
-        self.total_graphs_seen += 1
-
-        return graph
-
-    def _refresh_pool(self):
-        """Refresh the graph pool with new samples"""
-        self.pool_refresh_counter += 1
+    def _compute_complexity_score(self, graph: Data) -> float:
+        """Compute normalized complexity score for a graph (0.0 = easiest, 1.0 = hardest)"""
         try:
-            self._initialize_graph_pool()
+            num_nodes = graph.x.size(0)
+            num_edges = graph.edge_index.size(1)
+
+            # Size component (normalized to 0-1)
+            size_score = min(num_nodes / 50.0, 1.0)  # Assume max reasonable size is 50
+
+            # Connectivity component (edges per node, normalized)
+            connectivity_score = min((num_edges / max(num_nodes, 1)) / 10.0, 1.0) if num_nodes > 0 else 0
+
+            # Hub strength component (max degree normalized)
+            if num_edges > 0:
+                # Count degrees
+                degrees = torch.bincount(graph.edge_index[0], minlength=num_nodes)
+                max_degree = degrees.max().item()
+                hub_score = min(max_degree / 20.0, 1.0)  # Assume max reasonable degree is 20
+            else:
+                hub_score = 0.0
+
+            # Weighted combination
+            total_score = (
+                    self.adaptive_config.size_weight * size_score +
+                    self.adaptive_config.connectivity_weight * connectivity_score +
+                    self.adaptive_config.hub_strength_weight * hub_score
+            )
+
+            # Clamp to [0, 1]
+            return max(0.0, min(1.0, total_score))
+
         except Exception as e:
-            raise RuntimeError(f"Pool refresh failed: {e}")
+            if self.logger:
+                self.logger.log_warning(f"Complexity computation failed: {e}")
+            return 0.5  # Fallback to medium complexity
 
-    def should_refresh_pool(self, episode: int) -> bool:
-        """Check if pool should be refreshed"""
-        return episode > 0 and episode % self.pool_refresh_episodes == 0
+    def update_difficulty_based_on_performance(self, episode: int, success_rate: float) -> bool:
+        """Update difficulty based on recent performance. Returns True if difficulty changed."""
 
-    def get_stats(self) -> Dict[str, Any]:
-        """Get pool statistics"""
-        return {
-            'pool_size': len(self.smelly_pool),
-            'pool_refreshes': self.pool_refresh_counter,
-            'total_graphs_seen': self.total_graphs_seen,
-            'graph_sizes': [g.x.size(0) for g in self.smelly_pool] if self.smelly_pool else []
+        # Add to success rate history
+        self.success_rate_history.append(success_rate)
+        if len(self.success_rate_history) > self.adaptive_config.success_rate_window:
+            self.success_rate_history.pop(0)
+
+        # Don't adjust too early
+        if (episode < self.adaptive_config.min_episodes_before_adjustment or
+                len(self.success_rate_history) < 20):  # Need at least 20 samples
+            return False
+
+        # Calculate recent average success rate
+        recent_success_rate = np.mean(self.success_rate_history[-50:])  # Last 50 episodes
+
+        old_difficulty = self.current_difficulty
+        new_difficulty = old_difficulty
+
+        # Determine if adjustment needed
+        if recent_success_rate > self.adaptive_config.difficulty_increase_threshold:
+            # Too easy - increase difficulty
+            adjustment = self.adaptive_config.adjustment_strength
+            new_difficulty = min(old_difficulty + adjustment, self.adaptive_config.max_difficulty)
+
+        elif recent_success_rate < self.adaptive_config.difficulty_decrease_threshold:
+            # Too hard - decrease difficulty
+            adjustment = -self.adaptive_config.adjustment_strength
+            new_difficulty = max(old_difficulty + adjustment, self.adaptive_config.min_difficulty)
+
+        # Apply smoothing to prevent oscillation
+        if abs(new_difficulty - old_difficulty) > 0.01:
+            smoothed_difficulty = (self.adaptive_config.difficulty_smoothing * old_difficulty +
+                                   (1 - self.adaptive_config.difficulty_smoothing) * new_difficulty)
+
+            self.current_difficulty = smoothed_difficulty
+
+            # Log the adjustment
+            adjustment_info = {
+                'episode': episode,
+                'old_difficulty': old_difficulty,
+                'new_difficulty': smoothed_difficulty,
+                'recent_success_rate': recent_success_rate,
+                'target_success_rate': self.adaptive_config.target_success_rate,
+                'reason': 'too_easy' if recent_success_rate > self.adaptive_config.difficulty_increase_threshold else 'too_hard'
+            }
+            self.difficulty_adjustments.append(adjustment_info)
+
+            if self.logger:
+                self.logger.log_info(f"🎯 DIFFICULTY ADJUSTED [Episode {episode}]:")
+                self.logger.log_info(f"   {old_difficulty:.3f} → {smoothed_difficulty:.3f}")
+                self.logger.log_info(f"   Recent success rate: {recent_success_rate:.2%}")
+                self.logger.log_info(f"   Target: {self.adaptive_config.target_success_rate:.2%}")
+                self.logger.log_info(f"   Reason: Policy is {adjustment_info['reason']}")
+
+            # Add to difficulty history
+            self.difficulty_history.append({
+                'episode': episode,
+                'difficulty': smoothed_difficulty,
+                'success_rate': recent_success_rate
+            })
+
+            # Reset shared graph to use new difficulty
+            self.current_shared_graph = None
+            self.policy_updates_with_current_graph = 0
+
+            return True
+
+        return False
+
+    def should_change_shared_graph(self, policy_updates_completed: int) -> bool:
+        """Check if should change the shared graph across environments"""
+        return (self.current_shared_graph is None or
+                self.policy_updates_with_current_graph >= self.adaptive_config.same_graph_policy_updates)
+
+    def get_shared_graph_for_environments(self, num_envs: int, policy_updates_completed: int) -> List[Data]:
+        """Get the same graph for all environments based on current difficulty"""
+
+        # Check if we need a new shared graph
+        if self.should_change_shared_graph(policy_updates_completed):
+            # Find the closest difficulty pool
+            available_difficulties = sorted(self.difficulty_pools.keys())
+            closest_difficulty = min(available_difficulties,
+                                     key=lambda x: abs(x - self.current_difficulty))
+
+            # Select graph from appropriate difficulty pool
+            if (closest_difficulty in self.difficulty_pools and
+                    self.difficulty_pools[closest_difficulty]):
+
+                selected_graphs = self.difficulty_pools[closest_difficulty]
+                self.current_shared_graph = random.choice(selected_graphs)
+                self.policy_updates_with_current_graph = 0
+
+                # Track graph selection
+                complexity = self._compute_complexity_score(self.current_shared_graph)
+                self.shared_graph_history.append({
+                    'policy_update': policy_updates_completed,
+                    'difficulty_level': closest_difficulty,
+                    'target_difficulty': self.current_difficulty,
+                    'graph_complexity': complexity,
+                    'graph_size': self.current_shared_graph.x.size(0),
+                    'graph_edges': self.current_shared_graph.edge_index.size(1)
+                })
+
+                if self.logger:
+                    self.logger.log_info(f"🔄 NEW SHARED GRAPH [Policy Update {policy_updates_completed}]:")
+                    self.logger.log_info(f"   Target difficulty: {self.current_difficulty:.3f}")
+                    self.logger.log_info(f"   Selected from pool: {closest_difficulty:.3f}")
+                    self.logger.log_info(f"   Graph: {self.current_shared_graph.x.size(0)} nodes, "
+                                         f"{self.current_shared_graph.edge_index.size(1)} edges")
+                    self.logger.log_info(f"   Complexity score: {complexity:.3f}")
+
+            else:
+                # Fallback to any available graph
+                for difficulty, graphs in self.difficulty_pools.items():
+                    if graphs:
+                        self.current_shared_graph = random.choice(graphs)
+                        break
+
+        # Return clones for all environments
+        if self.current_shared_graph is not None:
+            return [self.current_shared_graph.clone().to(self.device) for _ in range(num_envs)]
+        else:
+            # Ultimate fallback
+            raise RuntimeError("No graphs available for shared environment creation")
+
+    def on_policy_update_completed(self, policy_updates_completed: int):
+        """Called when a policy update is completed"""
+        self.policy_updates_with_current_graph += 1
+
+    def get_adaptive_stats(self) -> Dict[str, Any]:
+        """Get comprehensive adaptive difficulty statistics"""
+        recent_success = self.success_rate_history[-20:] if len(
+            self.success_rate_history) >= 20 else self.success_rate_history
+
+        stats = {
+            # Current state
+            'current_difficulty': self.current_difficulty,
+            'target_success_rate': self.adaptive_config.target_success_rate,
+            'recent_success_rate': np.mean(recent_success) if recent_success else 0.0,
+
+            # Shared graph info
+            'current_shared_graph_size': self.current_shared_graph.x.size(0) if self.current_shared_graph else None,
+            'current_shared_graph_complexity': self._compute_complexity_score(
+                self.current_shared_graph) if self.current_shared_graph else None,
+            'policy_updates_with_current_graph': self.policy_updates_with_current_graph,
+            'max_updates_per_graph': self.adaptive_config.same_graph_policy_updates,
+
+            # Adjustment history
+            'total_difficulty_adjustments': len(self.difficulty_adjustments),
+            'recent_adjustments': self.difficulty_adjustments[-5:] if self.difficulty_adjustments else [],
+
+            # Performance tracking
+            'success_rate_history_length': len(self.success_rate_history),
+            'difficulty_trend': [entry['difficulty'] for entry in self.difficulty_history[-10:]],
+            'success_rate_trend': [entry['success_rate'] for entry in self.difficulty_history[-10:]],
+
+            # Pool information
+            'available_difficulty_levels': list(self.difficulty_pools.keys()),
+            'graphs_per_difficulty': {k: len(v) for k, v in self.difficulty_pools.items()},
+            'complexity_distribution': self.complexity_distribution_stats,
+
+            # Usage stats
+            'unique_graphs_used': len(self.shared_graph_history),
+            'total_graphs_seen': self.total_graphs_seen
         }
 
+        return stats
+
+    def log_adaptive_progress(self, episode: int, policy_updates: int):
+        """Log adaptive curriculum progress"""
+        if not self.logger or episode % 100 != 0:
+            return
+
+        stats = self.get_adaptive_stats()
+
+        self.logger.log_info(f"🎯 ADAPTIVE DIFFICULTY PROGRESS [Episode {episode}]:")
+        self.logger.log_info(f"   Current difficulty: {stats['current_difficulty']:.3f}")
+        self.logger.log_info(f"   Recent success rate: {stats['recent_success_rate']:.2%}")
+        self.logger.log_info(f"   Target success rate: {stats['target_success_rate']:.2%}")
+
+        if stats['current_shared_graph_size']:
+            self.logger.log_info(f"   Current shared graph: {stats['current_shared_graph_size']} nodes "
+                                 f"(complexity: {stats['current_shared_graph_complexity']:.3f})")
+
+        self.logger.log_info(
+            f"   Updates with current graph: {stats['policy_updates_with_current_graph']}/{stats['max_updates_per_graph']}")
+        self.logger.log_info(f"   Total difficulty adjustments: {stats['total_difficulty_adjustments']}")
+
+        if stats['recent_adjustments']:
+            last_adj = stats['recent_adjustments'][-1]
+            episodes_since = episode - last_adj['episode']
+            self.logger.log_info(f"   Last adjustment: {episodes_since} episodes ago "
+                                 f"({last_adj['reason']})")
 
 class ExperienceBuffer:
     """Buffer for maintaining rollout examples"""
@@ -198,28 +450,6 @@ class ExperienceBuffer:
             'avg_reward': sum(sum(r['rewards']) for r in self.buffer) / max(len(self.buffer), 1),
             'latest_episode': self.buffer[-1]['episode'] if self.buffer else 0
         }
-
-
-# !/usr/bin/env python3
-"""
-🆕 Complete Enhanced PPOTrainer Class
-Features:
-- Structured training with separate learning rates
-- Force update logic for discriminator collapse prevention
-- Comprehensive adversarial training support
-- Advanced monitoring and statistics
-- GPU optimization and memory management
-"""
-
-import numpy as np
-import torch
-import torch.nn.functional as F
-import torch.optim as optim
-from torch import nn
-from torch.distributions import Categorical
-from torch_geometric.data import Batch, Data
-from typing import List, Dict, Any, Tuple, Optional
-
 
 class PPOTrainer:
     """🆕 Complete Enhanced PPO trainer with adversarial capabilities"""
@@ -1248,6 +1478,40 @@ class PPOTrainer:
                 pass
 
 
+def create_adaptive_training_environments(env_manager: AdaptiveDifficultyEnvironmentManager,
+                                          discriminator: nn.Module, training_config, device,
+                                          policy_updates_completed: int) -> List[HubRefactoringEnv]:
+    """Create environments with adaptive difficulty curriculum"""
+
+    # Get shared graphs for all environments based on current difficulty
+    shared_graphs = env_manager.get_shared_graph_for_environments(
+        training_config.num_envs, policy_updates_completed
+    )
+
+    # Create environments with the same graph
+    envs = []
+    for i, graph in enumerate(shared_graphs):
+        try:
+            env = HubRefactoringEnv(
+                initial_data=graph,
+                discriminator=discriminator,
+                max_steps=training_config.max_steps_per_episode,
+                device=device
+            )
+
+            # Add adaptive manager reference
+            env.adaptive_manager = env_manager
+            envs.append(env)
+
+        except Exception as e:
+            if env_manager.logger:
+                env_manager.logger.log_warning(f"Failed to create adaptive env {i}: {e}")
+            continue
+
+    return envs
+
+
+
 def safe_torch_load(file_path: Path, device: torch.device):
     """Safely load PyTorch files with PyTorch Geometric compatibility"""
     try:
@@ -1313,65 +1577,63 @@ def load_pretrained_discriminator(model_path: Path, device: torch.device, logger
     return discriminator, checkpoint
 
 
-def create_diverse_training_environments(env_manager: EnhancedEnvironmentManager,
-                                         discriminator: nn.Module, training_config,
-                                         device: torch.device = torch.device('cpu')) -> List[HubRefactoringEnv]:
-    """Create training environments with diverse graphs using centralized config"""
-    num_envs = training_config.num_envs
-    max_steps = training_config.max_steps_per_episode
+def create_adaptive_training_environments(env_manager: AdaptiveDifficultyEnvironmentManager,
+                                          discriminator: nn.Module, training_config, device,
+                                          policy_updates_completed: int) -> List[HubRefactoringEnv]:
+    """Create environments with adaptive difficulty curriculum"""
 
+    # Get shared graphs for all environments based on current difficulty
+    shared_graphs = env_manager.get_shared_graph_for_environments(
+        training_config.num_envs, policy_updates_completed
+    )
+
+    # Create environments with the same graph
     envs = []
-    for i in range(num_envs):
+    for i, graph in enumerate(shared_graphs):
         try:
-            # Get random graph from diverse pool
-            initial_graph = env_manager.get_random_graph()
+            env = HubRefactoringEnv(
+                initial_data=graph,
+                discriminator=discriminator,
+                max_steps=training_config.max_steps_per_episode,
+                device=device
+            )
 
-            # Create environment with config-based max_steps
-            env = HubRefactoringEnv(initial_graph, discriminator, max_steps=max_steps, device=device)
-            # Store reference to environment manager for dynamic resets
-            env.env_manager = env_manager
+            # Add adaptive manager reference
+            env.adaptive_manager = env_manager
             envs.append(env)
 
-        except Exception:
+        except Exception as e:
+            if env_manager.logger:
+                env_manager.logger.log_warning(f"Failed to create adaptive env {i}: {e}")
             continue
 
     return envs
 
 
-def enhanced_reset_environment(env: HubRefactoringEnv) -> Optional[Data]:
-    """Enhanced reset CORRETTO con gestione errori robusta"""
+def adaptive_enhanced_reset_environment(env) -> Optional[Data]:
+    """Enhanced reset that respects adaptive difficulty curriculum"""
     try:
-        if hasattr(env, 'env_manager'):
-            # Get new diverse graph
-            new_graph = env.env_manager.get_random_graph()
-
-            # Update environment with new graph
-            env.initial_data = new_graph.to(env.device)
+        if hasattr(env, 'adaptive_manager'):
+            # Don't change graph during adaptive phase - just reset environment state
             env.current_data = None
             env.steps = 0
             env.action_history.clear()
             env._cached_hub_score = None
             env._graph_hash = None
 
-            # Reset with new graph
             reset_state = env.reset()
 
-            # ✅ VALIDAZIONE: verifica che il reset sia valido
             if reset_state is not None and hasattr(reset_state, 'x') and reset_state.x.size(0) > 0:
                 return reset_state
             else:
-                raise ValueError("Reset produced invalid state")
+                raise ValueError("Adaptive reset produced invalid state")
         else:
             # Fallback to original reset
-            reset_state = env.reset()
-            if reset_state is not None and hasattr(reset_state, 'x') and reset_state.x.size(0) > 0:
-                return reset_state
-            else:
-                raise ValueError("Fallback reset produced invalid state")
+            return env.reset()
 
     except Exception as e:
         if hasattr(env, 'logger'):
-            env.logger.log_warning(f"Environment reset failed: {e}")
+            env.logger.log_warning(f"Adaptive environment reset failed: {e}")
 
         try:
             return env.reset()
@@ -1622,7 +1884,7 @@ def collect_rollouts(envs: List[HubRefactoringEnv], policy: nn.Module,
                 # Reset if done
                 if done:
                     try:
-                        reset_state = enhanced_reset_environment(env)
+                        reset_state = adaptive_enhanced_reset_environment(env)
                         if reset_state.x.device != device:
                             reset_state = reset_state.to(device)
                         if not hasattr(reset_state, 'batch'):
@@ -1775,7 +2037,7 @@ def get_training_schedule_info(episode: int) -> Dict[str, Any]:
 
 
 def main():
-    """🆕 Enhanced main training loop with adversarial features"""
+    """🎯 Enhanced main training loop with Adaptive Difficulty Curriculum"""
 
     # Setup logging and configuration
     logger = setup_optimized_logging()
@@ -1792,6 +2054,16 @@ def main():
 
     logger.start_training(config)
     print_config_summary()
+
+    # 🎯 ADAPTIVE DIFFICULTY CONFIGURATION
+    adaptive_config = AdaptiveDifficultyConfig(
+        target_success_rate=0.65,  # Optimal learning zone
+        difficulty_increase_threshold=0.80,  # Too easy if > 80% success
+        difficulty_decrease_threshold=0.45,  # Too hard if < 45% success
+        same_graph_policy_updates=2,  # Stability through shared graphs
+        adjustment_strength=0.08,  # Moderate adjustment speed
+        difficulty_smoothing=0.7  # Prevent oscillation
+    )
 
     # Setup device and seeds
     device = setup_gpu_environment(logger)
@@ -1842,17 +2114,24 @@ def main():
         hub_bias_strength=4.0, exploration_rate=0.1
     ).to(device)
 
-    # 🆕 ENHANCED PPO Trainer with force update
+    # Enhanced PPO Trainer with force update
     trainer = PPOTrainer(
         policy, discriminator, discriminator_monitor,
         opt_config, disc_config, lr_config, device=device
     )
 
-    # Environment setup with enhanced reward config
-    env_manager = EnhancedEnvironmentManager(data_loader, discriminator, env_config, device)
-    envs = create_diverse_training_environments(env_manager, discriminator, training_config, device)
+    # 🎯 ADAPTIVE DIFFICULTY ENVIRONMENT MANAGER
+    adaptive_manager = AdaptiveDifficultyEnvironmentManager(
+        data_loader, discriminator, adaptive_config, device
+    )
+    adaptive_manager.set_logger(logger)
 
-    # 🆕 Update environment rewards with adversarial config
+    # Create initial environments with adaptive difficulty
+    envs = create_adaptive_training_environments(
+        adaptive_manager, discriminator, training_config, device, 0
+    )
+
+    # Update environment rewards with adversarial config
     for env in envs:
         env.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
         env.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
@@ -1862,17 +2141,17 @@ def main():
         env.REWARD_INVALID = reward_config.REWARD_INVALID
         env.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
 
-        # 🆕 ADVERSARIAL REWARD PARAMETERS
+        # Adversarial reward parameters
         env.adversarial_reward_scale = reward_config.adversarial_reward_scale
         env.adversarial_reward_enabled = reward_config.adversarial_reward_enabled
         env.adversarial_threshold = reward_config.adversarial_threshold
         env.potential_discount = reward_config.potential_discount
 
-    # STRUCTURED TRAINING COMPONENTS
+    # Training components
     experience_buffer = ExperienceBuffer(adv_config.experience_buffer_size)
     metrics_history = create_progress_tracker()
 
-    # 🆕 Enhanced tracking for adversarial training
+    # Enhanced tracking for adversarial training
     adversarial_metrics_history = {
         'adversarial_rewards': [],
         'discriminator_probabilities': [],
@@ -1890,17 +2169,24 @@ def main():
     discriminator_paused = False
     discriminator_pause_remaining = 0
 
-    logger.log_info("🚀 STARTING ENHANCED ADVERSARIAL TRAINING")
+    logger.log_info("🚀 STARTING ADAPTIVE DIFFICULTY ADVERSARIAL TRAINING")
     logger.log_info(f"📊 Phase Schedule:")
     logger.log_info(f"   Warm-up: Episodes 0-{warmup_episodes}")
     logger.log_info(f"   Policy updates: Every {policy_update_frequency} episodes")
     logger.log_info(
         f"   Discriminator updates: Every {policy_update_frequency * discriminator_update_frequency} episodes")
+
+    logger.log_info(f"🎯 Adaptive Difficulty Features:")
+    logger.log_info(f"   Target success rate: {adaptive_config.target_success_rate:.1%}")
+    logger.log_info(f"   Difficulty range: {adaptive_config.min_difficulty:.2f} - {adaptive_config.max_difficulty:.2f}")
+    logger.log_info(f"   Same graph for {adaptive_config.same_graph_policy_updates} policy updates")
+    logger.log_info(f"   Adjustment strength: {adaptive_config.adjustment_strength:.3f}")
+
     logger.log_info(f"🎁 Adversarial Features:")
     logger.log_info(f"   Reward shaping: {'✅ ENABLED' if reward_config.adversarial_reward_enabled else '❌ DISABLED'}")
     logger.log_info(f"   Force updates: {'✅ ENABLED' if adv_config.enable_force_updates else '❌ DISABLED'}")
 
-    # MAIN TRAINING LOOP with ENHANCED FEATURES
+    # MAIN TRAINING LOOP with ADAPTIVE DIFFICULTY
     for episode in range(training_config.num_episodes):
         episode_start_time = time.time()
 
@@ -1913,6 +2199,7 @@ def main():
             if episode % 25 == 0:
                 logger.log_info(f"🌅 WARM-UP Phase - Episode {episode}/{warmup_episodes}")
                 logger.log_info(f"   Collecting experience + building discriminator baseline")
+                logger.log_info(f"   Current difficulty: {adaptive_manager.current_difficulty:.3f}")
 
         # Update discriminator pause countdown
         if discriminator_paused:
@@ -1920,15 +2207,6 @@ def main():
             if discriminator_pause_remaining <= 0:
                 discriminator_paused = False
                 logger.log_info("▶️  Discriminator pause ended - resuming updates")
-
-        # Environment refresh
-        if episode % training_config.environment_refresh_frequency == 0 and episode > 0:
-            for env in envs:
-                try:
-                    enhanced_reset_environment(env)
-                except Exception:
-                    pass
-            logger.log_environment_refresh(episode, env_manager.get_stats())
 
         # COLLECT ROLLOUTS (always done)
         rollout_data = collect_rollouts(envs, policy, training_config, device)
@@ -1986,6 +2264,33 @@ def main():
         metrics_history['success_rates'].append(success_rate)
         metrics_history['hub_improvements'].append(avg_improvement)
 
+        # 🎯 ADAPTIVE DIFFICULTY UPDATE
+        if episode > warmup_episodes:
+            difficulty_changed = adaptive_manager.update_difficulty_based_on_performance(
+                episode, success_rate
+            )
+
+            if difficulty_changed:
+                # Recreate environments with new difficulty level
+                logger.log_info("🔄 Recreating environments for new difficulty level...")
+                envs = create_adaptive_training_environments(
+                    adaptive_manager, discriminator, training_config, device, policy_updates_completed
+                )
+
+                # Update environment rewards (they might have been reset)
+                for env in envs:
+                    env.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
+                    env.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
+                    env.REWARD_FAILURE = reward_config.REWARD_FAILURE
+                    env.REWARD_STEP = reward_config.REWARD_STEP
+                    env.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
+                    env.REWARD_INVALID = reward_config.REWARD_INVALID
+                    env.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
+                    env.adversarial_reward_scale = reward_config.adversarial_reward_scale
+                    env.adversarial_reward_enabled = reward_config.adversarial_reward_enabled
+                    env.adversarial_threshold = reward_config.adversarial_threshold
+                    env.potential_discount = reward_config.potential_discount
+
         # 🎯 POLICY UPDATE PHASE
         is_policy_update_episode = (
                 episode >= warmup_episodes and
@@ -2018,6 +2323,13 @@ def main():
                     policy_updates_completed += 1
                     training_metrics = trainer.get_latest_metrics()
                     logger.log_training_update(policy_updates_completed, training_metrics)
+
+                    # 🎯 NOTIFY ADAPTIVE MANAGER OF POLICY UPDATE
+                    adaptive_manager.on_policy_update_completed(policy_updates_completed)
+
+                    # Check if we need to change shared graphs
+                    if adaptive_manager.should_change_shared_graph(policy_updates_completed):
+                        logger.log_info("🔄 Time to change shared graphs - will update on next rollout")
 
                 else:
                     logger.log_warning("⚠️  Skipping policy update - insufficient valid data")
@@ -2117,7 +2429,7 @@ def main():
             except Exception as e:
                 logger.log_warning(f"Discriminator update failed: {e}")
 
-        # 🆕 ENHANCED EPISODE LOGGING
+        # 🆕 ENHANCED EPISODE LOGGING with ADAPTIVE DIFFICULTY
         episode_metrics = {
             'reward': episode_reward,
             'success_rate': success_rate,
@@ -2129,11 +2441,28 @@ def main():
             # Adversarial metrics
             'adversarial_reward': np.mean(adversarial_rewards_episode) if adversarial_rewards_episode else 0.0,
             'adversarial_success_rate': adversarial_success_rate,
-            'avg_discriminator_prob': np.mean(discriminator_probs_episode) if discriminator_probs_episode else 0.5
+            'avg_discriminator_prob': np.mean(discriminator_probs_episode) if discriminator_probs_episode else 0.5,
+            # 🎯 ADAPTIVE DIFFICULTY METRICS
+            'current_difficulty': adaptive_manager.current_difficulty,
+            'target_success_rate': adaptive_manager.adaptive_config.target_success_rate
         }
 
         if episode % 25 == 0:
             logger.log_episode_progress(episode, episode_metrics)
+
+            # 🎯 LOG ADAPTIVE DIFFICULTY METRICS
+            logger.log_info(f"🎯 Adaptive Difficulty:")
+            logger.log_info(f"   Current difficulty: {adaptive_manager.current_difficulty:.3f}")
+            logger.log_info(
+                f"   Success rate: {success_rate:.2%} (target: {adaptive_manager.adaptive_config.target_success_rate:.2%})")
+
+            # Show recent difficulty trend
+            if len(adaptive_manager.difficulty_history) >= 2:
+                recent_trend = adaptive_manager.difficulty_history[-2:]
+                trend_direction = "↗️" if recent_trend[-1]['difficulty'] > recent_trend[-2]['difficulty'] else "↘️" if \
+                recent_trend[-1]['difficulty'] < recent_trend[-2]['difficulty'] else "➡️"
+                logger.log_info(
+                    f"   Trend: {trend_direction} ({len(adaptive_manager.difficulty_adjustments)} total adjustments)")
 
             # 🆕 LOG ADVERSARIAL METRICS
             if reward_config.adversarial_reward_enabled and episode > warmup_episodes:
@@ -2141,6 +2470,10 @@ def main():
                 logger.log_info(f"   Avg Adversarial Reward: {episode_metrics['adversarial_reward']:+.3f}")
                 logger.log_info(f"   Adversarial Success Rate: {adversarial_success_rate:.1%}")
                 logger.log_info(f"   Avg Discriminator Prob: {episode_metrics['avg_discriminator_prob']:.3f}")
+
+        # 🎯 ADAPTIVE DIFFICULTY LOGGING
+        if episode % 100 == 0 and episode > warmup_episodes:
+            adaptive_manager.log_adaptive_progress(episode, policy_updates_completed)
 
         # Buffer stats logging
         if episode % 100 == 0:
@@ -2158,7 +2491,7 @@ def main():
                 logger.log_info(f"   Success Rate: {force_stats['force_update_success_rate']:.1%}")
                 logger.log_info(f"   Cooldown Remaining: {force_stats['force_update_cooldown_remaining']}")
 
-        # STRUCTURED PHASE LOGGING
+        # STRUCTURED PHASE LOGGING with ADAPTIVE INFO
         if episode % 50 == 0:
             next_policy = schedule_info['episodes_until_next_policy']
             next_disc = schedule_info['episodes_until_next_discriminator']
@@ -2171,19 +2504,16 @@ def main():
             logger.log_info(f"   Next discriminator update in: {next_disc} episodes")
             logger.log_info(f"   Discriminator status: {'PAUSED' if discriminator_paused else 'ACTIVE'}")
 
-            # 🆕 Enhanced environment stats
-            if episode > warmup_episodes:
-                env_stats = []
-                for i, env in enumerate(envs):
-                    if hasattr(env, 'get_adversarial_stats'):
-                        adv_stats = env.get_adversarial_stats()
-                        if adv_stats['total_steps'] > 0:
-                            env_stats.append(f"Env{i}: {adv_stats['mean_adversarial_reward']:+.3f}")
+            # 🎯 ADAPTIVE DIFFICULTY STATUS
+            adaptive_stats = adaptive_manager.get_adaptive_stats()
+            logger.log_info(f"🎯 Adaptive Curriculum Status:")
+            logger.log_info(f"   Current difficulty: {adaptive_stats['current_difficulty']:.3f}")
+            logger.log_info(f"   Recent success: {adaptive_stats['recent_success_rate']:.2%}")
+            if adaptive_stats['current_shared_graph_size']:
+                logger.log_info(f"   Shared graph: {adaptive_stats['current_shared_graph_size']} nodes "
+                                f"(complexity: {adaptive_stats['current_shared_graph_complexity']:.3f})")
 
-                if env_stats:
-                    logger.log_info(f"   🎁 Adversarial Environment Stats: {', '.join(env_stats[:3])}")
-
-        # 🆕 ENHANCED CHECKPOINT SAVING
+        # 🆕 ENHANCED CHECKPOINT SAVING with ADAPTIVE DATA
         if episode % 500 == 0 and episode > 0:
             try:
                 checkpoint = {
@@ -2215,18 +2545,30 @@ def main():
                         'adversarial_success_rates': adversarial_metrics_history['adversarial_success_rates'][-500:],
                         'force_updates': adversarial_metrics_history['force_updates']
                     },
+                    # 🎯 ADAPTIVE DIFFICULTY DATA
+                    'adaptive_difficulty_state': {
+                        'current_difficulty': adaptive_manager.current_difficulty,
+                        'success_rate_history': adaptive_manager.success_rate_history[-200:],  # Last 200 episodes
+                        'difficulty_history': adaptive_manager.difficulty_history,
+                        'difficulty_adjustments': adaptive_manager.difficulty_adjustments,
+                        'shared_graph_history': adaptive_manager.shared_graph_history[-50:],  # Last 50 graphs
+                        'adaptive_config': adaptive_config,
+                        'complexity_distribution_stats': adaptive_manager.complexity_distribution_stats
+                    },
                     'force_update_stats': trainer.get_force_update_stats(),
+                    'adaptive_config_used': adaptive_config,
                     'structured_config_used': config
                 }
 
-                checkpoint_path = results_dir / f'enhanced_rl_checkpoint_{episode}.pt'
+                checkpoint_path = results_dir / f'adaptive_rl_checkpoint_{episode}.pt'
                 torch.save(checkpoint, checkpoint_path)
 
-                logger.log_info(f"💾 Enhanced checkpoint saved: {checkpoint_path}")
+                logger.log_info(f"💾 Adaptive checkpoint saved: {checkpoint_path}")
                 logger.log_info(f"   Policy updates: {policy_updates_completed}")
                 logger.log_info(f"   Discriminator updates: {discriminator_updates_completed}")
+                logger.log_info(f"   Current difficulty: {adaptive_manager.current_difficulty:.3f}")
+                logger.log_info(f"   Difficulty adjustments: {len(adaptive_manager.difficulty_adjustments)}")
                 logger.log_info(f"   Force updates: {trainer.get_force_update_stats()['total_force_updates']}")
-                logger.log_info(f"   Phase: {current_phase}")
 
             except Exception as e:
                 logger.log_warning(f"Failed to save checkpoint: {e}")
@@ -2235,19 +2577,34 @@ def main():
         if episode % 25 == 0 and device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    # === ENHANCED TRAINING COMPLETION ===
-    logger.log_info("🏁 ENHANCED ADVERSARIAL TRAINING COMPLETED!")
+    # === ENHANCED TRAINING COMPLETION with ADAPTIVE ANALYSIS ===
+    logger.log_info("🏁 ADAPTIVE DIFFICULTY ADVERSARIAL TRAINING COMPLETED!")
 
-    # Final structured summary
-    logger.log_info("📊 FINAL ENHANCED TRAINING SUMMARY:")
+    # Final adaptive summary
+    adaptive_final_stats = adaptive_manager.get_adaptive_stats()
+
+    logger.log_info("📊 FINAL ADAPTIVE TRAINING SUMMARY:")
     logger.log_info(f"   Total episodes: {training_config.num_episodes}")
     logger.log_info(f"   Warm-up episodes: {warmup_episodes}")
     logger.log_info(f"   Training episodes: {training_config.num_episodes - warmup_episodes}")
     logger.log_info(f"   Policy updates completed: {policy_updates_completed}")
     logger.log_info(f"   Discriminator updates completed: {discriminator_updates_completed}")
-    logger.log_info(f"   Update ratio: {policy_updates_completed / max(discriminator_updates_completed, 1):.1f}:1")
 
-    # 🆕 ADVERSARIAL SUMMARY
+    # 🎯 ADAPTIVE DIFFICULTY FINAL ANALYSIS
+    logger.log_info(f"🎯 Adaptive Difficulty Analysis:")
+    logger.log_info(f"   Final difficulty level: {adaptive_final_stats['current_difficulty']:.3f}")
+    logger.log_info(f"   Total difficulty adjustments: {adaptive_final_stats['total_difficulty_adjustments']}")
+    logger.log_info(f"   Final success rate: {adaptive_final_stats['recent_success_rate']:.2%}")
+    logger.log_info(f"   Target success rate: {adaptive_final_stats['target_success_rate']:.2%}")
+
+    if adaptive_final_stats['difficulty_trend']:
+        difficulty_change = adaptive_final_stats['difficulty_trend'][-1] - adaptive_final_stats['difficulty_trend'][
+            0] if len(adaptive_final_stats['difficulty_trend']) > 1 else 0
+        logger.log_info(f"   Overall difficulty progression: {difficulty_change:+.3f}")
+
+    logger.log_info(f"   Unique graphs experienced: {adaptive_final_stats['unique_graphs_used']}")
+
+    # 🆕 ADVERSARIAL SUMMARY (existing code)
     force_stats = trainer.get_force_update_stats()
     logger.log_info(f"🔄 Force Update Summary:")
     logger.log_info(f"   Total force updates: {force_stats['total_force_updates']}")
@@ -2264,7 +2621,7 @@ def main():
             avg_adv_success = np.mean(adversarial_metrics_history['adversarial_success_rates'])
             logger.log_info(f"   Average adversarial success rate: {avg_adv_success:.1%}")
 
-    # Final performance metrics (existing code continues...)
+    # Final performance metrics
     if metrics_history['episode_rewards']:
         final_100_rewards = metrics_history['episode_rewards'][-100:] if len(
             metrics_history['episode_rewards']) >= 100 else metrics_history['episode_rewards']
@@ -2280,14 +2637,19 @@ def main():
             'total_force_updates': force_stats['total_force_updates'],
             'adversarial_reward_enabled': reward_config.adversarial_reward_enabled,
             'final_adversarial_success_rate': adversarial_metrics_history['adversarial_success_rates'][-1] if
-            adversarial_metrics_history['adversarial_success_rates'] else 0.0
+            adversarial_metrics_history['adversarial_success_rates'] else 0.0,
+            # 🎯 ADAPTIVE FINAL METRICS
+            'final_difficulty': adaptive_final_stats['current_difficulty'],
+            'total_difficulty_adjustments': adaptive_final_stats['total_difficulty_adjustments'],
+            'adaptive_success_rate_achieved': abs(
+                adaptive_final_stats['recent_success_rate'] - adaptive_final_stats['target_success_rate']) < 0.1
         }
 
         logger.log_final_summary(training_config.num_episodes, {'final_performance': final_metrics})
 
-    # Save final enhanced model
+    # Save final enhanced model with adaptive data
     try:
-        final_save_path = results_dir / 'final_enhanced_rl_model.pt'
+        final_save_path = results_dir / 'final_adaptive_rl_model.pt'
 
         torch.save({
             'policy_state': policy.state_dict(),
@@ -2310,58 +2672,81 @@ def main():
                     'mean_adversarial_success_rate': np.mean(
                         adversarial_metrics_history['adversarial_success_rates']) if adversarial_metrics_history[
                         'adversarial_success_rates'] else 0.0
-                }
+                },
+                # 🎯 ADAPTIVE DIFFICULTY FINAL STATS
+                'adaptive_difficulty_final_stats': adaptive_final_stats
             },
             'training_history': metrics_history,
             'adversarial_history': adversarial_metrics_history,
+            'adaptive_difficulty_complete_history': {
+                'difficulty_history': adaptive_manager.difficulty_history,
+                'difficulty_adjustments': adaptive_manager.difficulty_adjustments,
+                'success_rate_history': adaptive_manager.success_rate_history,
+                'shared_graph_history': adaptive_manager.shared_graph_history
+            },
             'experience_buffer_final_stats': experience_buffer.get_buffer_stats(),
+            'adaptive_config': adaptive_config,
             'enhanced_config': config,
             'trainer_final_metrics': trainer.get_latest_metrics()
         }, final_save_path)
 
-        logger.log_info(f"💾 Final enhanced model saved: {final_save_path}")
+        logger.log_info(f"💾 Final adaptive model saved: {final_save_path}")
 
     except Exception as e:
         logger.log_error(f"Failed to save final model: {e}")
 
-    # ENHANCED TRAINING RECOMMENDATIONS
-    logger.log_info("\n" + "=" * 70)
-    logger.log_info("🎯 ENHANCED TRAINING ANALYSIS:")
-    logger.log_info("=" * 70)
+    # ADAPTIVE TRAINING RECOMMENDATIONS
+    logger.log_info("\n" + "=" * 80)
+    logger.log_info("🎯 ADAPTIVE DIFFICULTY TRAINING ANALYSIS:")
+    logger.log_info("=" * 80)
 
-    # Calculate actual ratios and frequencies (existing logic...)
-    actual_policy_freq = (training_config.num_episodes - warmup_episodes) / max(policy_updates_completed, 1)
-    actual_disc_freq = (training_config.num_episodes - warmup_episodes) / max(discriminator_updates_completed, 1)
-    actual_ratio = policy_updates_completed / max(discriminator_updates_completed, 1)
+    # Adaptive-specific analysis
+    if adaptive_final_stats['total_difficulty_adjustments'] > 0:
+        logger.log_info(f"🎯 ADAPTIVE DIFFICULTY EFFECTIVENESS:")
 
-    # 🆕 ADVERSARIAL ANALYSIS
-    if reward_config.adversarial_reward_enabled:
-        logger.log_info(f"🎁 ADVERSARIAL REWARD SHAPING ANALYSIS:")
-        if adversarial_metrics_history['adversarial_rewards']:
-            positive_rewards = sum(1 for r in adversarial_metrics_history['adversarial_rewards'] if r > 0)
-            total_rewards = len(adversarial_metrics_history['adversarial_rewards'])
-            logger.log_info(
-                f"   Positive adversarial rewards: {positive_rewards}/{total_rewards} ({positive_rewards / total_rewards:.1%})")
+        # Analyze adjustment pattern
+        adjustment_reasons = {}
+        for adj in adaptive_manager.difficulty_adjustments:
+            reason = adj.get('reason', 'unknown')
+            adjustment_reasons[reason] = adjustment_reasons.get(reason, 0) + 1
 
-            avg_magnitude = np.mean([abs(r) for r in adversarial_metrics_history['adversarial_rewards']])
-            logger.log_info(f"   Average reward magnitude: {avg_magnitude:.3f}")
+        logger.log_info(f"   Total adjustments made: {adaptive_final_stats['total_difficulty_adjustments']}")
+        for reason, count in adjustment_reasons.items():
+            logger.log_info(f"   {reason.replace('_', ' ').title()}: {count} times")
 
-    if force_stats['total_force_updates'] > 0:
-        logger.log_info(f"🔄 FORCE UPDATE ANALYSIS:")
-        logger.log_info(f"   Force updates needed: {force_stats['total_force_updates']} times")
-        logger.log_info(f"   Force update success rate: {force_stats['force_update_success_rate']:.1%}")
+        # Success rate convergence analysis
+        target_success = adaptive_final_stats['target_success_rate']
+        final_success = adaptive_final_stats['recent_success_rate']
+        convergence_quality = 1.0 - abs(target_success - final_success) / target_success
 
-        if force_stats['force_update_success_rate'] < 0.5:
-            logger.log_info("   ⚠️  Low force update success rate - consider adjusting force update parameters")
+        logger.log_info(f"   Success rate convergence: {convergence_quality:.1%}")
+        if convergence_quality > 0.9:
+            logger.log_info("   ✅ Excellent convergence to target success rate")
+        elif convergence_quality > 0.8:
+            logger.log_info("   ✅ Good convergence to target success rate")
         else:
-            logger.log_info("   ✅ Good force update success rate - discriminator collapse prevention working")
-    else:
-        logger.log_info("🔄 FORCE UPDATE ANALYSIS:")
-        logger.log_info("   ✅ No force updates needed - discriminator remained stable")
+            logger.log_info("   ⚠️  Could improve convergence - consider adjusting parameters")
 
-    logger.log_info("=" * 70)
-    logger.log_info("🏆 ENHANCED ADVERSARIAL TRAINING COMPLETED SUCCESSFULLY!")
-    logger.log_info("=" * 70)
+    else:
+        logger.log_info("🎯 ADAPTIVE DIFFICULTY ANALYSIS:")
+        logger.log_info("   No difficulty adjustments were needed - initial difficulty was appropriate")
+
+    # Final recommendations
+    logger.log_info("🎯 ADAPTIVE TRAINING RECOMMENDATIONS:")
+
+    if adaptive_final_stats['total_difficulty_adjustments'] < 3:
+        logger.log_info("   Consider starting with lower initial difficulty for more adaptation")
+    elif adaptive_final_stats['total_difficulty_adjustments'] > 20:
+        logger.log_info("   Consider larger adjustment_strength for faster convergence")
+
+    if adaptive_final_stats['recent_success_rate'] > 0.8:
+        logger.log_info("   Policy learned well - could handle higher difficulty graphs")
+    elif adaptive_final_stats['recent_success_rate'] < 0.5:
+        logger.log_info("   Policy struggled - consider longer warm-up or easier initial graphs")
+
+    logger.log_info("=" * 80)
+    logger.log_info("🏆 ADAPTIVE DIFFICULTY ADVERSARIAL TRAINING COMPLETED SUCCESSFULLY!")
+    logger.log_info("=" * 80)
 
 
 if __name__ == "__main__":

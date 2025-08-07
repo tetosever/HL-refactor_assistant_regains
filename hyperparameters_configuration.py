@@ -22,16 +22,16 @@ class ImprovedRewardConfig:
 
     # 🆕 ADVERSARIAL REWARD SHAPING PARAMETERS
     adversarial_reward_enabled: bool = True
-    adversarial_reward_scale: float = 5.0  # Scaling factor for adversarial rewards
-    adversarial_threshold: float = 0.02  # Minimum probability change to matter
-    potential_discount: float = 0.99  # γ for potential-based shaping
+    adversarial_reward_scale: float = 2.0  # Scaling factor for adversarial rewards
+    adversarial_threshold: float = 0.05  # Minimum probability change to matter
+    potential_discount: float = 0.95  # γ for potential-based shaping
 
     # Adaptive adversarial scaling
     adversarial_scale_adaptive: bool = True
     adversarial_scale_min: float = 1.0
     adversarial_scale_max: float = 10.0
     adversarial_scale_success_boost: float = 1.1
-    adversarial_scale_failure_decay: float = 0.95
+    adversarial_scale_failure_decay: float = 0.90
 
     # Hub score thresholds
     HUB_SCORE_EXCELLENT: float = 0.05
@@ -80,8 +80,8 @@ class ImprovedOptimizationConfig:
     betas: tuple = (0.9, 0.999)
 
     # Tighter PPO settings for more stable updates
-    clip_epsilon: float = 0.15  # Slightly more permissive
-    entropy_coefficient: float = 0.02  # Bit more exploration
+    clip_epsilon: float = 0.1  # Slightly more permissive
+    entropy_coefficient: float = 0.01  # Bit more exploration
     value_coefficient: float = 0.5
     max_grad_norm: float = 0.5
 
@@ -91,8 +91,8 @@ class ImprovedOptimizationConfig:
 @dataclass
 class ImprovedDiscriminatorConfig:
     """🆕 Enhanced discriminator config with force update controls"""
-    early_stop_threshold: float = 0.45  # More permissive
-    label_smoothing: float = 0.1  # More smoothing for stability
+    early_stop_threshold: float = 0.55  # More permissive
+    label_smoothing: float = 0.05  # More smoothing for stability
     gradient_penalty_lambda: float = 1.0  # Reduced for gentler training
 
     min_samples_per_class: int = 12  # Slightly more data per update
@@ -107,8 +107,8 @@ class ImprovedDiscriminatorConfig:
 
     # 🆕 FORCE UPDATE PARAMETERS
     force_update_enabled: bool = True
-    force_update_accuracy_threshold: float = 0.58  # Force update if below this
-    force_update_consecutive_episodes: int = 3  # Force after N consecutive low episodes
+    force_update_accuracy_threshold: float = 0.65  # Force update if below this
+    force_update_consecutive_episodes: int = 5  # Force after N consecutive low episodes
     force_update_max_epochs: int = 5  # Extra epochs for force update
     force_update_lr_boost: float = 1.5  # Temporarily boost LR for force update
 
@@ -130,7 +130,7 @@ class StructuredLearningRateConfig:
     """Learning rates optimized for structured training"""
 
     # Policy Learning Rate - Più stabile per update frequenti
-    policy_initial_lr: float = 3e-4
+    policy_initial_lr: float = 2e-4
     policy_min_lr: float = 1e-5
     policy_decay_factor: float = 0.95  # Gentle decay ogni tot policy updates
     policy_decay_frequency: int = 20  # Decay ogni 20 policy updates
