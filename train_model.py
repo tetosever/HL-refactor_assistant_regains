@@ -25,7 +25,6 @@ import torch.optim as optim
 import torch_geometric.data.data
 from torch import nn
 from torch.distributions import Categorical
-from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Batch, Data
 
 # Import modules
@@ -200,67 +199,40 @@ class ExperienceBuffer:
             'latest_episode': self.buffer[-1]['episode'] if self.buffer else 0
         }
 
-class TensorBoardLogger:
-    """Enhanced TensorBoard logging for RL training"""
 
-    def __init__(self, log_dir: Path):
-        self.log_dir = log_dir
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+# !/usr/bin/env python3
+"""
+🆕 Complete Enhanced PPOTrainer Class
+Features:
+- Structured training with separate learning rates
+- Force update logic for discriminator collapse prevention
+- Comprehensive adversarial training support
+- Advanced monitoring and statistics
+- GPU optimization and memory management
+"""
 
-        # Create timestamped run directory
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = self.log_dir / f"rl_training_{timestamp}"
-
-        self.writer = SummaryWriter(log_dir=str(run_dir))
-
-    def log_episode_metrics(self, episode: int, metrics: Dict[str, float]):
-        """Log episode-level metrics"""
-        for key, value in metrics.items():
-            self.writer.add_scalar(f"Episode/{key}", value, episode)
-
-    def log_training_metrics(self, step: int, metrics: Dict[str, float]):
-        """Log training-level metrics"""
-        for key, value in metrics.items():
-            self.writer.add_scalar(f"Training/{key}", value, step)
-
-    def log_environment_metrics(self, episode: int, env_stats: Dict[str, Any]):
-        """Log environment diversity metrics"""
-        if 'pool_size' in env_stats:
-            self.writer.add_scalar("Environment/pool_size", env_stats['pool_size'], episode)
-        if 'total_graphs_seen' in env_stats:
-            self.writer.add_scalar("Environment/total_graphs_seen", env_stats['total_graphs_seen'], episode)
-        if 'graph_sizes' in env_stats and env_stats['graph_sizes']:
-            sizes = env_stats['graph_sizes']
-            self.writer.add_histogram("Environment/graph_sizes", np.array(sizes), episode)
-            self.writer.add_scalar("Environment/avg_graph_size", np.mean(sizes), episode)
-
-    def log_discriminator_metrics(self, episode: int, metrics: Dict[str, float]):
-        """Log discriminator performance"""
-        for key, value in metrics.items():
-            self.writer.add_scalar(f"Discriminator/{key}", value, episode)
-
-    def log_policy_metrics(self, step: int, metrics: Dict[str, float]):
-        """Log policy learning metrics"""
-        for key, value in metrics.items():
-            self.writer.add_scalar(f"Policy/{key}", value, step)
-
-    def close(self):
-        """Close TensorBoard writer"""
-        self.writer.close()
+import numpy as np
+import torch
+import torch.nn.functional as F
+import torch.optim as optim
+from torch import nn
+from torch.distributions import Categorical
+from torch_geometric.data import Batch, Data
+from typing import List, Dict, Any, Tuple, Optional
 
 
 class PPOTrainer:
-    """Unified PPO trainer with both standard and structured training capabilities"""
+    """🆕 Complete Enhanced PPO trainer with adversarial capabilities"""
 
-    def __init__(self, policy: nn.Module, discriminator: nn.Module, discriminator_monitor: AdvancedDiscriminatorMonitor,
+    def __init__(self, policy: nn.Module, discriminator: nn.Module, discriminator_monitor,
                  opt_config, disc_config, lr_config, device: torch.device = torch.device('cpu')):
+        """Initialize enhanced PPO trainer with all configurations"""
+
         self.device = device
         self.opt_config = opt_config
         self.disc_config = disc_config
         self.lr_config = lr_config
         self.discriminator_monitor = discriminator_monitor
-
-        # 🔥 FIX: Aggiungi riferimento al logger
         self.logger = discriminator_monitor.logger
 
         # Move models to device
@@ -270,7 +242,9 @@ class PPOTrainer:
         # Create optimizers with learning rate configuration
         self.opt_policy = optim.AdamW(
             policy.parameters(),
-            lr=lr_config.policy_initial_lr if hasattr(lr_config, 'policy_initial_lr') else lr_config.policy_base_lr,
+            lr=lr_config.policy_initial_lr if hasattr(lr_config, 'policy_initial_lr') else getattr(lr_config,
+                                                                                                   'policy_base_lr',
+                                                                                                   3e-4),
             eps=opt_config.optimizer_eps,
             weight_decay=opt_config.weight_decay,
             betas=opt_config.betas
@@ -278,8 +252,9 @@ class PPOTrainer:
 
         self.opt_disc = optim.AdamW(
             discriminator.parameters(),
-            lr=lr_config.discriminator_lr if hasattr(lr_config,
-                                                     'discriminator_lr') else lr_config.discriminator_initial_lr,
+            lr=lr_config.discriminator_lr if hasattr(lr_config, 'discriminator_lr') else getattr(lr_config,
+                                                                                                 'discriminator_initial_lr',
+                                                                                                 2e-4),
             eps=opt_config.optimizer_eps,
             weight_decay=opt_config.weight_decay,
             betas=opt_config.betas
@@ -293,7 +268,6 @@ class PPOTrainer:
         self.entropy_coef = opt_config.entropy_coefficient
         self.max_grad_norm = opt_config.max_grad_norm
 
-        # 🔥 FIX: Definisci policy_base_lr e discriminator_fixed_lr PRIMA di _setup_schedulers()
         # Store base learning rates for structured training
         self.policy_base_lr = self.opt_policy.param_groups[0]['lr']
         self.discriminator_fixed_lr = self.opt_disc.param_groups[0]['lr']
@@ -301,7 +275,7 @@ class PPOTrainer:
         # Initialize schedulers based on config type
         self._setup_schedulers()
 
-        # Tracking for both modes
+        # Core tracking metrics
         self.update_count = 0
         self.policy_losses = []
         self.disc_losses = []
@@ -314,65 +288,74 @@ class PPOTrainer:
         self.emergency_resets = 0
         self.last_lr_check = None
 
+        # 🆕 FORCE UPDATE TRACKING
+        self.force_update_count = 0
+        self.consecutive_low_accuracy_episodes = 0
+        self.last_force_update_episode = -1
+        self.force_update_attempts = 0
+        self.force_update_success_count = 0
+        self.discriminator_accuracy_history = []
+        self.force_update_cooldown_remaining = 0
+
+        # 🆕 ADVERSARIAL TRAINING METRICS
+        self.adversarial_update_count = 0
+        self.discriminator_collapse_incidents = 0
+        self.emergency_interventions_log = []
+        self.lr_adjustment_history = []
+
         # GPU optimization
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
+
+        self.logger.log_info(f"🔧 PPOTrainer initialized with enhanced adversarial features")
 
     def _setup_schedulers(self):
         """Setup schedulers based on configuration type"""
         lr_config = self.lr_config
 
-        # Check if we have structured config (has discriminator_lr) or advanced config (has policy_base_lr)
+        # Check if we have structured config (discriminator_lr exists)
         if hasattr(lr_config, 'discriminator_lr'):
-            # STRUCTURED MODE: Fixed LRs, no complex scheduling
+            # STRUCTURED MODE: Fixed LRs, simple decay
             self.policy_scheduler = None
             self.disc_scheduler = None
             self.structured_mode = True
 
-            # 🔥 FIX: Usa self.logger e le variabili corrette
-            self.logger.log_info(f"🏗️  Structured trainer mode:")
+            self.logger.log_info(f"🏗️  Structured trainer mode activated:")
             self.logger.log_info(f"   Policy LR: {self.policy_base_lr:.2e} (with decay)")
             self.logger.log_info(f"   Discriminator LR: {self.discriminator_fixed_lr:.2e} (fixed)")
 
         else:
-            # ADVANCED MODE: Complex scheduling
-            self.policy_scheduler = optim.lr_scheduler.CyclicLR(
-                self.opt_policy,
-                base_lr=lr_config.policy_base_lr,
-                max_lr=lr_config.policy_max_lr,
-                step_size_up=lr_config.policy_cyclical_step_size,
-                mode=lr_config.policy_cyclical_mode,
-                gamma=lr_config.policy_gamma,
-                cycle_momentum=False
-            )
+            # ADVANCED MODE: Complex scheduling (legacy support)
+            try:
+                self.policy_scheduler = optim.lr_scheduler.CyclicLR(
+                    self.opt_policy,
+                    base_lr=getattr(lr_config, 'policy_base_lr', 1e-4),
+                    max_lr=getattr(lr_config, 'policy_max_lr', 3e-4),
+                    step_size_up=getattr(lr_config, 'policy_cyclical_step_size', 100),
+                    mode=getattr(lr_config, 'policy_cyclical_mode', 'triangular'),
+                    gamma=getattr(lr_config, 'policy_gamma', 0.99),
+                    cycle_momentum=False
+                )
 
-            self.disc_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                self.opt_disc,
-                mode=lr_config.discriminator_monitor_mode,
-                factor=lr_config.discriminator_factor,
-                patience=lr_config.discriminator_patience,
-                threshold=lr_config.discriminator_threshold,
-                threshold_mode=lr_config.discriminator_threshold_mode,
-                cooldown=lr_config.discriminator_cooldown,
-                min_lr=lr_config.discriminator_min_lr,
-                eps=lr_config.discriminator_eps
-            )
-            self.structured_mode = False
-            self.disc_metric_history = []
-
-    def update_discriminator_lr(self, new_lr: float):
-        """Update discriminator learning rate with emergency tracking"""
-        old_lr = self.opt_disc.param_groups[0]['lr']
-
-        for param_group in self.opt_disc.param_groups:
-            param_group['lr'] = new_lr
-
-        # Track emergency resets
-        if (self.last_lr_check is not None and
-                old_lr < 1e-10 and new_lr > 1e-6):
-            self.emergency_resets += 1
-
-        self.last_lr_check = new_lr
+                self.disc_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    self.opt_disc,
+                    mode=getattr(lr_config, 'discriminator_monitor_mode', 'max'),
+                    factor=getattr(lr_config, 'discriminator_factor', 0.8),
+                    patience=getattr(lr_config, 'discriminator_patience', 10),
+                    threshold=getattr(lr_config, 'discriminator_threshold', 0.01),
+                    threshold_mode=getattr(lr_config, 'discriminator_threshold_mode', 'rel'),
+                    cooldown=getattr(lr_config, 'discriminator_cooldown', 5),
+                    min_lr=getattr(lr_config, 'discriminator_min_lr', 1e-6),
+                    eps=getattr(lr_config, 'discriminator_eps', 1e-8)
+                )
+            except Exception as e:
+                self.logger.log_warning(f"Advanced scheduler setup failed, using structured mode: {e}")
+                self.policy_scheduler = None
+                self.disc_scheduler = None
+                self.structured_mode = True
+            else:
+                self.structured_mode = False
+                self.disc_metric_history = []
 
     def compute_gae(self, rewards: List[float], values: List[float],
                     dones: List[bool]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -401,37 +384,36 @@ class PPOTrainer:
         advantages = torch.tensor(advantages, dtype=torch.float32, device=self.device)
         returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
 
+        # Normalize advantages
         if len(advantages) > 1:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         return advantages, returns
 
-    def update_policy(self, states: List[Data], actions: List[Any],
-                      old_log_probs: torch.Tensor, advantages: torch.Tensor,
-                      returns: torch.Tensor):
-        """Standard policy update (for backward compatibility)"""
-        epochs = self.opt_config.policy_epochs if hasattr(self.opt_config, 'policy_epochs') else 4
-        self._update_policy_internal(states, actions, old_log_probs, advantages, returns, epochs)
+    def update_policy_structured(self, states: List[Data], actions: List[Any],
+                                 old_log_probs: torch.Tensor, advantages: torch.Tensor,
+                                 returns: torch.Tensor, epochs: int = 4):
+        """🆕 Enhanced structured policy update with comprehensive tracking"""
 
-        # Update scheduler if in advanced mode
-        if not self.structured_mode and self.policy_scheduler:
-            self.policy_scheduler.step()
-
-    def update_policy_structured(self, states, actions, old_log_probs, advantages, returns, epochs=4):
-        """Structured policy update with specified number of epochs"""
         if not self.structured_mode:
             self.logger.log_warning("update_policy_structured called but not in structured mode")
-            return self.update_policy(states, actions, old_log_probs, advantages, returns)
+            return self._update_policy_fallback(states, actions, old_log_probs, advantages, returns)
 
-        # 🔥 FIX: Usa self.logger
         self.logger.log_info(f"🎯 Policy update #{self.policy_update_count + 1} - {epochs} epochs")
 
         # Apply learning rate decay for structured mode
         self._apply_structured_lr_decay()
 
-        # Perform the update
-        self._update_policy_internal(states, actions, old_log_probs, advantages, returns, epochs)
-        self.policy_update_count += 1
+        # Perform the update with enhanced tracking
+        success = self._update_policy_internal(states, actions, old_log_probs, advantages, returns, epochs)
+
+        if success:
+            self.policy_update_count += 1
+            self.logger.log_info(f"✅ Policy update #{self.policy_update_count} completed successfully")
+        else:
+            self.logger.log_warning(f"⚠️  Policy update #{self.policy_update_count + 1} had issues")
+
+        return success
 
     def _apply_structured_lr_decay(self):
         """Apply learning rate decay in structured mode"""
@@ -442,132 +424,351 @@ class PPOTrainer:
         if (self.policy_update_count > 0 and
                 self.policy_update_count % lr_config.policy_decay_frequency == 0):
 
+            old_lr = self.opt_policy.param_groups[0]['lr']
             new_lr = max(
                 self.policy_base_lr * (lr_config.policy_decay_factor ** (
-                            self.policy_update_count // lr_config.policy_decay_frequency)),
+                        self.policy_update_count // lr_config.policy_decay_frequency)),
                 lr_config.policy_min_lr
             )
 
             for param_group in self.opt_policy.param_groups:
                 param_group['lr'] = new_lr
 
-            # 🔥 FIX: Usa self.logger
-            self.logger.log_info(f"🔧 Policy LR decay: {self.opt_policy.param_groups[0]['lr']:.2e}")
+            # Track LR changes
+            self.lr_adjustment_history.append({
+                'episode_type': 'policy_decay',
+                'old_lr': old_lr,
+                'new_lr': new_lr,
+                'update_count': self.policy_update_count
+            })
 
-    def _update_policy_internal(self, states, actions, old_log_probs, advantages, returns, epochs):
-        """Internal policy update logic shared by both modes"""
+            self.logger.log_info(f"🔧 Policy LR decay: {old_lr:.2e} → {new_lr:.2e}")
+
+    def _update_policy_internal(self, states: List[Data], actions: List[Any],
+                                old_log_probs: torch.Tensor, advantages: torch.Tensor,
+                                returns: torch.Tensor, epochs: int) -> bool:
+        """🆕 Enhanced internal policy update with comprehensive error handling"""
+
         if len(states) == 0:
-            return
+            self.logger.log_warning("Empty states provided to policy update")
+            return False
 
         policy_losses, entropy_losses, value_losses, kl_divs = [], [], [], []
+        total_batches_processed = 0
+        failed_batches = 0
 
-        for epoch in range(epochs):
-            indices = torch.randperm(len(states), device=self.device)
-            batch_size = min(32, len(states))
+        try:
+            for epoch in range(epochs):
+                indices = torch.randperm(len(states), device=self.device)
+                batch_size = min(32, len(states))
+                epoch_losses = []
+                epoch_batches = 0
 
-            epoch_losses = []
+                for start in range(0, len(states), batch_size):
+                    end = start + batch_size
+                    batch_idx = indices[start:end].cpu().numpy()
 
-            for start in range(0, len(states), batch_size):
-                end = start + batch_size
-                batch_idx = indices[start:end].cpu().numpy()
+                    batch_states = [states[i] for i in batch_idx]
+                    batch_actions = [actions[i] for i in batch_idx]
+                    batch_old_logp = old_log_probs[batch_idx]
+                    batch_adv = advantages[batch_idx]
+                    batch_ret = returns[batch_idx]
 
-                batch_states = [states[i] for i in batch_idx]
-                batch_actions = [actions[i] for i in batch_idx]
-                batch_old_logp = old_log_probs[batch_idx]
-                batch_adv = advantages[batch_idx]
-                batch_ret = returns[batch_idx]
+                    try:
+                        # Forward pass through policy
+                        batch_data = Batch.from_data_list(batch_states).to(self.device)
+                        out = self.policy(batch_data)
 
-                try:
-                    out = self.policy(Batch.from_data_list(batch_states).to(self.device))
+                        # Compute log probabilities and entropy
+                        logp, ent = self._compute_logp_and_entropy(out, batch_actions)
 
-                    logp, ent = self._compute_logp_and_entropy(out, batch_actions)
-                    ratio = torch.exp(logp - batch_old_logp)
-                    surr1 = ratio * batch_adv
-                    surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * batch_adv
-                    policy_loss = -torch.min(surr1, surr2).mean()
+                        # PPO loss computation
+                        ratio = torch.exp(logp - batch_old_logp)
+                        surr1 = ratio * batch_adv
+                        surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * batch_adv
+                        policy_loss = -torch.min(surr1, surr2).mean()
 
-                    value_preds = out['value'].squeeze()
-                    value_loss = F.mse_loss(value_preds, batch_ret)
+                        # Value function loss
+                        if 'value' in out:
+                            value_preds = out['value'].squeeze()
+                            value_loss = F.mse_loss(value_preds, batch_ret)
+                        else:
+                            # Fallback if no value network
+                            value_loss = torch.tensor(0.0, device=self.device)
 
-                    total_loss = (
-                            policy_loss
-                            + self.value_coef * value_loss
-                            - self.entropy_coef * ent.mean()
-                    )
+                        # Total loss
+                        total_loss = (
+                                policy_loss
+                                + self.value_coef * value_loss
+                                - self.entropy_coef * ent.mean()
+                        )
 
-                    self.opt_policy.zero_grad()
-                    total_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-                    self.opt_policy.step()
+                        # Backward pass
+                        self.opt_policy.zero_grad()
+                        total_loss.backward()
 
-                    epoch_losses.append(total_loss.item())
-                    policy_losses.append(policy_loss.item())
-                    entropy_losses.append(ent.mean().item())
-                    value_losses.append(value_loss.item())
+                        # Gradient clipping
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                            self.policy.parameters(), self.max_grad_norm
+                        )
 
-                    with torch.no_grad():
-                        kl_divs.append((batch_old_logp - logp).mean().item())
+                        self.opt_policy.step()
 
-                except Exception as e:
-                    # 🔥 FIX: Usa self.logger
-                    self.logger.log_warning(f"Policy batch failed: {e}")
-                    continue
+                        # Track metrics
+                        epoch_losses.append(total_loss.item())
+                        policy_losses.append(policy_loss.item())
+                        entropy_losses.append(ent.mean().item())
+                        value_losses.append(value_loss.item())
 
-            # Log epoch progress in structured mode
-            if self.structured_mode and epoch_losses:
-                # 🔥 FIX: Usa self.logger
-                self.logger.log_info(f"   Epoch {epoch + 1}/{epochs}: Loss = {np.mean(epoch_losses):.4f}")
+                        with torch.no_grad():
+                            kl_divs.append((batch_old_logp - logp).mean().item())
 
-        # Update metrics
+                        epoch_batches += 1
+                        total_batches_processed += 1
+
+                    except Exception as e:
+                        failed_batches += 1
+                        if failed_batches < 5:  # Only log first few failures
+                            self.logger.log_warning(f"Policy batch failed: {e}")
+                        continue
+
+                # Log epoch progress in structured mode
+                if self.structured_mode and epoch_losses:
+                    avg_loss = np.mean(epoch_losses)
+                    self.logger.log_info(
+                        f"   Epoch {epoch + 1}/{epochs}: Loss = {avg_loss:.4f} ({epoch_batches} batches)")
+
+        except Exception as e:
+            self.logger.log_error(f"Critical policy update error: {e}")
+            return False
+
+        # Update metrics if we have any successful updates
         if policy_losses:
             self.policy_losses.append(np.mean(policy_losses))
             self.policy_metrics.append({
                 'policy_loss': np.mean(policy_losses),
                 'value_loss': np.mean(value_losses),
                 'entropy': np.mean(entropy_losses),
-                'kl_divergence': np.mean(kl_divs)
+                'kl_divergence': np.mean(kl_divs),
+                'batches_processed': total_batches_processed,
+                'failed_batches': failed_batches
             })
+
+            # Log summary
+            if failed_batches > 0:
+                self.logger.log_warning(
+                    f"   Policy update: {total_batches_processed} successful, {failed_batches} failed batches")
+
+        else:
+            self.logger.log_error("No successful policy batches processed")
+            return False
 
         self.update_count += 1
 
+        # GPU memory cleanup
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    def update_discriminator(self, smelly_graphs: List[Data], clean_graphs: List[Data],
-                             generated_graphs: List[Data], episode: int):
-        """Standard discriminator update (for backward compatibility)"""
-        epochs = self.opt_config.discriminator_epochs if hasattr(self.opt_config, 'discriminator_epochs') else 4
-        self._update_discriminator_internal(smelly_graphs, clean_graphs, generated_graphs, episode, epochs)
+        return True
+
+    def _update_policy_fallback(self, states: List[Data], actions: List[Any],
+                                old_log_probs: torch.Tensor, advantages: torch.Tensor,
+                                returns: torch.Tensor):
+        """Fallback policy update for non-structured mode"""
+        epochs = getattr(self.opt_config, 'policy_epochs', 4)
+        success = self._update_policy_internal(states, actions, old_log_probs, advantages, returns, epochs)
 
         # Update scheduler if in advanced mode
-        if not self.structured_mode and self.disc_scheduler:
-            avg_metrics = self.disc_metrics[-1] if self.disc_metrics else {'accuracy': 0}
-            monitored_metric = avg_metrics.get(self.lr_config.discriminator_monitor_metric, 0)
-            self.disc_scheduler.step(monitored_metric)
+        if not self.structured_mode and self.policy_scheduler:
+            self.policy_scheduler.step()
 
-    def update_discriminator_structured(self, smelly_graphs, clean_graphs, generated_graphs, episode, epochs=2):
-        """Structured discriminator update with specified number of epochs"""
+        return success
+
+    def check_discriminator_collapse(self, current_accuracy: float, episode: int) -> bool:
+        """🆕 Enhanced discriminator collapse detection with comprehensive tracking"""
+
+        # Add current accuracy to history
+        self.discriminator_accuracy_history.append({
+            'episode': episode,
+            'accuracy': current_accuracy,
+            'timestamp': episode
+        })
+
+        # Get force update configuration with safe defaults
+        min_accuracy = getattr(self.disc_config, 'force_update_accuracy_threshold', 0.58)
+        consecutive_threshold = getattr(self.disc_config, 'force_update_consecutive_episodes', 3)
+        cooldown_episodes = getattr(self.lr_config, 'force_update_cooldown_episodes', 10)
+
+        # Check if in cooldown period
+        if self.force_update_cooldown_remaining > 0:
+            self.force_update_cooldown_remaining -= 1
+            return False
+
+        # Update consecutive low accuracy counter
+        if current_accuracy < min_accuracy:
+            self.consecutive_low_accuracy_episodes += 1
+        else:
+            self.consecutive_low_accuracy_episodes = 0
+
+        # Determine if force update needed
+        needs_force_update = (
+                self.consecutive_low_accuracy_episodes >= consecutive_threshold and
+                episode - self.last_force_update_episode > cooldown_episodes
+        )
+
+        if needs_force_update:
+            self.discriminator_collapse_incidents += 1
+
+            self.logger.log_warning(f"🚨 DISCRIMINATOR COLLAPSE DETECTED!")
+            self.logger.log_warning(f"   Current accuracy: {current_accuracy:.3f}")
+            self.logger.log_warning(f"   Consecutive low episodes: {self.consecutive_low_accuracy_episodes}")
+            self.logger.log_warning(f"   Threshold: {min_accuracy:.3f}")
+            self.logger.log_warning(f"   Episode: {episode}")
+            self.logger.log_warning(f"   Collapse incident #{self.discriminator_collapse_incidents}")
+
+        return needs_force_update
+
+    def perform_force_update(self, smelly_graphs: List[Data], clean_graphs: List[Data],
+                             generated_graphs: List[Data], episode: int) -> bool:
+        """🆕 Enhanced aggressive discriminator force update with comprehensive recovery"""
+
+        self.force_update_count += 1
+        self.force_update_attempts += 1
+        self.last_force_update_episode = episode
+        self.consecutive_low_accuracy_episodes = 0
+
+        # Get force update configuration with safe defaults
+        max_epochs = getattr(self.disc_config, 'force_update_max_epochs', 5)
+        lr_boost = getattr(self.disc_config, 'force_update_lr_boost', 1.5)
+        recovery_threshold = getattr(self.lr_config, 'force_update_recovery_threshold', 0.65)
+        cooldown_episodes = getattr(self.lr_config, 'force_update_cooldown_episodes', 10)
+
+        self.logger.log_warning(f"🔄 FORCE UPDATE #{self.force_update_count} - Episode {episode}")
+        self.logger.log_info(f"   Max epochs: {max_epochs}")
+        self.logger.log_info(f"   LR boost: {lr_boost}x")
+        self.logger.log_info(f"   Recovery target: {recovery_threshold:.3f}")
+
+        # Store original learning rate
+        original_lr = self.opt_disc.param_groups[0]['lr']
+        boosted_lr = min(
+            original_lr * lr_boost,
+            getattr(self.lr_config, 'force_update_lr_max', 1e-3)
+        )
+
+        # Apply LR boost
+        for param_group in self.opt_disc.param_groups:
+            param_group['lr'] = boosted_lr
+
+        # Track LR adjustment
+        self.lr_adjustment_history.append({
+            'episode_type': 'force_update_boost',
+            'episode': episode,
+            'old_lr': original_lr,
+            'new_lr': boosted_lr,
+            'force_update_count': self.force_update_count
+        })
+
+        self.logger.log_info(f"   LR boosted: {original_lr:.2e} → {boosted_lr:.2e}")
+
+        success = False
+        recovery_accuracy = 0.0
+
+        try:
+            # Log data stats
+            self.logger.log_info(
+                f"   Training data: {len(smelly_graphs)} smelly, {len(clean_graphs)} clean, {len(generated_graphs)} generated")
+
+            # Perform aggressive training with more epochs
+            self._update_discriminator_internal(
+                smelly_graphs, clean_graphs, generated_graphs,
+                episode, epochs=max_epochs, is_force_update=True
+            )
+
+            # Validate recovery
+            validation_results = self.discriminator_monitor.validate_performance(episode, detailed=True)
+            recovery_accuracy = validation_results.get('accuracy', 0)
+
+            if recovery_accuracy >= recovery_threshold:
+                self.force_update_success_count += 1
+                self.logger.log_info(f"✅ FORCE UPDATE SUCCESSFUL!")
+                self.logger.log_info(f"   Recovery: {recovery_accuracy:.3f} >= {recovery_threshold:.3f}")
+                success = True
+            else:
+                self.logger.log_warning(f"⚠️  FORCE UPDATE PARTIAL")
+                self.logger.log_warning(f"   Recovery: {recovery_accuracy:.3f} < {recovery_threshold:.3f}")
+                success = False
+
+            # Set cooldown period
+            self.force_update_cooldown_remaining = cooldown_episodes
+
+        except Exception as e:
+            self.logger.log_error(f"❌ FORCE UPDATE FAILED: {e}")
+            success = False
+
+        finally:
+            # Restore original learning rate
+            for param_group in self.opt_disc.param_groups:
+                param_group['lr'] = original_lr
+
+            # Track LR restoration
+            self.lr_adjustment_history.append({
+                'episode_type': 'force_update_restore',
+                'episode': episode,
+                'old_lr': boosted_lr,
+                'new_lr': original_lr,
+                'success': success,
+                'recovery_accuracy': recovery_accuracy
+            })
+
+            self.logger.log_info(f"   LR restored: {boosted_lr:.2e} → {original_lr:.2e}")
+
+        # Log emergency intervention
+        self.emergency_interventions_log.append({
+            'episode': episode,
+            'force_update_count': self.force_update_count,
+            'success': success,
+            'recovery_accuracy': recovery_accuracy,
+            'original_lr': original_lr,
+            'boosted_lr': boosted_lr,
+            'epochs_used': max_epochs
+        })
+
+        return success
+
+    def update_discriminator_structured(self, smelly_graphs: List[Data], clean_graphs: List[Data],
+                                        generated_graphs: List[Data], episode: int, epochs: int = 2):
+        """🆕 Enhanced structured discriminator update"""
+
         if not self.structured_mode:
             self.logger.log_warning("update_discriminator_structured called but not in structured mode")
-            return self.update_discriminator(smelly_graphs, clean_graphs, generated_graphs, episode)
+            return self._update_discriminator_fallback(smelly_graphs, clean_graphs, generated_graphs, episode)
 
-        # 🔥 FIX: Usa self.logger
         self.logger.log_info(f"🧠 Discriminator update #{self.discriminator_update_count + 1} - {epochs} epochs")
         self.logger.log_info(
             f"   Data: {len(smelly_graphs)} smelly, {len(clean_graphs)} clean, {len(generated_graphs)} generated")
 
         # Ensure fixed learning rate in structured mode
-        for param_group in self.opt_disc.param_groups:
-            param_group['lr'] = self.discriminator_fixed_lr
+        current_lr = self.opt_disc.param_groups[0]['lr']
+        if abs(current_lr - self.discriminator_fixed_lr) > 1e-8:
+            for param_group in self.opt_disc.param_groups:
+                param_group['lr'] = self.discriminator_fixed_lr
+            self.logger.log_info(f"   LR reset to fixed: {current_lr:.2e} → {self.discriminator_fixed_lr:.2e}")
 
         # Perform the update
-        self._update_discriminator_internal(smelly_graphs, clean_graphs, generated_graphs, episode, epochs)
-        self.discriminator_update_count += 1
+        success = self._update_discriminator_internal(smelly_graphs, clean_graphs, generated_graphs, episode, epochs)
 
-    def _update_discriminator_internal(self, smelly_graphs, clean_graphs, generated_graphs, episode, epochs):
-        """Internal discriminator update logic shared by both modes"""
+        if success:
+            self.discriminator_update_count += 1
+            self.adversarial_update_count += 1
 
-        # Check LR health before starting
+        return success
+
+    def _update_discriminator_internal(self, smelly_graphs: List[Data], clean_graphs: List[Data],
+                                       generated_graphs: List[Data], episode: int, epochs: int,
+                                       is_force_update: bool = False) -> bool:
+        """🆕 Enhanced internal discriminator update with comprehensive tracking"""
+
+        # Pre-update health check
         current_lr = self.opt_disc.param_groups[0]['lr']
         if current_lr < 1e-10:
             self.discriminator_monitor.logger.log_warning(
@@ -575,161 +776,247 @@ class PPOTrainer:
 
         total_metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1': []}
         epoch_losses = []
+        total_batches_processed = 0
+        failed_batches = 0
 
-        for epoch in range(epochs):
-            # Determine batch size
-            if self.structured_mode:
-                batch_size = min(
-                    self.disc_config.max_samples_per_class // 2,  # Smaller batches for stability
-                    min(len(smelly_graphs), len(clean_graphs), len(generated_graphs))
-                )
-            else:
-                batch_size = min(
-                    self.disc_config.max_samples_per_class,
-                    max(self.disc_config.min_samples_per_class,
-                        min(len(smelly_graphs), len(clean_graphs), len(generated_graphs)))
-                )
+        update_type = "FORCE" if is_force_update else "REGULAR"
+        self.logger.log_info(f"🧠 Starting {update_type} discriminator update - {epochs} epochs")
 
-            if batch_size <= 2:
-                self.discriminator_monitor.logger.log_warning(f"⚠️  Insufficient batch size: {batch_size}")
-                continue
+        try:
+            for epoch in range(epochs):
+                # Determine batch size based on mode and data availability
+                available_data_size = min(len(smelly_graphs), len(clean_graphs), len(generated_graphs))
 
-            try:
-                # Sample data
-                smelly_sample = np.random.choice(len(smelly_graphs), batch_size, replace=False).tolist() if len(
-                    smelly_graphs) >= batch_size else list(range(len(smelly_graphs)))
-                clean_sample = np.random.choice(len(clean_graphs), batch_size, replace=False).tolist() if len(
-                    clean_graphs) >= batch_size else list(range(len(clean_graphs)))
-                generated_sample = np.random.choice(len(generated_graphs), batch_size, replace=False).tolist() if len(
-                    generated_graphs) >= batch_size else list(range(len(generated_graphs)))
+                if self.structured_mode:
+                    batch_size = min(
+                        self.disc_config.max_samples_per_class // 2,
+                        available_data_size
+                    )
+                else:
+                    batch_size = min(
+                        self.disc_config.max_samples_per_class,
+                        max(self.disc_config.min_samples_per_class, available_data_size)
+                    )
 
-                smelly_batch_data = [smelly_graphs[i].to(self.device) for i in smelly_sample]
-                clean_batch_data = [clean_graphs[i].to(self.device) for i in clean_sample]
-                generated_batch_data = [generated_graphs[i].to(self.device) for i in generated_sample]
+                # Force update uses larger batches if possible
+                if is_force_update:
+                    batch_size = min(self.disc_config.max_samples_per_class, available_data_size)
 
-                smelly_batch = Batch.from_data_list(smelly_batch_data)
-                clean_batch = Batch.from_data_list(clean_batch_data)
-                generated_batch = Batch.from_data_list(generated_batch_data)
-
-                # Forward pass
-                self.discriminator.train()
-                smelly_out = self.discriminator(smelly_batch)
-                clean_out = self.discriminator(clean_batch)
-                gen_out = self.discriminator(generated_batch)
-
-                if any(out is None or 'logits' not in out for out in [smelly_out, clean_out, gen_out]):
-                    self.discriminator_monitor.logger.log_warning(f"⚠️  Invalid discriminator outputs at epoch {epoch}")
+                if batch_size <= 2:
+                    self.discriminator_monitor.logger.log_warning(f"⚠️  Insufficient batch size: {batch_size}")
                     continue
 
-                # Labels and loss
-                smelly_labels = torch.ones(len(smelly_batch_data), dtype=torch.long, device=self.device)
-                clean_labels = torch.zeros(len(clean_batch_data), dtype=torch.long, device=self.device)
-                gen_labels = torch.zeros(len(generated_batch_data), dtype=torch.long, device=self.device)
+                epoch_batch_losses = []
 
-                loss_smelly = F.cross_entropy(smelly_out['logits'], smelly_labels,
-                                              label_smoothing=self.disc_config.label_smoothing)
-                loss_clean = F.cross_entropy(clean_out['logits'], clean_labels,
-                                             label_smoothing=self.disc_config.label_smoothing)
-                loss_gen = F.cross_entropy(gen_out['logits'], gen_labels,
-                                           label_smoothing=self.disc_config.label_smoothing)
+                try:
+                    # Sample data with proper replacement handling
+                    def safe_sample(data_list, size):
+                        if len(data_list) >= size:
+                            return np.random.choice(len(data_list), size, replace=False).tolist()
+                        else:
+                            return list(range(len(data_list)))
 
-                # Gradient penalty (only in advanced mode)
-                if not self.structured_mode:
-                    gp_loss = self._compute_gradient_penalty(smelly_batch, clean_batch, generated_batch, smelly_out,
-                                                             clean_out, gen_out)
-                else:
+                    smelly_sample = safe_sample(smelly_graphs, batch_size)
+                    clean_sample = safe_sample(clean_graphs, batch_size)
+                    generated_sample = safe_sample(generated_graphs, batch_size)
+
+                    # Create batches
+                    smelly_batch_data = [smelly_graphs[i].to(self.device) for i in smelly_sample]
+                    clean_batch_data = [clean_graphs[i].to(self.device) for i in clean_sample]
+                    generated_batch_data = [generated_graphs[i].to(self.device) for i in generated_sample]
+
+                    smelly_batch = Batch.from_data_list(smelly_batch_data)
+                    clean_batch = Batch.from_data_list(clean_batch_data)
+                    generated_batch = Batch.from_data_list(generated_batch_data)
+
+                    # Forward pass
+                    self.discriminator.train()
+                    smelly_out = self.discriminator(smelly_batch)
+                    clean_out = self.discriminator(clean_batch)
+                    gen_out = self.discriminator(generated_batch)
+
+                    # Validate outputs
+                    if any(out is None or 'logits' not in out for out in [smelly_out, clean_out, gen_out]):
+                        self.discriminator_monitor.logger.log_warning(
+                            f"⚠️  Invalid discriminator outputs at epoch {epoch}")
+                        failed_batches += 1
+                        continue
+
+                    # Prepare labels
+                    smelly_labels = torch.ones(len(smelly_batch_data), dtype=torch.long, device=self.device)
+                    clean_labels = torch.zeros(len(clean_batch_data), dtype=torch.long, device=self.device)
+                    gen_labels = torch.zeros(len(generated_batch_data), dtype=torch.long, device=self.device)
+
+                    # Compute losses
+                    loss_smelly = F.cross_entropy(smelly_out['logits'], smelly_labels,
+                                                  label_smoothing=self.disc_config.label_smoothing)
+                    loss_clean = F.cross_entropy(clean_out['logits'], clean_labels,
+                                                 label_smoothing=self.disc_config.label_smoothing)
+                    loss_gen = F.cross_entropy(gen_out['logits'], gen_labels,
+                                               label_smoothing=self.disc_config.label_smoothing)
+
+                    # Gradient penalty (only in advanced mode and not during force updates)
                     gp_loss = 0.0
+                    if not self.structured_mode and not is_force_update:
+                        try:
+                            gp_loss = self._compute_gradient_penalty(
+                                smelly_batch, clean_batch, generated_batch,
+                                smelly_out, clean_out, gen_out
+                            )
+                        except Exception as e:
+                            self.logger.log_warning(f"Gradient penalty computation failed: {e}")
+                            gp_loss = 0.0
 
-                disc_loss = loss_smelly + loss_clean + loss_gen + self.disc_config.gradient_penalty_lambda * gp_loss
+                    # Total discriminator loss
+                    disc_loss = (loss_smelly + loss_clean + loss_gen +
+                                 self.disc_config.gradient_penalty_lambda * gp_loss)
 
-                # Backward pass
-                self.opt_disc.zero_grad()
-                disc_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.max_grad_norm)
-                self.opt_disc.step()
+                    # Backward pass
+                    self.opt_disc.zero_grad()
+                    disc_loss.backward()
 
-                epoch_losses.append(disc_loss.item())
+                    # Gradient clipping
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        self.discriminator.parameters(), self.max_grad_norm
+                    )
 
-                # Calculate metrics
-                if self.disc_config.calculate_detailed_metrics:
-                    with torch.no_grad():
-                        self.discriminator.eval()
+                    self.opt_disc.step()
 
-                        smelly_preds = smelly_out['logits'].argmax(dim=1)
-                        clean_preds = clean_out['logits'].argmax(dim=1)
-                        gen_preds = gen_out['logits'].argmax(dim=1)
+                    epoch_batch_losses.append(disc_loss.item())
+                    total_batches_processed += 1
 
-                        all_preds = torch.cat([smelly_preds, clean_preds, gen_preds])
-                        all_labels = torch.cat([smelly_labels, clean_labels, gen_labels])
+                    # Calculate metrics if enabled
+                    if self.disc_config.calculate_detailed_metrics:
+                        with torch.no_grad():
+                            self.discriminator.eval()
 
-                        correct = (all_preds == all_labels).float()
-                        accuracy = correct.mean().item()
+                            smelly_preds = smelly_out['logits'].argmax(dim=1)
+                            clean_preds = clean_out['logits'].argmax(dim=1)
+                            gen_preds = gen_out['logits'].argmax(dim=1)
 
-                        tp = ((all_preds == 1) & (all_labels == 1)).sum().float()
-                        fp = ((all_preds == 1) & (all_labels == 0)).sum().float()
-                        fn = ((all_preds == 0) & (all_labels == 1)).sum().float()
+                            all_preds = torch.cat([smelly_preds, clean_preds, gen_preds])
+                            all_labels = torch.cat([smelly_labels, clean_labels, gen_labels])
 
-                        precision = tp / (tp + fp + 1e-8)
-                        recall = tp / (tp + fn + 1e-8)
-                        f1 = 2 * precision * recall / (precision + recall + 1e-8)
+                            correct = (all_preds == all_labels).float()
+                            accuracy = correct.mean().item()
 
-                        total_metrics['accuracy'].append(accuracy)
-                        total_metrics['precision'].append(precision.item())
-                        total_metrics['recall'].append(recall.item())
-                        total_metrics['f1'].append(f1.item())
+                            # Compute precision, recall, F1
+                            tp = ((all_preds == 1) & (all_labels == 1)).sum().float()
+                            fp = ((all_preds == 1) & (all_labels == 0)).sum().float()
+                            fn = ((all_preds == 0) & (all_labels == 1)).sum().float()
 
-                # Log epoch progress in structured mode
-                if self.structured_mode:
-                    # 🔥 FIX: Usa self.logger
-                    self.logger.log_info(f"   Epoch {epoch + 1}/{epochs}: Loss = {disc_loss.item():.4f}")
+                            precision = tp / (tp + fp + 1e-8)
+                            recall = tp / (tp + fn + 1e-8)
+                            f1 = 2 * precision * recall / (precision + recall + 1e-8)
 
-            except Exception as e:
-                self.discriminator_monitor.logger.log_warning(f"⚠️  Discriminator training error at epoch {epoch}: {e}")
-                continue
+                            total_metrics['accuracy'].append(accuracy)
+                            total_metrics['precision'].append(precision.item())
+                            total_metrics['recall'].append(recall.item())
+                            total_metrics['f1'].append(f1.item())
 
-        # Update metrics
-        if total_metrics['accuracy']:
-            avg_metrics = {
-                'accuracy': np.mean(total_metrics['accuracy']),
-                'precision': np.mean(total_metrics['precision']),
-                'recall': np.mean(total_metrics['recall']),
-                'f1': np.mean(total_metrics['f1']),
-                'loss': np.mean(epoch_losses) if epoch_losses else 0.0
-            }
+                except Exception as e:
+                    self.discriminator_monitor.logger.log_warning(
+                        f"⚠️  Discriminator training error at epoch {epoch}: {e}")
+                    failed_batches += 1
+                    continue
 
-            self.disc_metrics.append(avg_metrics)
-            self.disc_losses.append(avg_metrics['loss'])
+                # Track epoch losses
+                if epoch_batch_losses:
+                    epoch_losses.extend(epoch_batch_losses)
+                    avg_epoch_loss = np.mean(epoch_batch_losses)
 
-            current_lr = self.opt_disc.param_groups[0]['lr']
-            if self.structured_mode:
-                # 🔥 FIX: Usa self.logger
-                self.logger.log_info(f"🧠 Discriminator update completed:")
-                self.logger.log_info(f"   Acc: {avg_metrics['accuracy']:.3f}, F1: {avg_metrics['f1']:.3f}")
-                self.logger.log_info(f"   Loss: {avg_metrics['loss']:.4f}, LR: {current_lr:.2e}")
-            else:
-                self.discriminator_monitor.logger.log_info(
-                    f"🧠 Discriminator training completed - "
-                    f"Acc: {avg_metrics['accuracy']:.3f}, F1: {avg_metrics['f1']:.3f}, "
-                    f"Loss: {avg_metrics['loss']:.4f}, LR: {current_lr:.2e}"
-                )
+                    # Log epoch progress
+                    if self.structured_mode or is_force_update:
+                        loss_str = f"{avg_epoch_loss:.4f}"
+                        if is_force_update:
+                            loss_str += " [FORCE]"
+                        self.logger.log_info(f"   Epoch {epoch + 1}/{epochs}: Loss = {loss_str}")
 
-        # Check for LR degradation
-        post_update_lr = self.opt_disc.param_groups[0]['lr']
-        if post_update_lr < current_lr * 0.1:
-            self.discriminator_monitor.logger.log_warning(
-                f"⚠️  Discriminator LR dropped significantly: {current_lr:.2e} -> {post_update_lr:.2e}")
+        except Exception as e:
+            self.discriminator_monitor.logger.log_error(f"Critical discriminator update error: {e}")
+            return False
 
+        # Process and store metrics
+        success = self._process_discriminator_metrics(
+            total_metrics, epoch_losses, episode, is_force_update,
+            total_batches_processed, failed_batches
+        )
+
+        # GPU memory cleanup
         if self.device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    def _compute_gradient_penalty(self, smelly_batch, clean_batch, generated_batch, smelly_out, clean_out, gen_out):
-        """Compute gradient penalty (only for advanced mode)"""
+        return success
+
+    def _process_discriminator_metrics(self, total_metrics: Dict, epoch_losses: List,
+                                       episode: int, is_force_update: bool,
+                                       total_batches: int, failed_batches: int) -> bool:
+        """Process and log discriminator metrics"""
+
+        if not total_metrics['accuracy']:
+            self.logger.log_warning("No valid discriminator metrics collected")
+            return False
+
+        # Calculate average metrics
+        avg_metrics = {
+            'accuracy': np.mean(total_metrics['accuracy']),
+            'precision': np.mean(total_metrics['precision']),
+            'recall': np.mean(total_metrics['recall']),
+            'f1': np.mean(total_metrics['f1']),
+            'loss': np.mean(epoch_losses) if epoch_losses else 0.0,
+            'batches_processed': total_batches,
+            'failed_batches': failed_batches,
+            'is_force_update': is_force_update
+        }
+
+        # Store metrics
+        self.disc_metrics.append(avg_metrics)
+        self.disc_losses.append(avg_metrics['loss'])
+
+        # Log results
+        current_lr = self.opt_disc.param_groups[0]['lr']
+        update_type = "FORCE UPDATE" if is_force_update else "REGULAR UPDATE"
+
+        if self.structured_mode:
+            self.logger.log_info(f"🧠 Discriminator {update_type.lower()} completed:")
+            self.logger.log_info(f"   Acc: {avg_metrics['accuracy']:.3f}, F1: {avg_metrics['f1']:.3f}")
+            self.logger.log_info(f"   Loss: {avg_metrics['loss']:.4f}, LR: {current_lr:.2e}")
+            if failed_batches > 0:
+                self.logger.log_info(f"   Batches: {total_batches} ok, {failed_batches} failed")
+        else:
+            self.discriminator_monitor.logger.log_info(
+                f"🧠 Discriminator {update_type.lower()} - "
+                f"Acc: {avg_metrics['accuracy']:.3f}, F1: {avg_metrics['f1']:.3f}, "
+                f"Loss: {avg_metrics['loss']:.4f}, LR: {current_lr:.2e}"
+            )
+
+        return True
+
+    def _update_discriminator_fallback(self, smelly_graphs: List[Data], clean_graphs: List[Data],
+                                       generated_graphs: List[Data], episode: int):
+        """Fallback discriminator update for non-structured mode"""
+        epochs = getattr(self.opt_config, 'discriminator_epochs', 4)
+        success = self._update_discriminator_internal(smelly_graphs, clean_graphs, generated_graphs, episode, epochs)
+
+        # Update scheduler if in advanced mode
+        if not self.structured_mode and self.disc_scheduler:
+            avg_metrics = self.disc_metrics[-1] if self.disc_metrics else {'accuracy': 0}
+            monitored_metric = avg_metrics.get(getattr(self.lr_config, 'discriminator_monitor_metric', 'accuracy'), 0)
+            self.disc_scheduler.step(monitored_metric)
+
+        return success
+
+    def _compute_gradient_penalty(self, smelly_batch: Batch, clean_batch: Batch,
+                                  generated_batch: Batch, smelly_out: Dict,
+                                  clean_out: Dict, gen_out: Dict) -> float:
+        """Compute gradient penalty for WGAN-GP style training"""
         try:
             gp_loss = 0.0
             for batch_data, out in [(smelly_batch, smelly_out), (clean_batch, clean_out), (generated_batch, gen_out)]:
                 if batch_data.x.grad is not None:
                     batch_data.x.grad.zero_()
 
+                # Compute gradients
                 grads = torch.autograd.grad(
                     outputs=out['logits'].sum(),
                     inputs=batch_data.x,
@@ -737,105 +1024,228 @@ class PPOTrainer:
                     retain_graph=True,
                     only_inputs=True
                 )[0]
+
+                # Gradient penalty: (||grad||_2 - 1)^2
                 gp_loss += (grads.norm(2, dim=1) - 1).pow(2).mean()
+
             return gp_loss
-        except Exception:
+        except Exception as e:
+            self.logger.log_warning(f"Gradient penalty computation failed: {e}")
             return 0.0
 
     def _compute_logp_and_entropy(self, policy_out: Dict, actions: List) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute log probabilities and entropy for actions"""
+        """🆕 Enhanced log probability and entropy computation with robust error handling"""
+
         log_probs = []
         entropies = []
 
-        num_nodes = policy_out['hub_probs'].size(0)
+        try:
+            for i, action in enumerate(actions):
+                try:
+                    # Hub selection probabilities
+                    if 'hub_probs' in policy_out and i < policy_out['hub_probs'].size(0):
+                        hub_probs = policy_out['hub_probs'][i:i + 1] + 1e-8
+                        hub_probs = hub_probs / hub_probs.sum()
+                        hub_dist = Categorical(hub_probs)
 
-        for i, action in enumerate(actions):
-            try:
-                # Hub selection
-                if i < policy_out['hub_probs'].size(0):
-                    hub_probs = policy_out['hub_probs'][i:i + 1] + 1e-8
-                    hub_probs = hub_probs / hub_probs.sum()
-                    hub_dist = Categorical(hub_probs)
+                        hub_action = min(getattr(action, 'source_node', 0), hub_probs.size(0) - 1)
+                        log_prob_hub = hub_dist.log_prob(torch.tensor(hub_action, device=self.device))
+                        entropy_hub = hub_dist.entropy()
+                    else:
+                        log_prob_hub = torch.tensor(-5.0, device=self.device)
+                        entropy_hub = torch.tensor(0.1, device=self.device)
 
-                    hub_action = min(action.source_node, hub_probs.size(0) - 1)
-                    log_prob_hub = hub_dist.log_prob(torch.tensor(hub_action, device=self.device))
-                    entropy_hub = hub_dist.entropy()
-                else:
-                    log_prob_hub = torch.tensor(-5.0, device=self.device)
-                    entropy_hub = torch.tensor(0.1, device=self.device)
+                    # Pattern selection probabilities
+                    if 'pattern_probs' in policy_out and i < policy_out['pattern_probs'].size(0):
+                        pattern_probs = policy_out['pattern_probs'][i] + 1e-8
+                        pattern_probs = pattern_probs / pattern_probs.sum()
+                        pattern_dist = Categorical(pattern_probs)
 
-                # Pattern selection
-                if i < policy_out['pattern_probs'].size(0):
-                    pattern_probs = policy_out['pattern_probs'][i] + 1e-8
-                    pattern_probs = pattern_probs / pattern_probs.sum()
-                    pattern_dist = Categorical(pattern_probs)
+                        pattern_action = min(getattr(action, 'pattern', 0), pattern_probs.size(0) - 1)
+                        log_prob_pattern = pattern_dist.log_prob(torch.tensor(pattern_action, device=self.device))
+                        entropy_pattern = pattern_dist.entropy()
+                    else:
+                        log_prob_pattern = torch.tensor(-2.0, device=self.device)
+                        entropy_pattern = torch.tensor(0.1, device=self.device)
 
-                    pattern_action = min(action.pattern, pattern_probs.size(0) - 1)
-                    log_prob_pattern = pattern_dist.log_prob(torch.tensor(pattern_action, device=self.device))
-                    entropy_pattern = pattern_dist.entropy()
-                else:
-                    log_prob_pattern = torch.tensor(-2.0, device=self.device)
-                    entropy_pattern = torch.tensor(0.1, device=self.device)
+                    # Termination probabilities
+                    if 'term_probs' in policy_out and i < policy_out['term_probs'].size(0):
+                        term_probs = policy_out['term_probs'][i] + 1e-8
+                        term_probs = term_probs / term_probs.sum()
+                        term_dist = Categorical(term_probs)
 
-                # Termination
-                if i < policy_out['term_probs'].size(0):
-                    term_probs = policy_out['term_probs'][i] + 1e-8
-                    term_probs = term_probs / term_probs.sum()
-                    term_dist = Categorical(term_probs)
+                        term_action = int(getattr(action, 'terminate', False))
+                        log_prob_term = term_dist.log_prob(torch.tensor(term_action, device=self.device))
+                        entropy_term = term_dist.entropy()
+                    else:
+                        log_prob_term = torch.tensor(-1.0, device=self.device)
+                        entropy_term = torch.tensor(0.1, device=self.device)
 
-                    term_action = int(action.terminate)
-                    log_prob_term = term_dist.log_prob(torch.tensor(term_action, device=self.device))
-                    entropy_term = term_dist.entropy()
-                else:
-                    log_prob_term = torch.tensor(-1.0, device=self.device)
-                    entropy_term = torch.tensor(0.1, device=self.device)
+                    # Combine probabilities
+                    total_log_prob = log_prob_hub + log_prob_pattern + log_prob_term
+                    total_entropy = entropy_hub + entropy_pattern + entropy_term
 
-                total_log_prob = log_prob_hub + log_prob_pattern + log_prob_term
-                total_entropy = entropy_hub + entropy_pattern + entropy_term
+                    log_probs.append(total_log_prob)
+                    entropies.append(total_entropy)
 
-                log_probs.append(total_log_prob)
-                entropies.append(total_entropy)
+                except Exception as e:
+                    # Fallback for individual action failures
+                    log_probs.append(torch.tensor(-5.0, device=self.device))
+                    entropies.append(torch.tensor(0.1, device=self.device))
 
-            except Exception as e:
-                log_probs.append(torch.tensor(-5.0, device=self.device))
-                entropies.append(torch.tensor(0.1, device=self.device))
+        except Exception as e:
+            self.logger.log_error(f"Critical error in log probability computation: {e}")
+            # Return fallback values
+            fallback_logp = torch.tensor([-5.0] * len(actions), device=self.device)
+            fallback_entropy = torch.tensor([0.1] * len(actions), device=self.device)
+            return fallback_logp, fallback_entropy
 
-        return torch.stack(log_probs), torch.stack(entropies)
+        if log_probs:
+            return torch.stack(log_probs), torch.stack(entropies)
+        else:
+            # Complete fallback
+            fallback_logp = torch.tensor([-5.0], device=self.device)
+            fallback_entropy = torch.tensor([0.1], device=self.device)
+            return fallback_logp, fallback_entropy
 
     def get_latest_metrics(self) -> Dict[str, Any]:
-        """Get latest training metrics for logging"""
+        """🆕 Enhanced metrics retrieval with comprehensive information"""
         metrics = {}
 
+        # Policy metrics
         if self.policy_metrics:
             latest_policy = self.policy_metrics[-1]
             metrics.update({
-                'policy_loss': latest_policy['policy_loss'],
-                'policy_entropy': latest_policy['entropy'],
-                'policy_kl': latest_policy['kl_divergence']
+                'policy_loss': latest_policy.get('policy_loss', 0.0),
+                'policy_entropy': latest_policy.get('entropy', 0.0),
+                'policy_kl': latest_policy.get('kl_divergence', 0.0),
+                'policy_value_loss': latest_policy.get('value_loss', 0.0),
+                'policy_batches_processed': latest_policy.get('batches_processed', 0),
+                'policy_failed_batches': latest_policy.get('failed_batches', 0)
             })
 
+        # Discriminator metrics
         if self.disc_metrics:
             latest_disc = self.disc_metrics[-1]
             metrics.update({
-                'discriminator_accuracy': latest_disc['accuracy'],
-                'discriminator_f1': latest_disc['f1'],
-                'discriminator_precision': latest_disc['precision'],
-                'discriminator_recall': latest_disc['recall'],
-                'discriminator_loss': latest_disc.get('loss', 0.0)
+                'discriminator_accuracy': latest_disc.get('accuracy', 0.0),
+                'discriminator_f1': latest_disc.get('f1', 0.0),
+                'discriminator_precision': latest_disc.get('precision', 0.0),
+                'discriminator_recall': latest_disc.get('recall', 0.0),
+                'discriminator_loss': latest_disc.get('loss', 0.0),
+                'discriminator_batches_processed': latest_disc.get('batches_processed', 0),
+                'discriminator_failed_batches': latest_disc.get('failed_batches', 0),
+                'discriminator_is_force_update': latest_disc.get('is_force_update', False)
             })
 
         return metrics
 
-    def get_training_mode_info(self) -> Dict[str, Any]:
-        """Get information about current training mode"""
+    def get_force_update_stats(self) -> Dict[str, Any]:
+        """🆕 Comprehensive force update statistics"""
         return {
+            'total_force_updates': self.force_update_count,
+            'successful_force_updates': self.force_update_success_count,
+            'force_update_success_rate': self.force_update_success_count / max(self.force_update_count, 1),
+            'consecutive_low_accuracy_episodes': self.consecutive_low_accuracy_episodes,
+            'last_force_update_episode': self.last_force_update_episode,
+            'force_update_cooldown_remaining': self.force_update_cooldown_remaining,
+            'discriminator_collapse_incidents': self.discriminator_collapse_incidents,
+            'current_attempts': self.force_update_attempts,
+            # Recent accuracy history (last 10)
+            'recent_accuracy_history': [entry['accuracy'] for entry in self.discriminator_accuracy_history[-10:]],
+            'recent_episodes': [entry['episode'] for entry in self.discriminator_accuracy_history[-10:]],
+            # Emergency interventions summary
+            'emergency_interventions_count': len(self.emergency_interventions_log),
+            'lr_adjustments_count': len(self.lr_adjustment_history)
+        }
+
+    def get_training_mode_info(self) -> Dict[str, Any]:
+        """🆕 Enhanced training mode information with comprehensive stats"""
+        base_info = {
             'structured_mode': self.structured_mode,
-            'policy_updates_completed': getattr(self, 'policy_update_count', self.update_count),
-            'discriminator_updates_completed': getattr(self, 'discriminator_update_count', 0),
+            'policy_updates_completed': self.policy_update_count,
+            'discriminator_updates_completed': self.discriminator_update_count,
+            'adversarial_updates_completed': self.adversarial_update_count,
+            'total_updates_completed': self.update_count,
             'emergency_resets': self.emergency_resets,
             'current_policy_lr': self.opt_policy.param_groups[0]['lr'],
             'current_discriminator_lr': self.opt_disc.param_groups[0]['lr']
         }
+
+        # Add force update info
+        base_info.update(self.get_force_update_stats())
+
+        # Add performance summaries
+        if self.policy_metrics:
+            recent_policy_metrics = self.policy_metrics[-5:] if len(self.policy_metrics) >= 5 else self.policy_metrics
+            base_info.update({
+                'avg_recent_policy_loss': np.mean([m.get('policy_loss', 0) for m in recent_policy_metrics]),
+                'avg_recent_policy_entropy': np.mean([m.get('entropy', 0) for m in recent_policy_metrics])
+            })
+
+        if self.disc_metrics:
+            recent_disc_metrics = self.disc_metrics[-5:] if len(self.disc_metrics) >= 5 else self.disc_metrics
+            base_info.update({
+                'avg_recent_discriminator_accuracy': np.mean([m.get('accuracy', 0) for m in recent_disc_metrics]),
+                'avg_recent_discriminator_f1': np.mean([m.get('f1', 0) for m in recent_disc_metrics])
+            })
+
+        return base_info
+
+    def get_comprehensive_stats(self) -> Dict[str, Any]:
+        """🆕 Get comprehensive training statistics for analysis"""
+        return {
+            'training_mode_info': self.get_training_mode_info(),
+            'latest_metrics': self.get_latest_metrics(),
+            'force_update_stats': self.get_force_update_stats(),
+            'lr_adjustment_history': self.lr_adjustment_history.copy(),
+            'emergency_interventions': self.emergency_interventions_log.copy(),
+            'performance_trends': {
+                'policy_loss_trend': self.policy_losses[-20:] if len(self.policy_losses) >= 20 else self.policy_losses,
+                'discriminator_loss_trend': self.disc_losses[-20:] if len(self.disc_losses) >= 20 else self.disc_losses,
+                'discriminator_accuracy_trend': [entry['accuracy'] for entry in
+                                                 self.discriminator_accuracy_history[-20:]]
+            },
+            'system_health': {
+                'structured_mode_active': self.structured_mode,
+                'policy_lr_in_range': 1e-6 < self.opt_policy.param_groups[0]['lr'] < 1e-2,
+                'discriminator_lr_in_range': 1e-6 < self.opt_disc.param_groups[0]['lr'] < 1e-2,
+                'recent_failures_low': sum([m.get('failed_batches', 0) for m in self.policy_metrics[-5:]]) < 10,
+                'force_updates_controlled': self.force_update_count < 20
+            }
+        }
+
+    def reset_training_state(self):
+        """🆕 Reset training state for fresh start or recovery"""
+        self.logger.log_info("🔄 Resetting PPOTrainer state")
+
+        # Reset counters
+        self.policy_update_count = 0
+        self.discriminator_update_count = 0
+        self.adversarial_update_count = 0
+        self.force_update_count = 0
+        self.consecutive_low_accuracy_episodes = 0
+        self.force_update_cooldown_remaining = 0
+
+        # Clear histories but keep some for analysis
+        self.policy_losses = []
+        self.disc_losses = []
+        self.disc_metrics = []
+        self.policy_metrics = []
+
+        # Keep emergency logs for analysis
+        # self.emergency_interventions_log = []
+        # self.lr_adjustment_history = []
+
+        self.logger.log_info("✅ PPOTrainer state reset completed")
+
+    def __del__(self):
+        """Cleanup on destruction"""
+        if hasattr(self, 'device') and self.device.type == 'cuda':
+            try:
+                torch.cuda.empty_cache()
+            except:
+                pass
 
 
 def safe_torch_load(file_path: Path, device: torch.device):
@@ -1365,7 +1775,7 @@ def get_training_schedule_info(episode: int) -> Dict[str, Any]:
 
 
 def main():
-    """Main training loop with STRUCTURED PHASES"""
+    """🆕 Enhanced main training loop with adversarial features"""
 
     # Setup logging and configuration
     logger = setup_optimized_logging()
@@ -1432,25 +1842,43 @@ def main():
         hub_bias_strength=4.0, exploration_rate=0.1
     ).to(device)
 
-    # 🆕 STRUCTURED PPO Trainer with separate learning rates
+    # 🆕 ENHANCED PPO Trainer with force update
     trainer = PPOTrainer(
         policy, discriminator, discriminator_monitor,
         opt_config, disc_config, lr_config, device=device
     )
 
-    # Environment setup
+    # Environment setup with enhanced reward config
     env_manager = EnhancedEnvironmentManager(data_loader, discriminator, env_config, device)
     envs = create_diverse_training_environments(env_manager, discriminator, training_config, device)
 
-    # Update environment rewards
+    # 🆕 Update environment rewards with adversarial config
     for env in envs:
         env.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
         env.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
-        # ... [other reward updates] ...
+        env.REWARD_FAILURE = reward_config.REWARD_FAILURE
+        env.REWARD_STEP = reward_config.REWARD_STEP
+        env.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
+        env.REWARD_INVALID = reward_config.REWARD_INVALID
+        env.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
 
-    # 🆕 STRUCTURED TRAINING COMPONENTS
+        # 🆕 ADVERSARIAL REWARD PARAMETERS
+        env.adversarial_reward_scale = reward_config.adversarial_reward_scale
+        env.adversarial_reward_enabled = reward_config.adversarial_reward_enabled
+        env.adversarial_threshold = reward_config.adversarial_threshold
+        env.potential_discount = reward_config.potential_discount
+
+    # STRUCTURED TRAINING COMPONENTS
     experience_buffer = ExperienceBuffer(adv_config.experience_buffer_size)
     metrics_history = create_progress_tracker()
+
+    # 🆕 Enhanced tracking for adversarial training
+    adversarial_metrics_history = {
+        'adversarial_rewards': [],
+        'discriminator_probabilities': [],
+        'force_updates': [],
+        'adversarial_success_rates': []
+    }
 
     # Phase tracking
     warmup_episodes = training_config.warmup_episodes
@@ -1462,18 +1890,17 @@ def main():
     discriminator_paused = False
     discriminator_pause_remaining = 0
 
-    # TensorBoard setup
-    tensorboard_dir = results_dir / 'tensorboard_logs'
-    tb_logger = TensorBoardLogger(tensorboard_dir)
-
-    logger.log_info("🚀 STARTING STRUCTURED ADVERSARIAL TRAINING")
+    logger.log_info("🚀 STARTING ENHANCED ADVERSARIAL TRAINING")
     logger.log_info(f"📊 Phase Schedule:")
     logger.log_info(f"   Warm-up: Episodes 0-{warmup_episodes}")
     logger.log_info(f"   Policy updates: Every {policy_update_frequency} episodes")
     logger.log_info(
         f"   Discriminator updates: Every {policy_update_frequency * discriminator_update_frequency} episodes")
+    logger.log_info(f"🎁 Adversarial Features:")
+    logger.log_info(f"   Reward shaping: {'✅ ENABLED' if reward_config.adversarial_reward_enabled else '❌ DISABLED'}")
+    logger.log_info(f"   Force updates: {'✅ ENABLED' if adv_config.enable_force_updates else '❌ DISABLED'}")
 
-    # MAIN TRAINING LOOP with STRUCTURED PHASES
+    # MAIN TRAINING LOOP with ENHANCED FEATURES
     for episode in range(training_config.num_episodes):
         episode_start_time = time.time()
 
@@ -1481,11 +1908,11 @@ def main():
         schedule_info = get_training_schedule_info(episode)
         current_phase = schedule_info['phase']
 
-        # 🌅 WARM-UP PHASE: Only rollout collection
+        # WARM-UP PHASE: Only rollout collection
         if current_phase == "warmup":
             if episode % 25 == 0:
                 logger.log_info(f"🌅 WARM-UP Phase - Episode {episode}/{warmup_episodes}")
-                logger.log_info(f"   Collecting experience only - no updates")
+                logger.log_info(f"   Collecting experience + building discriminator baseline")
 
         # Update discriminator pause countdown
         if discriminator_paused:
@@ -1515,6 +1942,31 @@ def main():
             rollout_data['rewards'],
             rollout_data.get('hub_scores', [])
         )
+
+        # 🆕 COLLECT ADVERSARIAL METRICS from rollout
+        adversarial_rewards_episode = []
+        discriminator_probs_episode = []
+        adversarial_successes = 0
+
+        for info in rollout_data.get('step_infos', []):
+            if 'adversarial_reward' in info:
+                adversarial_rewards_episode.append(info['adversarial_reward'])
+
+            if 'adversarial_info' in info:
+                adv_info = info['adversarial_info']
+                if 'new_prob' in adv_info:
+                    discriminator_probs_episode.append(adv_info['new_prob'])
+                if adv_info.get('threshold_met', False) and adv_info.get('prob_change', 0) > 0:
+                    adversarial_successes += 1
+
+        # Store adversarial metrics
+        if adversarial_rewards_episode:
+            adversarial_metrics_history['adversarial_rewards'].append(np.mean(adversarial_rewards_episode))
+        if discriminator_probs_episode:
+            adversarial_metrics_history['discriminator_probabilities'].append(np.mean(discriminator_probs_episode))
+
+        adversarial_success_rate = adversarial_successes / max(len(rollout_data.get('step_infos', [])), 1)
+        adversarial_metrics_history['adversarial_success_rates'].append(adversarial_success_rate)
 
         # Calculate episode metrics
         episode_reward = np.mean(rollout_data['rewards'])
@@ -1567,30 +2019,40 @@ def main():
                     training_metrics = trainer.get_latest_metrics()
                     logger.log_training_update(policy_updates_completed, training_metrics)
 
-                    # TensorBoard logging
-                    if training_metrics:
-                        for key, value in training_metrics.items():
-                            if 'policy' in key:
-                                tb_logger.log_policy_metrics(policy_updates_completed,
-                                                             {key.replace('policy_', ''): value})
-
                 else:
                     logger.log_warning("⚠️  Skipping policy update - insufficient valid data")
 
             except Exception as e:
                 logger.log_warning(f"Policy update failed: {e}")
 
-        # 🧠 DISCRIMINATOR UPDATE PHASE
+        # 🧠 DISCRIMINATOR UPDATE PHASE (Enhanced with force update logic)
         is_discriminator_update_episode = (
                 episode >= warmup_episodes and
                 policy_updates_completed > 0 and
                 policy_updates_completed % discriminator_update_frequency == 0 and
-                not discriminator_paused and
-                (episode - warmup_episodes) % (policy_update_frequency * discriminator_update_frequency) == 0
+                not discriminator_paused
         )
 
-        if is_discriminator_update_episode:
-            logger.log_info(f"🧠 DISCRIMINATOR UPDATE #{discriminator_updates_completed + 1} - Episode {episode}")
+        # 🆕 FORCE UPDATE CHECK (independent of regular schedule)
+        needs_force_update = False
+        if (episode >= warmup_episodes and
+                adv_config.enable_force_updates and
+                not discriminator_paused):
+            # Get current discriminator accuracy from latest validation
+            latest_validation = discriminator_monitor.validation_history[
+                -1] if discriminator_monitor.validation_history else None
+            current_accuracy = latest_validation['metrics']['accuracy'] if latest_validation else baseline_metrics[
+                'accuracy']
+
+            needs_force_update = trainer.check_discriminator_collapse(current_accuracy, episode)
+
+        if is_discriminator_update_episode or needs_force_update:
+            if needs_force_update and not is_discriminator_update_episode:
+                logger.log_warning(f"🚨 EMERGENCY FORCE UPDATE - Episode {episode}")
+            else:
+                logger.log_info(
+                    f"🧠 REGULAR DISCRIMINATOR UPDATE #{discriminator_updates_completed + 1} - Episode {episode}")
+
             logger.log_info(f"   After {policy_updates_completed} policy updates")
 
             try:
@@ -1611,14 +2073,31 @@ def main():
                         len(clean_graphs) >= disc_config.min_samples_per_class and
                         len(generated_states) >= disc_config.min_samples_per_class):
 
-                    # STRUCTURED Discriminator Update with specified epochs
-                    trainer.update_discriminator_structured(
-                        smelly_graphs[:disc_config.max_samples_per_class],
-                        clean_graphs[:disc_config.max_samples_per_class],
-                        generated_states[:disc_config.max_samples_per_class],
-                        episode,
-                        epochs=training_config.discriminator_epochs_per_update
-                    )
+                    if needs_force_update:
+                        # 🆕 PERFORM FORCE UPDATE
+                        force_success = trainer.perform_force_update(
+                            smelly_graphs[:disc_config.max_samples_per_class],
+                            clean_graphs[:disc_config.max_samples_per_class],
+                            generated_states[:disc_config.max_samples_per_class],
+                            episode
+                        )
+
+                        # Track force update
+                        adversarial_metrics_history['force_updates'].append({
+                            'episode': episode,
+                            'success': force_success,
+                            'trigger': 'accuracy_collapse'
+                        })
+
+                    else:
+                        # Regular structured update
+                        trainer.update_discriminator_structured(
+                            smelly_graphs[:disc_config.max_samples_per_class],
+                            clean_graphs[:disc_config.max_samples_per_class],
+                            generated_states[:disc_config.max_samples_per_class],
+                            episode,
+                            epochs=training_config.discriminator_epochs_per_update
+                        )
 
                     discriminator_updates_completed += 1
 
@@ -1632,20 +2111,13 @@ def main():
                         discriminator_pause_remaining = adv_config.discriminator_pause_episodes
                         logger.log_warning(f"🛑 Discriminator paused - too strong ({current_accuracy:.3f})")
 
-                    # Log metrics
-                    disc_metrics = trainer.get_latest_metrics()
-                    if disc_metrics:
-                        for key, value in disc_metrics.items():
-                            if 'discriminator' in key:
-                                tb_logger.log_discriminator_metrics(episode, {key.replace('discriminator_', ''): value})
-
                 else:
                     logger.log_warning("⚠️  Insufficient samples for discriminator update")
 
             except Exception as e:
                 logger.log_warning(f"Discriminator update failed: {e}")
 
-        # EPISODE LOGGING
+        # 🆕 ENHANCED EPISODE LOGGING
         episode_metrics = {
             'reward': episode_reward,
             'success_rate': success_rate,
@@ -1653,14 +2125,22 @@ def main():
             'phase': current_phase,
             'policy_updates': policy_updates_completed,
             'discriminator_updates': discriminator_updates_completed,
-            'discriminator_paused': discriminator_paused
+            'discriminator_paused': discriminator_paused,
+            # Adversarial metrics
+            'adversarial_reward': np.mean(adversarial_rewards_episode) if adversarial_rewards_episode else 0.0,
+            'adversarial_success_rate': adversarial_success_rate,
+            'avg_discriminator_prob': np.mean(discriminator_probs_episode) if discriminator_probs_episode else 0.5
         }
 
         if episode % 25 == 0:
             logger.log_episode_progress(episode, episode_metrics)
 
-        # TensorBoard logging
-        tb_logger.log_episode_metrics(episode, episode_metrics)
+            # 🆕 LOG ADVERSARIAL METRICS
+            if reward_config.adversarial_reward_enabled and episode > warmup_episodes:
+                logger.log_info(f"🎁 Adversarial Metrics:")
+                logger.log_info(f"   Avg Adversarial Reward: {episode_metrics['adversarial_reward']:+.3f}")
+                logger.log_info(f"   Adversarial Success Rate: {adversarial_success_rate:.1%}")
+                logger.log_info(f"   Avg Discriminator Prob: {episode_metrics['avg_discriminator_prob']:.3f}")
 
         # Buffer stats logging
         if episode % 100 == 0:
@@ -1668,6 +2148,15 @@ def main():
             logger.log_info(f"📊 Experience Buffer: {buffer_stats['size']} rollouts, "
                             f"{buffer_stats['total_states']} states, "
                             f"avg reward: {buffer_stats['avg_reward']:.3f}")
+
+        # 🆕 FORCE UPDATE STATS LOGGING
+        if episode % 100 == 0 and episode > warmup_episodes:
+            force_stats = trainer.get_force_update_stats()
+            if force_stats['total_force_updates'] > 0:
+                logger.log_info(f"🔄 Force Update Stats:")
+                logger.log_info(f"   Total Force Updates: {force_stats['total_force_updates']}")
+                logger.log_info(f"   Success Rate: {force_stats['force_update_success_rate']:.1%}")
+                logger.log_info(f"   Cooldown Remaining: {force_stats['force_update_cooldown_remaining']}")
 
         # STRUCTURED PHASE LOGGING
         if episode % 50 == 0:
@@ -1682,7 +2171,19 @@ def main():
             logger.log_info(f"   Next discriminator update in: {next_disc} episodes")
             logger.log_info(f"   Discriminator status: {'PAUSED' if discriminator_paused else 'ACTIVE'}")
 
-        # CHECKPOINT SAVING
+            # 🆕 Enhanced environment stats
+            if episode > warmup_episodes:
+                env_stats = []
+                for i, env in enumerate(envs):
+                    if hasattr(env, 'get_adversarial_stats'):
+                        adv_stats = env.get_adversarial_stats()
+                        if adv_stats['total_steps'] > 0:
+                            env_stats.append(f"Env{i}: {adv_stats['mean_adversarial_reward']:+.3f}")
+
+                if env_stats:
+                    logger.log_info(f"   🎁 Adversarial Environment Stats: {', '.join(env_stats[:3])}")
+
+        # 🆕 ENHANCED CHECKPOINT SAVING
         if episode % 500 == 0 and episode > 0:
             try:
                 checkpoint = {
@@ -1706,15 +2207,25 @@ def main():
                         'success_rates': metrics_history['success_rates'][-500:],
                         'hub_improvements': metrics_history['hub_improvements'][-500:],
                     },
+                    # 🆕 ADVERSARIAL METRICS
+                    'adversarial_metrics_history': {
+                        'adversarial_rewards': adversarial_metrics_history['adversarial_rewards'][-500:],
+                        'discriminator_probabilities': adversarial_metrics_history['discriminator_probabilities'][
+                                                       -500:],
+                        'adversarial_success_rates': adversarial_metrics_history['adversarial_success_rates'][-500:],
+                        'force_updates': adversarial_metrics_history['force_updates']
+                    },
+                    'force_update_stats': trainer.get_force_update_stats(),
                     'structured_config_used': config
                 }
 
-                checkpoint_path = results_dir / f'structured_rl_checkpoint_{episode}.pt'
+                checkpoint_path = results_dir / f'enhanced_rl_checkpoint_{episode}.pt'
                 torch.save(checkpoint, checkpoint_path)
 
-                logger.log_info(f"💾 Checkpoint saved: {checkpoint_path}")
+                logger.log_info(f"💾 Enhanced checkpoint saved: {checkpoint_path}")
                 logger.log_info(f"   Policy updates: {policy_updates_completed}")
                 logger.log_info(f"   Discriminator updates: {discriminator_updates_completed}")
+                logger.log_info(f"   Force updates: {trainer.get_force_update_stats()['total_force_updates']}")
                 logger.log_info(f"   Phase: {current_phase}")
 
             except Exception as e:
@@ -1724,11 +2235,11 @@ def main():
         if episode % 25 == 0 and device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    # === TRAINING COMPLETION ===
-    logger.log_info("🏁 STRUCTURED TRAINING COMPLETED!")
+    # === ENHANCED TRAINING COMPLETION ===
+    logger.log_info("🏁 ENHANCED ADVERSARIAL TRAINING COMPLETED!")
 
     # Final structured summary
-    logger.log_info("📊 FINAL STRUCTURED TRAINING SUMMARY:")
+    logger.log_info("📊 FINAL ENHANCED TRAINING SUMMARY:")
     logger.log_info(f"   Total episodes: {training_config.num_episodes}")
     logger.log_info(f"   Warm-up episodes: {warmup_episodes}")
     logger.log_info(f"   Training episodes: {training_config.num_episodes - warmup_episodes}")
@@ -1736,86 +2247,120 @@ def main():
     logger.log_info(f"   Discriminator updates completed: {discriminator_updates_completed}")
     logger.log_info(f"   Update ratio: {policy_updates_completed / max(discriminator_updates_completed, 1):.1f}:1")
 
-    # Final performance metrics
+    # 🆕 ADVERSARIAL SUMMARY
+    force_stats = trainer.get_force_update_stats()
+    logger.log_info(f"🔄 Force Update Summary:")
+    logger.log_info(f"   Total force updates: {force_stats['total_force_updates']}")
+    logger.log_info(f"   Successful force updates: {force_stats['successful_force_updates']}")
+    logger.log_info(f"   Force update success rate: {force_stats['force_update_success_rate']:.1%}")
+
+    if reward_config.adversarial_reward_enabled:
+        logger.log_info(f"🎁 Adversarial Reward Summary:")
+        if adversarial_metrics_history['adversarial_rewards']:
+            avg_adv_reward = np.mean(adversarial_metrics_history['adversarial_rewards'])
+            logger.log_info(f"   Average adversarial reward: {avg_adv_reward:+.3f}")
+
+        if adversarial_metrics_history['adversarial_success_rates']:
+            avg_adv_success = np.mean(adversarial_metrics_history['adversarial_success_rates'])
+            logger.log_info(f"   Average adversarial success rate: {avg_adv_success:.1%}")
+
+    # Final performance metrics (existing code continues...)
     if metrics_history['episode_rewards']:
         final_100_rewards = metrics_history['episode_rewards'][-100:] if len(
             metrics_history['episode_rewards']) >= 100 else metrics_history['episode_rewards']
         final_100_success = metrics_history['success_rates'][-100:] if len(metrics_history['success_rates']) >= 100 else \
-        metrics_history['success_rates']
+            metrics_history['success_rates']
 
         final_metrics = {
             'mean_reward_last_100': float(np.mean(final_100_rewards)),
             'mean_success_rate_last_100': float(np.mean(final_100_success)),
             'total_policy_updates': policy_updates_completed,
             'total_discriminator_updates': discriminator_updates_completed,
+            # 🆕 ADVERSARIAL FINAL METRICS
+            'total_force_updates': force_stats['total_force_updates'],
+            'adversarial_reward_enabled': reward_config.adversarial_reward_enabled,
+            'final_adversarial_success_rate': adversarial_metrics_history['adversarial_success_rates'][-1] if
+            adversarial_metrics_history['adversarial_success_rates'] else 0.0
         }
 
         logger.log_final_summary(training_config.num_episodes, {'final_performance': final_metrics})
 
-    # Save final structured model
+    # Save final enhanced model
     try:
-        final_save_path = results_dir / 'final_structured_rl_model.pt'
+        final_save_path = results_dir / 'final_enhanced_rl_model.pt'
 
         torch.save({
             'policy_state': policy.state_dict(),
             'discriminator_state': discriminator.state_dict(),
             'node_dim': 7,
             'edge_dim': 1,
-            'structured_training_stats': {
+            'enhanced_training_stats': {
                 'total_episodes': training_config.num_episodes,
                 'warmup_episodes': warmup_episodes,
                 'policy_updates_completed': policy_updates_completed,
                 'discriminator_updates_completed': discriminator_updates_completed,
                 'final_phase': 'training',
-                'update_ratio': policy_updates_completed / max(discriminator_updates_completed, 1)
+                'update_ratio': policy_updates_completed / max(discriminator_updates_completed, 1),
+                # 🆕 ADVERSARIAL STATS
+                'adversarial_reward_enabled': reward_config.adversarial_reward_enabled,
+                'force_update_stats': force_stats,
+                'adversarial_final_metrics': {
+                    'mean_adversarial_reward': np.mean(adversarial_metrics_history['adversarial_rewards']) if
+                    adversarial_metrics_history['adversarial_rewards'] else 0.0,
+                    'mean_adversarial_success_rate': np.mean(
+                        adversarial_metrics_history['adversarial_success_rates']) if adversarial_metrics_history[
+                        'adversarial_success_rates'] else 0.0
+                }
             },
             'training_history': metrics_history,
+            'adversarial_history': adversarial_metrics_history,
             'experience_buffer_final_stats': experience_buffer.get_buffer_stats(),
-            'structured_config': config,
+            'enhanced_config': config,
             'trainer_final_metrics': trainer.get_latest_metrics()
         }, final_save_path)
 
-        logger.log_info(f"💾 Final structured model saved: {final_save_path}")
+        logger.log_info(f"💾 Final enhanced model saved: {final_save_path}")
 
     except Exception as e:
         logger.log_error(f"Failed to save final model: {e}")
 
-    finally:
-        tb_logger.close()
-
-    # STRUCTURED TRAINING RECOMMENDATIONS
+    # ENHANCED TRAINING RECOMMENDATIONS
     logger.log_info("\n" + "=" * 70)
-    logger.log_info("🎯 STRUCTURED TRAINING ANALYSIS:")
+    logger.log_info("🎯 ENHANCED TRAINING ANALYSIS:")
     logger.log_info("=" * 70)
 
-    # Calculate actual ratios and frequencies
+    # Calculate actual ratios and frequencies (existing logic...)
     actual_policy_freq = (training_config.num_episodes - warmup_episodes) / max(policy_updates_completed, 1)
     actual_disc_freq = (training_config.num_episodes - warmup_episodes) / max(discriminator_updates_completed, 1)
     actual_ratio = policy_updates_completed / max(discriminator_updates_completed, 1)
 
-    logger.log_info(f"📊 ACTUAL VS PLANNED FREQUENCIES:")
-    logger.log_info(f"   Planned policy freq: every {policy_update_frequency} episodes")
-    logger.log_info(f"   Actual policy freq: every {actual_policy_freq:.1f} episodes")
-    logger.log_info(f"   Planned disc freq: every {policy_update_frequency * discriminator_update_frequency} episodes")
-    logger.log_info(f"   Actual disc freq: every {actual_disc_freq:.1f} episodes")
-    logger.log_info(f"   Planned ratio: {discriminator_update_frequency}:1")
-    logger.log_info(f"   Actual ratio: {actual_ratio:.1f}:1")
+    # 🆕 ADVERSARIAL ANALYSIS
+    if reward_config.adversarial_reward_enabled:
+        logger.log_info(f"🎁 ADVERSARIAL REWARD SHAPING ANALYSIS:")
+        if adversarial_metrics_history['adversarial_rewards']:
+            positive_rewards = sum(1 for r in adversarial_metrics_history['adversarial_rewards'] if r > 0)
+            total_rewards = len(adversarial_metrics_history['adversarial_rewards'])
+            logger.log_info(
+                f"   Positive adversarial rewards: {positive_rewards}/{total_rewards} ({positive_rewards / total_rewards:.1%})")
 
-    # Recommendations based on actual performance
-    if actual_ratio > discriminator_update_frequency * 1.5:
-        logger.log_info("✅ Good adversarial balance - discriminator updates were appropriately limited")
-    elif actual_ratio < discriminator_update_frequency * 0.5:
-        logger.log_info("⚠️  Discriminator updated too frequently - consider increasing interval")
-    else:
-        logger.log_info("✅ Adversarial balance close to planned ratio")
+            avg_magnitude = np.mean([abs(r) for r in adversarial_metrics_history['adversarial_rewards']])
+            logger.log_info(f"   Average reward magnitude: {avg_magnitude:.3f}")
 
-    if discriminator_paused:
-        logger.log_info("⚠️  Training ended with discriminator paused - consider adjusting pause thresholds")
+    if force_stats['total_force_updates'] > 0:
+        logger.log_info(f"🔄 FORCE UPDATE ANALYSIS:")
+        logger.log_info(f"   Force updates needed: {force_stats['total_force_updates']} times")
+        logger.log_info(f"   Force update success rate: {force_stats['force_update_success_rate']:.1%}")
+
+        if force_stats['force_update_success_rate'] < 0.5:
+            logger.log_info("   ⚠️  Low force update success rate - consider adjusting force update parameters")
+        else:
+            logger.log_info("   ✅ Good force update success rate - discriminator collapse prevention working")
     else:
-        logger.log_info("✅ Discriminator remained active throughout training")
+        logger.log_info("🔄 FORCE UPDATE ANALYSIS:")
+        logger.log_info("   ✅ No force updates needed - discriminator remained stable")
 
     logger.log_info("=" * 70)
-    logger.log_info("🏆 STRUCTURED ADVERSARIAL TRAINING COMPLETED SUCCESSFULLY!")
+    logger.log_info("🏆 ENHANCED ADVERSARIAL TRAINING COMPLETED SUCCESSFULLY!")
     logger.log_info("=" * 70)
 
 

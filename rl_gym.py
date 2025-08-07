@@ -207,7 +207,7 @@ class HubRefactoringEnv:
 
         self.reward_config = reward_config
 
-        # CENTRALIZED REWARD PARAMETERS
+        # EXISTING REWARD PARAMETERS
         self.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
         self.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
         self.REWARD_FAILURE = reward_config.REWARD_FAILURE
@@ -215,6 +215,12 @@ class HubRefactoringEnv:
         self.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
         self.REWARD_INVALID = reward_config.REWARD_INVALID
         self.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
+
+        # 🆕 ADVERSARIAL REWARD SHAPING PARAMETERS
+        self.adversarial_reward_scale = getattr(reward_config, 'adversarial_reward_scale', 5.0)
+        self.adversarial_reward_enabled = getattr(reward_config, 'adversarial_reward_enabled', True)
+        self.adversarial_threshold = getattr(reward_config, 'adversarial_threshold', 0.02)  # Min change to matter
+        self.potential_discount = getattr(reward_config, 'potential_discount', 0.99)  # γ for potential
 
         # Hub score thresholds
         self.HUB_SCORE_EXCELLENT = reward_config.HUB_SCORE_EXCELLENT
@@ -234,9 +240,14 @@ class HubRefactoringEnv:
         self.best_hub_score = None
         self.hub_score_history = []
 
-        # Log solo inizializzazione se debug attivo
+        # 🆕 ADVERSARIAL TRACKING
+        self.discriminator_probs_history = []
+        self.adversarial_rewards_history = []
+        self.last_discriminator_prob = None
+
+        # Log only initialization if debug active
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Environment initialized with Hub-Focused patterns")
+            logger.debug("Environment initialized with Hub-Focused patterns + Adversarial Reward Shaping")
 
     def _ensure_data_consistency(self, data: Data) -> Data:
         """Ensure batch and edge_attr consistency CORRETTO"""
@@ -267,6 +278,134 @@ class HubRefactoringEnv:
                 data.edge_attr = torch.empty(0, 1, dtype=torch.float32, device=data.x.device)
 
         return data
+
+    def _get_discriminator_probability(self, state: Data, cache_key: str = None) -> float:
+        """🆕 Get discriminator probability for adversarial reward shaping"""
+        try:
+            # Ensure state consistency
+            state = self._ensure_data_consistency(state)
+
+            # Use cache if provided
+            if cache_key == "current" and self._cached_hub_score is not None:
+                current_hash = self._get_graph_hash(state)
+                if self._graph_hash == current_hash:
+                    return self._cached_hub_score
+
+            with torch.no_grad():
+                self.discriminator.eval()
+                disc_out = self.discriminator(state)
+
+                if disc_out is None or 'logits' not in disc_out:
+                    return 0.5  # Neutral fallback
+
+                logits = disc_out['logits']
+                if logits.dim() == 0 or logits.size(0) == 0:
+                    return 0.5
+
+                # Get probability of being "smelly" (hub-like)
+                probs = F.softmax(logits, dim=1)
+                if probs.size(1) < 2:
+                    return 0.5
+
+                prob_smelly = probs[0, 1].item()
+
+                # Validate probability
+                if not (0.0 <= prob_smelly <= 1.0) or math.isnan(prob_smelly):
+                    prob_smelly = 0.5
+
+                # Cache if this is current state
+                if cache_key == "current":
+                    self._cached_hub_score = prob_smelly
+                    self._graph_hash = self._get_graph_hash(state)
+
+                return prob_smelly
+
+        except Exception as e:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Discriminator probability computation failed: {e}")
+            return 0.5
+
+    def _compute_adversarial_reward(self, old_state: Data, new_state: Data) -> Tuple[float, Dict[str, Any]]:
+        """🆕 Compute potential-based adversarial reward shaping"""
+        if not self.adversarial_reward_enabled:
+            return 0.0, {'adversarial_reward': 0.0, 'enabled': False}
+
+        try:
+            # Get discriminator probabilities
+            old_prob = self._get_discriminator_probability(old_state)
+            new_prob = self._get_discriminator_probability(new_state, cache_key="current")
+
+            # Compute potential difference: Φ(s') - γΦ(s)
+            # Where Φ(s) = -discriminator_prob (negative because we want to minimize "smelly" probability)
+            old_potential = -old_prob
+            new_potential = -new_prob
+
+            # Potential-based shaping: F(s,a,s') = γΦ(s') - Φ(s)
+            adversarial_reward = self.potential_discount * new_potential - old_potential
+
+            # Scale by importance factor
+            adversarial_reward *= self.adversarial_reward_scale
+
+            # Only apply if change is significant
+            prob_change = abs(new_prob - old_prob)
+            if prob_change < self.adversarial_threshold:
+                adversarial_reward *= 0.1  # Reduce reward for tiny changes
+
+            # Track for debugging
+            self.discriminator_probs_history.append({
+                'old_prob': old_prob,
+                'new_prob': new_prob,
+                'prob_change': old_prob - new_prob,  # Positive = improvement
+                'potential_reward': adversarial_reward,
+                'step': self.steps
+            })
+            self.adversarial_rewards_history.append(adversarial_reward)
+            self.last_discriminator_prob = new_prob
+
+            adversarial_info = {
+                'adversarial_reward': adversarial_reward,
+                'old_prob': old_prob,
+                'new_prob': new_prob,
+                'prob_change': old_prob - new_prob,
+                'enabled': True,
+                'threshold_met': prob_change >= self.adversarial_threshold,
+                'old_potential': old_potential,
+                'new_potential': new_potential
+            }
+
+            return adversarial_reward, adversarial_info
+
+        except Exception as e:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Adversarial reward computation failed: {e}")
+            return 0.0, {'adversarial_reward': 0.0, 'error': str(e), 'enabled': self.adversarial_reward_enabled}
+
+    def get_adversarial_stats(self) -> Dict[str, Any]:
+        """🆕 Get adversarial reward statistics"""
+        if not self.adversarial_rewards_history:
+            return {
+                'adversarial_enabled': self.adversarial_reward_enabled,
+                'total_steps': 0,
+                'mean_adversarial_reward': 0.0,
+                'positive_adversarial_rewards': 0,
+                'negative_adversarial_rewards': 0
+            }
+
+        adversarial_rewards = np.array(self.adversarial_rewards_history)
+
+        return {
+            'adversarial_enabled': self.adversarial_reward_enabled,
+            'total_steps': len(adversarial_rewards),
+            'mean_adversarial_reward': float(np.mean(adversarial_rewards)),
+            'std_adversarial_reward': float(np.std(adversarial_rewards)),
+            'positive_adversarial_rewards': int(np.sum(adversarial_rewards > 0)),
+            'negative_adversarial_rewards': int(np.sum(adversarial_rewards < 0)),
+            'max_adversarial_reward': float(np.max(adversarial_rewards)),
+            'min_adversarial_reward': float(np.min(adversarial_rewards)),
+            'last_discriminator_prob': self.last_discriminator_prob,
+            'adversarial_scale': self.adversarial_reward_scale,
+            'adversarial_threshold': self.adversarial_threshold
+        }
 
     def reset(self) -> Data:
         """Reset environment"""
@@ -349,7 +488,7 @@ class HubRefactoringEnv:
             return 0.5
 
     def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
-        """Step with optimized logging"""
+        """🆕 Enhanced step with adversarial reward shaping"""
         source, target, pattern, terminate = action
         self.steps += 1
 
@@ -366,7 +505,11 @@ class HubRefactoringEnv:
             'new_hub_score': 0.5,
             'best_hub_score': self.best_hub_score if self.best_hub_score else 0.5,
             'step_metrics_calculated': False,
-            'step_error': None
+            'step_error': None,
+            # 🆕 ADVERSARIAL INFO
+            'adversarial_reward': 0.0,
+            'adversarial_info': {},
+            'reward_breakdown': {}
         }
 
         try:
@@ -382,7 +525,7 @@ class HubRefactoringEnv:
                 })
                 return self.current_data, reward, done, info
 
-            # Validate action - non loggare come errore, è normale
+            # Validate action
             if source >= self.current_data.x.size(0) or target >= self.current_data.x.size(0):
                 reward += self.REWARD_INVALID
                 info.update({
@@ -391,7 +534,8 @@ class HubRefactoringEnv:
                 })
                 return self.current_data, reward, done, info
 
-            # Get hub scores
+            # 🆕 STORE OLD STATE FOR ADVERSARIAL REWARD
+            old_state = self.current_data.clone()
             old_hub_score = self._get_current_hub_score_safe()
             info['old_hub_score'] = old_hub_score
 
@@ -400,13 +544,17 @@ class HubRefactoringEnv:
 
             if success and new_data is not None:
                 # Update current data
-                self.current_data = new_data
+                new_state = new_data
+                self.current_data = new_state
 
                 # Invalidate cache after graph modification
                 self._cached_hub_score = None
                 self._graph_hash = None
 
-                # Get new hub score
+                # 🆕 COMPUTE ADVERSARIAL REWARD SHAPING
+                adversarial_reward, adversarial_info = self._compute_adversarial_reward(old_state, new_state)
+
+                # Get new hub score (will be cached by adversarial computation)
                 new_hub_score = self._get_current_hub_score_safe()
                 hub_improvement = old_hub_score - new_hub_score
 
@@ -421,39 +569,46 @@ class HubRefactoringEnv:
 
                 self.hub_score_history.append(new_hub_score)
 
-                # REWARD CALCULATION
+                # 🔥 TRADITIONAL REWARD CALCULATION
+                traditional_reward = 0.0
+                reward_type = "none"
+
                 if hub_improvement > 0.15:
-                    reward += self.REWARD_HUB_REDUCTION * hub_improvement * self.improvement_multiplier
-                    info['reward_type'] = 'significant_improvement'
+                    traditional_reward = self.REWARD_HUB_REDUCTION * hub_improvement * self.improvement_multiplier
+                    reward_type = 'significant_improvement'
                 elif hub_improvement > 0.05:
-                    reward += self.REWARD_PARTIAL_SUCCESS * hub_improvement * self.improvement_multiplier
-                    info['reward_type'] = 'good_improvement'
+                    traditional_reward = self.REWARD_PARTIAL_SUCCESS * hub_improvement * self.improvement_multiplier
+                    reward_type = 'good_improvement'
                 elif hub_improvement > 0.01:
-                    reward += self.REWARD_SMALL_IMPROVEMENT * hub_improvement * self.improvement_multiplier
-                    info['reward_type'] = 'small_improvement'
+                    traditional_reward = self.REWARD_SMALL_IMPROVEMENT * hub_improvement * self.improvement_multiplier
+                    reward_type = 'small_improvement'
                 else:
-                    reward += self.REWARD_FAILURE * abs(hub_improvement)
-                    info['reward_type'] = 'worse'
+                    traditional_reward = self.REWARD_FAILURE * abs(hub_improvement)
+                    reward_type = 'worse'
                     self.improvement_multiplier = max(
                         self.improvement_multiplier * self.improvement_multiplier_decay,
                         self.improvement_multiplier_min
                     )
 
-                # BONUS REWARDS
+                # 🔥 BONUS REWARDS
+                bonus_reward = 0.0
                 if new_hub_score < self.HUB_SCORE_EXCELLENT:
-                    reward += 1.0
+                    bonus_reward = 1.0
                     info['score_bonus'] = 'excellent'
                 elif new_hub_score < self.HUB_SCORE_GOOD:
-                    reward += 0.5
+                    bonus_reward = 0.5
                     info['score_bonus'] = 'good'
                 elif new_hub_score < self.HUB_SCORE_ACCEPTABLE:
-                    reward += 0.2
+                    bonus_reward = 0.2
                     info['score_bonus'] = 'acceptable'
+
+                # 🆕 COMBINE ALL REWARDS
+                total_reward = reward + traditional_reward + bonus_reward + adversarial_reward
 
                 # Record action
                 self.action_history.append((source, target, pattern, hub_improvement))
 
-                # Update info
+                # 🆕 ENHANCED INFO WITH REWARD BREAKDOWN
                 info.update({
                     'valid': True,
                     'success': True,
@@ -466,8 +621,23 @@ class HubRefactoringEnv:
                     'affected_nodes': pattern_info.get('affected_nodes', []),
                     'improvement_multiplier': self.improvement_multiplier,
                     'step_metrics_calculated': True,
-                    'hub_score_is_fallback': old_hub_score == 0.5 and new_hub_score == 0.5
+                    'hub_score_is_fallback': old_hub_score == 0.5 and new_hub_score == 0.5,
+                    # 🆕 ADVERSARIAL INFO
+                    'adversarial_reward': adversarial_reward,
+                    'adversarial_info': adversarial_info,
+                    'reward_breakdown': {
+                        'base_step_reward': self.REWARD_STEP,
+                        'traditional_reward': traditional_reward,
+                        'bonus_reward': bonus_reward,
+                        'adversarial_reward': adversarial_reward,
+                        'total_reward': total_reward
+                    },
+                    'reward_type': reward_type
                 })
+
+                # Update final reward
+                reward = total_reward
+
             else:
                 # Pattern failed
                 reward += self.REWARD_INVALID
