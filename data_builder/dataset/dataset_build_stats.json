@@ -1,0 +1,280 @@
+{
+  "total_projects": 27,
+  "successful_projects": 4,
+  "failed_projects": 23,
+  "total_subgraphs": 2023,
+  "total_smelly": 1077,
+  "total_clean": 946,
+  "project_results": [
+    {
+      "project": "antlr4-hl-20-21",
+      "success": false,
+      "processing_time": 9.703636169433594e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/antlr4-hl-20-21"
+    },
+    {
+      "project": "antlr4-hl-22-23",
+      "success": false,
+      "processing_time": 6.604194641113281e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/antlr4-hl-22-23"
+    },
+    {
+      "project": "antlr4-hl-24-25",
+      "success": false,
+      "processing_time": 5.602836608886719e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/antlr4-hl-24-25"
+    },
+    {
+      "project": "antlr4-hl-23-24-25",
+      "success": true,
+      "processing_time": 19.10334277153015,
+      "graphml_files_processed": 77,
+      "total_subgraphs": 463,
+      "smelly_count": 267,
+      "clean_count": 196,
+      "error": null
+    },
+    {
+      "project": "commons-lang-hl-20-21",
+      "success": false,
+      "processing_time": 8.296966552734375e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/commons-lang-hl-20-21"
+    },
+    {
+      "project": "commons-lang-hl-22-23",
+      "success": false,
+      "processing_time": 5.936622619628906e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/commons-lang-hl-22-23"
+    },
+    {
+      "project": "commons-lang-hl-24-25",
+      "success": false,
+      "processing_time": 5.2928924560546875e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/commons-lang-hl-24-25"
+    },
+    {
+      "project": "commons-lang-hl-23-24-25",
+      "success": true,
+      "processing_time": 186.431969165802,
+      "graphml_files_processed": 213,
+      "total_subgraphs": 1008,
+      "smelly_count": 380,
+      "clean_count": 628,
+      "error": null
+    },
+    {
+      "project": "db-jdo-hl-20-21",
+      "success": false,
+      "processing_time": 0.0002319812774658203,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/db-jdo-hl-20-21"
+    },
+    {
+      "project": "db-jdo-hl-22-23",
+      "success": false,
+      "processing_time": 0.00012302398681640625,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/db-jdo-hl-22-23"
+    },
+    {
+      "project": "db-jdo-hl-24-25",
+      "success": false,
+      "processing_time": 7.390975952148438e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/db-jdo-hl-24-25"
+    },
+    {
+      "project": "db-jdo-hl-23-24-25",
+      "success": true,
+      "processing_time": 16.062116146087646,
+      "graphml_files_processed": 36,
+      "total_subgraphs": 79,
+      "smelly_count": 72,
+      "clean_count": 7,
+      "error": null
+    },
+    {
+      "project": "dubbo-hl-20-21",
+      "success": false,
+      "processing_time": 0.00010514259338378906,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/dubbo-hl-20-21"
+    },
+    {
+      "project": "dubbo-hl-22-23",
+      "success": false,
+      "processing_time": 6.4849853515625e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/dubbo-hl-22-23"
+    },
+    {
+      "project": "kafka-hl-20-21",
+      "success": false,
+      "processing_time": 6.031990051269531e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/kafka-hl-20-21"
+    },
+    {
+      "project": "kafka-hl-22-23",
+      "success": false,
+      "processing_time": 5.793571472167969e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/kafka-hl-22-23"
+    },
+    {
+      "project": "kafka-hl-24-25",
+      "success": false,
+      "processing_time": 0.0005619525909423828,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/kafka-hl-24-25"
+    },
+    {
+      "project": "openjpa-hl-20-21",
+      "success": false,
+      "processing_time": 8.797645568847656e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/openjpa-hl-20-21"
+    },
+    {
+      "project": "openjpa-hl-22-23",
+      "success": false,
+      "processing_time": 0.0005090236663818359,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/openjpa-hl-22-23"
+    },
+    {
+      "project": "openjpa-hl-24-25",
+      "success": false,
+      "processing_time": 8.106231689453125e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/openjpa-hl-24-25"
+    },
+    {
+      "project": "opennlp-hl-20-21",
+      "success": false,
+      "processing_time": 6.604194641113281e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/opennlp-hl-20-21"
+    },
+    {
+      "project": "opennlp-hl-22-23",
+      "success": false,
+      "processing_time": 6.222724914550781e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/opennlp-hl-22-23"
+    },
+    {
+      "project": "opennlp-hl-24-25",
+      "success": false,
+      "processing_time": 5.817413330078125e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/opennlp-hl-24-25"
+    },
+    {
+      "project": "opennlp-hl-23-24-25",
+      "success": true,
+      "processing_time": 30.63236093521118,
+      "graphml_files_processed": 55,
+      "total_subgraphs": 473,
+      "smelly_count": 358,
+      "clean_count": 115,
+      "error": null
+    },
+    {
+      "project": "ozone-hl-20-21",
+      "success": false,
+      "processing_time": 0.00011324882507324219,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/ozone-hl-20-21"
+    },
+    {
+      "project": "ozone-hl-22-23",
+      "success": false,
+      "processing_time": 7.700920104980469e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/ozone-hl-22-23"
+    },
+    {
+      "project": "ozone-hl-24-25",
+      "success": false,
+      "processing_time": 6.890296936035156e-05,
+      "graphml_files_processed": 0,
+      "total_subgraphs": 0,
+      "smelly_count": 0,
+      "clean_count": 0,
+      "error": "Project directory not found: arcan_out/intervalDays2/ozone-hl-24-25"
+    }
+  ]
+}

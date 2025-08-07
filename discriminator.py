@@ -1,205 +1,312 @@
-from typing import Dict
+#!/usr/bin/env python3
+"""
+Clean Hub Detection Discriminator
+Simplified version focusing on performance over complexity.
+"""
 
+from typing import Dict, Optional
 import torch
-from torch import nn
-from torch_geometric.data import Data
-from torch_geometric.nn import (global_max_pool, GCNConv, GATConv, GraphNorm,
-                                global_mean_pool, GINEConv, global_add_pool,
-                                BatchNorm, LayerNorm)
+import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.data import Data
+from torch_geometric.nn import GCNConv, global_mean_pool, GraphNorm
 
 
-class HubDetectionDiscriminator(nn.Module):
-    """Enhanced discriminator for hub detection with improved architecture.
-
-    By default expects 7 node features and 1 edge feature.
+class HubDiscriminator(nn.Module):
+    """
+    Clean discriminator for hub detection using simple GCN architecture.
+    Maintains the performance of the original simple version while adding
+    useful features like node-level scoring and better error handling.
     """
 
-    def __init__(self, node_dim: int = 7, edge_dim: int = 1, hidden_dim: int = 128,
-                 num_layers: int = 4, dropout: float = 0.2, heads: int = 8):
+    def __init__(self,
+                 node_dim: int = 7,
+                 hidden_dim: int = 64,
+                 num_layers: int = 3,
+                 dropout: float = 0.3,
+                 add_node_scoring: bool = True):
         super().__init__()
 
-        # Enhanced input projections with batch norm
-        self.node_projection = nn.Sequential(
-            nn.Linear(node_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout * 0.5)
-        )
+        self.node_dim = node_dim
+        self.hidden_dim = hidden_dim
+        self.dropout = dropout
+        self.add_node_scoring = add_node_scoring
 
-        if edge_dim > 0:
-            self.edge_projection = nn.Sequential(
-                nn.Linear(edge_dim, hidden_dim // 4),
-                nn.ReLU()
-            )
-        else:
-            self.edge_projection = None
+        # Input projection
+        self.input_proj = nn.Linear(node_dim, hidden_dim)
 
-        # Multi-scale graph convolution layers
+        # GCN backbone with skip connections
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
-        self.attention_weights = nn.ModuleList()
 
-        # First layer - GCN for basic structure
-        self.convs.append(GCNConv(hidden_dim, hidden_dim))
-        self.norms.append(LayerNorm(hidden_dim))
-
-        # Middle and final layers - All GAT for consistency and robustness
-        for i in range(1, num_layers):
-            self.convs.append(GATConv(hidden_dim, hidden_dim // heads,
-                                      heads=heads, concat=True, dropout=dropout))
+        for _ in range(num_layers):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
             self.norms.append(GraphNorm(hidden_dim))
 
-        # Multi-level pooling for richer graph representations
-        self.pooling_weights = nn.Parameter(torch.ones(3))  # mean, max, add
-
-        # Enhanced hub detection heads with attention
-        self.hub_attention = nn.MultiheadAttention(
-            embed_dim=hidden_dim, num_heads=4, dropout=dropout, batch_first=True
-        )
-
-        # Graph-level classifier with residual connections
-        classifier_input_dim = hidden_dim * 3  # multi-pooling
-        self.hub_classifier = nn.Sequential(
-            nn.Linear(classifier_input_dim, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
+        # Graph-level classifier (main output)
+        self.graph_classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout * 0.5),
-
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(dropout * 0.3),
+            nn.Dropout(dropout * 0.5),
             nn.Linear(hidden_dim // 2, 2)
         )
 
-        # Enhanced node-level hub scoring with context
-        self.node_context_encoder = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4)
-        )
+        # Optional node-level hub scoring
+        if add_node_scoring:
+            self.node_scorer = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(dropout * 0.5),
+                nn.Linear(hidden_dim // 2, 1),
+                nn.Sigmoid()
+            )
+        else:
+            self.node_scorer = None
 
-        self.node_hub_scorer = nn.Sequential(
-            nn.Linear(hidden_dim + hidden_dim // 4, hidden_dim // 2),
-            nn.BatchNorm1d(hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout * 0.3),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 4, 1)
-        )
-
-        # Feature consistency regularizer
-        self.feature_projector = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4)
-        )
-
-        self.dropout = dropout
         self._init_weights()
 
     def _init_weights(self):
-        """Improved weight initialization"""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                # Xavier initialization for better gradient flow
-                nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain('relu'))
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-            elif isinstance(m, (nn.BatchNorm1d, nn.LayerNorm, GraphNorm)):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
+        """Initialize weights with orthogonal initialization"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
     def forward(self, data: Data) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass with comprehensive output
+
+        Args:
+            data: PyTorch Geometric Data object with node features and edges
+
+        Returns:
+            Dictionary containing:
+            - logits: Graph-level classification logits [batch_size, 2]
+            - probs: Graph-level classification probabilities [batch_size, 2]
+            - node_embeddings: Node representations [num_nodes, hidden_dim]
+            - graph_embedding: Graph representations [batch_size, hidden_dim]
+            - node_hub_scores: Optional node-level hub scores [num_nodes] if add_node_scoring=True
+        """
         x = data.x
         edge_index = data.edge_index
-        edge_attr = getattr(data, 'edge_attr', None)
 
-        # FIX CRITICO: Gestione robusta dell'attributo batch
-        if hasattr(data, 'batch') and data.batch is not None:
-            batch = data.batch
-        else:
-            # Crea batch attribute se mancante (singolo grafo)
+        # Handle batch dimension
+        batch = getattr(data, 'batch', None)
+        if batch is None:
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
-        # Enhanced input projection
-        x = self.node_projection(x)
+        # Validate input dimensions
+        if x.size(1) != self.node_dim:
+            raise ValueError(f"Expected {self.node_dim} node features, got {x.size(1)}")
 
-        # Store intermediate representations for skip connections
-        layer_outputs = [x]
+        # Input projection
+        x = self.input_proj(x)
 
-        # Multi-scale graph convolutions with residual connections
-        for i, (conv, norm) in enumerate(zip(self.convs, self.norms)):
-            # All layers now use GCN or GAT - no edge features needed
+        # GCN layers with residual connections
+        for conv, norm in zip(self.convs, self.norms):
+            # Apply convolution and normalization
             h = conv(x, edge_index)
-
-            # Normalization
             h = norm(h)
+            h = F.relu(h)
+            h = F.dropout(h, p=self.dropout, training=self.training)
 
-            # Residual connection with proper dimensionality
-            if h.size(-1) == x.size(-1):
-                h = h + x  # Skip connection
+            # Skip connection
+            x = x + h
 
-            # Activation and dropout
-            x = F.relu(h)
-            x = F.dropout(x, p=self.dropout, training=self.training)
+        # Global pooling for graph representation
+        graph_emb = global_mean_pool(x, batch)
 
-            layer_outputs.append(x)
+        # Graph-level classification
+        logits = self.graph_classifier(graph_emb)
+        probs = F.softmax(logits, dim=-1)
 
-        # Multi-level graph pooling with learnable weights
-        pooling_weights = F.softmax(self.pooling_weights, dim=0)
-
-        graph_mean = global_mean_pool(x, batch) * pooling_weights[0]
-        graph_max = global_max_pool(x, batch) * pooling_weights[1]
-        graph_add = global_add_pool(x, batch) * pooling_weights[2]
-
-        graph_features = torch.cat([graph_mean, graph_max, graph_add], dim=1)
-
-        # Enhanced node-level hub scoring with context
-        # Get graph-level context for each node
-        # FIX CRITICO: Gestione sicura del batch size
-        try:
-            batch_size = batch.max().item() + 1
-        except Exception:
-            batch_size = 1  # Fallback per singolo grafo
-
-        graph_context = []
-
-        for i in range(batch_size):
-            mask = batch == i
-            if mask.sum() > 0:
-                ctx = self.node_context_encoder(x[mask].mean(dim=0, keepdim=True))
-                graph_context.append(ctx.expand(mask.sum(), -1))
-
-        if graph_context:
-            graph_context = torch.cat(graph_context, dim=0)
-
-            # Combine node features with graph context
-            node_with_context = torch.cat([x, graph_context], dim=1)
-            node_hub_scores = torch.sigmoid(self.node_hub_scorer(node_with_context).squeeze(-1))
-        else:
-            # Fallback if no valid batches
-            node_hub_scores = torch.sigmoid(self.node_hub_scorer(
-                torch.cat([x, torch.zeros(x.size(0), x.size(1) // 4, device=x.device)], dim=1)
-            ).squeeze(-1))
-
-        # Graph classification with enhanced features
-        logits = self.hub_classifier(graph_features)
-
-        # Feature consistency for regularization
-        feature_projection = self.feature_projector(x)
-
-        return {
+        # Prepare output dictionary
+        output = {
             'logits': logits,
-            'node_hub_scores': node_hub_scores,
-            'graph_embedding': graph_features,
-            'node_embeddings': x,
-            'feature_projection': feature_projection,
-            'layer_outputs': layer_outputs  # For potential auxiliary losses
+            'probs': probs,
+            'graph_embedding': graph_emb,
+            'node_embeddings': x
         }
+
+        # Optional node-level hub scoring
+        if self.node_scorer is not None:
+            node_hub_scores = self.node_scorer(x).squeeze(-1)
+            output['node_hub_scores'] = node_hub_scores
+
+        return output
+
+    def classify_graph(self, data: Data) -> Dict[str, float]:
+        """
+        Classify a single graph and return interpretable results
+
+        Returns:
+            Dictionary with classification results and confidence scores
+        """
+        with torch.no_grad():
+            output = self.forward(data)
+            probs = output['probs'][0]  # Assume single graph
+
+            return {
+                'is_hub_smell': probs[1].item() > 0.5,
+                'confidence': probs.max().item(),
+                'hub_smell_prob': probs[1].item(),
+                'normal_prob': probs[0].item()
+            }
+
+    def get_node_hub_analysis(self, data: Data) -> Optional[Dict[str, any]]:
+        """
+        Analyze node-level hub characteristics (if node scoring is enabled)
+
+        Returns:
+            Dictionary with node-level analysis or None if node scoring is disabled
+        """
+        if not self.add_node_scoring:
+            return None
+
+        with torch.no_grad():
+            output = self.forward(data)
+            node_scores = output['node_hub_scores']
+
+            # Find top hub candidates
+            top_k = min(3, len(node_scores))
+            top_values, top_indices = torch.topk(node_scores, top_k)
+
+            return {
+                'num_nodes': len(node_scores),
+                'avg_hub_score': node_scores.mean().item(),
+                'max_hub_score': node_scores.max().item(),
+                'min_hub_score': node_scores.min().item(),
+                'top_hub_candidates': [
+                    {
+                        'node_id': idx.item(),
+                        'hub_score': score.item(),
+                        'node_features': data.x[idx].tolist()
+                    }
+                    for idx, score in zip(top_indices, top_values)
+                ],
+                'strong_hubs_count': (node_scores > 0.7).sum().item(),
+                'moderate_hubs_count': ((node_scores > 0.4) & (node_scores <= 0.7)).sum().item()
+            }
+
+
+class SimpleHubDiscriminator(nn.Module):
+    """
+    Ultra-simple version for maximum performance - exactly like the original working version
+    """
+
+    def __init__(self,
+                 node_dim: int = 7,
+                 hidden_dim: int = 64,
+                 num_layers: int = 3,
+                 dropout: float = 0.5):
+        super().__init__()
+
+        self.dropout = dropout
+
+        # Input projection
+        self.input_lin = nn.Linear(node_dim, hidden_dim)
+
+        # GCN layers
+        self.convs = nn.ModuleList()
+        self.norms = nn.ModuleList()
+
+        for _ in range(num_layers):
+            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+            self.norms.append(GraphNorm(hidden_dim))
+
+        # Simple classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 2)
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights"""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, data: Data) -> torch.Tensor:
+        """Simple forward pass returning only logits"""
+        x = data.x
+        edge_index = data.edge_index
+
+        # Handle batch
+        batch = getattr(data, 'batch', None)
+        if batch is None:
+            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+
+        # Input projection
+        x = self.input_lin(x)
+
+        # GCN layers with skip connections
+        for conv, norm in zip(self.convs, self.norms):
+            h = conv(x, edge_index)
+            h = norm(h)
+            h = F.relu(h)
+            h = F.dropout(h, p=self.dropout, training=self.training)
+            x = x + h  # Skip connection
+
+        # Global pooling and classification
+        graph_emb = global_mean_pool(x, batch)
+        return self.classifier(graph_emb)
+
+
+# Factory function for easy instantiation
+def create_discriminator(version: str = "clean", **kwargs) -> nn.Module:
+    """
+    Factory function to create discriminator instances
+
+    Args:
+        version: "clean" for full-featured version, "simple" for minimal version
+        **kwargs: Additional arguments passed to the discriminator constructor
+
+    Returns:
+        Discriminator instance
+    """
+    if version == "simple":
+        return SimpleHubDiscriminator(**kwargs)
+    elif version == "clean":
+        return HubDiscriminator(**kwargs)
+    else:
+        raise ValueError(f"Unknown version: {version}. Choose 'clean' or 'simple'")
+
+
+# Usage examples and testing
+if __name__ == "__main__":
+    # Create dummy graph data
+    num_nodes = 10
+    node_features = torch.randn(num_nodes, 7)  # 7 structural features
+    edge_index = torch.randint(0, num_nodes, (2, 20))  # Random edges
+
+    test_data = Data(x=node_features, edge_index=edge_index)
+
+    # Test both versions
+    print("Testing Simple Discriminator...")
+    simple_disc = create_discriminator("simple", node_dim=7)
+    simple_out = simple_disc(test_data)
+    print(f"Simple output shape: {simple_out.shape}")
+
+    print("\nTesting Clean Discriminator...")
+    clean_disc = create_discriminator("clean", node_dim=7, add_node_scoring=True)
+    clean_out = clean_disc(test_data)
+    print(f"Clean output keys: {list(clean_out.keys())}")
+
+    # Test classification method
+    classification = clean_disc.classify_graph(test_data)
+    print(f"Classification result: {classification}")
+
+    # Test node analysis
+    node_analysis = clean_disc.get_node_hub_analysis(test_data)
+    if node_analysis:
+        print(f"Node analysis: {node_analysis['strong_hubs_count']} strong hubs found")

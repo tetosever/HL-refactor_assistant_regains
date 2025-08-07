@@ -1,1226 +1,605 @@
-#!/usr/bin/env python3
 """
-Updated RL Environment with Hub-Focused Refactoring Patterns
-VERSIONE OTTIMIZZATA con logging ridotto e performance migliorate
+Ambiente di reinforcement learning per la rifattorizzazione automatica
+di sub-graph 1-hop di dependency graph usando PyTorch Geometric.
 """
 
-import copy
-import math
-from dataclasses import dataclass
-from typing import Dict, Tuple, Any, Optional, List, Set
-
-import networkx as nx
-import numpy as np
+import gym
+from gym import spaces
 import torch
 import torch.nn.functional as F
-from torch import nn
 from torch_geometric.data import Data
-from torch_geometric.utils import to_networkx
+from torch_geometric.utils import to_networkx, from_networkx, add_self_loops, remove_self_loops
+import networkx as nx
+import numpy as np
+import copy
+import warnings
+from typing import Dict, List, Tuple, Optional, Union
+from sklearn.preprocessing import StandardScaler
+from pathlib import Path
 
-import logging
-
-# Configurazione logging ottimizzata per questo modulo
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)  # Solo warning ed errori per default
-
-# Import centralized configuration
-from hyperparameters_configuration import get_improved_config
-
-
-@dataclass
-class RefactoringResult:
-    """Result of applying a refactoring pattern"""
-    success: bool
-    new_data: Optional[Data]
-    info: Dict[str, Any]
+warnings.filterwarnings('ignore')
 
 
-class IncrementalFeatureComputer:
-    """Incremental feature computation - versione ottimizzata"""
+class RefactorEnv(gym.Env):
+    """
+    Ambiente OpenAI Gym per la rifattorizzazione di sub-graph 1-hop
+    attorno al nodo hub centrale.
+    """
 
-    @staticmethod
-    def compute_single_node_features(node_id: int, G: nx.Graph,
-                                     global_centrality: Optional[Dict] = None) -> List[float]:
-        """Compute 7 structural features for a single node"""
-        if node_id not in G:
-            return [0.0] * 7
+    def __init__(self,
+                 data_path: str,
+                 discriminator=None,
+                 max_steps: int = 20,
+                 reward_weights: Dict[str, float] = None,
+                 device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
+        """
+        Inizializza l'ambiente di refactoring.
 
+        Args:
+            data_path: Percorso alla directory contenente i file .pt con i dati PyG
+            discriminator: Modello discriminatore pre-addestrato (opzionale)
+            max_steps: Numero massimo di step per episodio
+            reward_weights: Pesi per le componenti del reward
+            device: Dispositivo di calcolo
+        """
+        super(RefactorEnv, self).__init__()
+
+        self.device = device
+        self.max_steps = max_steps
+        self.discriminator = discriminator
+
+        # Pesi default per il calcolo del reward
+        self.reward_weights = reward_weights or {
+            'hub_score': 1.0,
+            'modularity': 0.5,
+            'density': -0.3,
+            'avg_shortest_path': 0.2,
+            'discriminator': 0.4
+        }
+
+        # Carica e preprocessa i dati
+        self.original_data_list = self._load_and_preprocess_data(data_path)
+        self.current_data = None
+        self.current_step = 0
+        self.center_node_idx = None
+        self.initial_metrics = {}
+
+        # Definisci spazi di azione e osservazione
+        self.num_actions = 5  # 5 azioni atomiche
+        self.action_space = spaces.Discrete(self.num_actions)
+
+        # Lo spazio di osservazione sarà definito dinamicamente
+        # basato sulle dimensioni dei grafi
+        max_nodes = max([data.num_nodes for data in self.original_data_list])
+        self.max_nodes = max_nodes
+
+        # Feature space: node features + adjacency + global metrics
+        obs_dim = max_nodes * 7 + max_nodes * max_nodes + 10  # 10 metriche globali
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(obs_dim,), dtype=np.float32
+        )
+
+    def _load_and_preprocess_data(self, data_path: str) -> List[Data]:
+        """
+        Carica e preprocessa i dati dalla directory contenente file .pt.
+
+        Args:
+            data_path: Percorso alla directory contenente i file .pt
+
+        Returns:
+            Lista di oggetti Data preprocessati
+        """
+        print(f"Caricamento dati da: {data_path}")
+
+        data_dir = Path(data_path)
+        if not data_dir.exists():
+            raise FileNotFoundError(f"Directory non trovata: {data_path}")
+
+        # Trova tutti i file .pt nella directory
+        pt_files = list(data_dir.glob("*.pt"))
+        if not pt_files:
+            raise FileNotFoundError(f"Nessun file .pt trovato in {data_path}")
+
+        print(f"Trovati {len(pt_files)} file .pt")
+
+        # Carica tutti i file .pt
+        data_list = []
+        for pt_file in pt_files:
+            try:
+                data = torch.load(pt_file, map_location=self.device)
+
+                # Gestisci diversi formati di dati
+                if isinstance(data, dict):
+                    if 'data' in data:
+                        graph_data = data['data']
+                    else:
+                        # Assume che abbia 'x' e 'edge_index'
+                        graph_data = Data(x=data['x'], edge_index=data['edge_index'])
+                        if 'edge_attr' in data:
+                            graph_data.edge_attr = data['edge_attr']
+                elif isinstance(data, Data):
+                    graph_data = data
+                else:
+                    print(f"Formato dati non riconosciuto in {pt_file}, saltato")
+                    continue
+
+                # Verifica che i dati siano validi
+                if hasattr(graph_data, 'x') and hasattr(graph_data, 'edge_index'):
+                    if graph_data.x.size(1) == 7:  # Verifica che abbia 7 feature per nodo
+                        data_list.append(graph_data)
+                    else:
+                        print(f"File {pt_file} ha {graph_data.x.size(1)} feature invece di 7, saltato")
+                else:
+                    print(f"File {pt_file} non ha attributi x o edge_index, saltato")
+
+            except Exception as e:
+                print(f"Errore caricando {pt_file}: {e}")
+                continue
+
+        if not data_list:
+            raise ValueError("Nessun dato valido caricato")
+
+        # Normalizza le feature nodali (7 dimensioni)
+        scaler = StandardScaler()
+        all_features = torch.cat([data.x for data in data_list], dim=0)
+        all_features_np = all_features.cpu().numpy()
+        scaler.fit(all_features_np)
+
+        processed_data = []
+        for data in data_list:
+            data_copy = copy.deepcopy(data)
+
+            # Normalizza feature
+            normalized_features = scaler.transform(data_copy.x.cpu().numpy())
+            data_copy.x = torch.tensor(normalized_features, dtype=torch.float32).to(self.device)
+
+            # Aggiungi self-loops se necessario
+            edge_index, _ = add_self_loops(data_copy.edge_index)
+            data_copy.edge_index = edge_index
+
+            processed_data.append(data_copy)
+
+        print(f"Caricati e preprocessati {len(processed_data)} sub-graph")
+        return processed_data
+
+    def reset(self, graph_idx: Optional[int] = None) -> np.ndarray:
+        """
+        Resetta l'ambiente per un nuovo episodio.
+
+        Args:
+            graph_idx: Indice del grafo da usare (None per casuale)
+
+        Returns:
+            Stato iniziale
+        """
+        if graph_idx is None:
+            graph_idx = np.random.randint(0, len(self.original_data_list))
+
+        self.current_data = copy.deepcopy(self.original_data_list[graph_idx])
+        self.current_step = 0
+
+        # Identifica il nodo hub (quello con grado massimo)
+        degrees = torch.bincount(self.current_data.edge_index[0])
+        self.center_node_idx = degrees.argmax().item()
+
+        # Calcola metriche iniziali
+        self.initial_metrics = self._calculate_metrics(self.current_data)
+
+        return self._get_state()
+
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict]:
+        """
+        Esegue un'azione nell'ambiente.
+
+        Args:
+            action: Azione da eseguire (0-4)
+
+        Returns:
+            Tupla (stato, reward, done, info)
+        """
+        if self.current_data is None:
+            raise RuntimeError("Ambiente non inizializzato. Chiama reset() prima.")
+
+        self.current_step += 1
+
+        # Salva stato precedente per calcolo reward
+        prev_data = copy.deepcopy(self.current_data)
+        prev_metrics = self._calculate_metrics(prev_data)
+
+        # Applica l'azione
+        success = self._apply_action(action)
+
+        # Calcola nuovo stato e reward
+        current_metrics = self._calculate_metrics(self.current_data)
+        reward = self._calculate_reward(prev_metrics, current_metrics, success)
+
+        # Controlla se l'episodio è terminato
+        done = self.current_step >= self.max_steps
+
+        info = {
+            'action_success': success,
+            'metrics': current_metrics,
+            'step': self.current_step,
+            'center_node': self.center_node_idx
+        }
+
+        return self._get_state(), reward, done, info
+
+    def _apply_action(self, action: int) -> bool:
+        """
+        Applica l'azione specificata al grafo corrente.
+
+        Args:
+            action: Azione da applicare
+
+        Returns:
+            True se l'azione è stata applicata con successo
+        """
         try:
-            # Basic degree metrics
-            fan_in = float(G.in_degree(node_id))
-            fan_out = float(G.out_degree(node_id))
-            total_degree = fan_in + fan_out
+            if action == 0:
+                return self._remove_edge()
+            elif action == 1:
+                return self._add_edge()
+            elif action == 2:
+                return self._move_edge()
+            elif action == 3:
+                return self._create_helper_and_reassign()
+            elif action == 4:
+                return self._swap_edges_by_betweenness()
+            else:
+                return False
+        except Exception as e:
+            print(f"Errore nell'applicazione dell'azione {action}: {e}")
+            return False
 
-            num_nodes = len(G)
-            eps = 1e-8
+    def _remove_edge(self) -> bool:
+        """
+        Rimuove un arco casuale dal nodo hub.
+        """
+        # Trova archi del nodo hub
+        hub_edges = []
+        edge_index = self.current_data.edge_index
+
+        for i in range(edge_index.shape[1]):
+            u, v = edge_index[0, i].item(), edge_index[1, i].item()
+            if u == self.center_node_idx and u != v:  # No self-loops
+                hub_edges.append(i)
+
+        if not hub_edges:
+            return False
+
+        # Rimuovi arco casuale
+        edge_to_remove = np.random.choice(hub_edges)
+        mask = torch.ones(edge_index.shape[1], dtype=torch.bool)
+        mask[edge_to_remove] = False
+
+        new_edge_index = edge_index[:, mask]
+
+        # Verifica che il grafo rimanga connesso
+        if self._is_connected(new_edge_index):
+            self.current_data.edge_index = new_edge_index
+            return True
+
+        return False
+
+    def _add_edge(self) -> bool:
+        """
+        Aggiunge un arco dal nodo hub a un nodo casuale.
+        """
+        possible_targets = []
+        edge_index = self.current_data.edge_index
+
+        # Trova nodi non ancora connessi al hub
+        connected_nodes = set()
+        for i in range(edge_index.shape[1]):
+            u, v = edge_index[0, i].item(), edge_index[1, i].item()
+            if u == self.center_node_idx:
+                connected_nodes.add(v)
+
+        for node in range(self.current_data.num_nodes):
+            if node not in connected_nodes and node != self.center_node_idx:
+                possible_targets.append(node)
+
+        if not possible_targets:
+            return False
+
+        target = np.random.choice(possible_targets)
+        new_edge = torch.tensor([[self.center_node_idx], [target]], device=self.device)
+
+        self.current_data.edge_index = torch.cat([edge_index, new_edge], dim=1)
+        return True
+
+    def _move_edge(self) -> bool:
+        """
+        Sposta un arco dal nodo hub (rimuove e aggiunge in un step).
+        """
+        # Prima rimuovi un arco
+        if not self._remove_edge():
+            return False
+        # Poi aggiungi un nuovo arco
+        return self._add_edge()
+
+    def _create_helper_and_reassign(self) -> bool:
+        """
+        Crea un nodo helper e riassegna alcuni figli del hub ad esso,
+        mettendo sempre in coerenza `num_nodes` con la dimensione di x.
+        """
+        # Trova tutti i figli del nodo hub (escludendo self-loops)
+        children = []
+        ei = self.current_data.edge_index
+        for u, v in ei.t().tolist():
+            if u == self.center_node_idx and u != v:
+                children.append(v)
+
+        # Serve almeno 2 figli per split
+        if len(children) < 2:
+            return False
+
+        # Seleziona un sottoinsieme (fino a 3) di figli da riassegnare
+        num_to_reassign = min(len(children) // 2, 3)
+        children_to_reassign = np.random.choice(children, num_to_reassign, replace=False)
+
+        # Indice del nuovo helper = vecchio numero di righe di x
+        helper_idx = self.current_data.x.size(0)
+
+        # Costruisci le feature del helper come media delle feature dei figli
+        children_feats = self.current_data.x[children_to_reassign]
+        helper_feats = children_feats.mean(dim=0, keepdim=True)
+
+        # Estendi x e riallinea num_nodes
+        self.current_data.x = torch.cat([self.current_data.x, helper_feats], dim=0)
+        # Assicuriamoci che num_nodes sia esattamente x.size(0)
+        self.current_data.num_nodes = self.current_data.x.size(0)
+
+        # Ricostruisci la lista di archi
+        new_edges: List[Tuple[int,int]] = []
+        # 1) arco hub -> helper
+        new_edges.append((self.center_node_idx, helper_idx))
+        # 2) per ogni arco originale, rimappalo o mantienilo
+        for u, v in ei.t().tolist():
+            if u == self.center_node_idx and v in children_to_reassign:
+                # sposta il figlio dal hub all’helper
+                new_edges.append((helper_idx, v))
+            else:
+                new_edges.append((u, v))
+
+        # Crea il nuovo edge_index
+        edge_index = torch.tensor(new_edges, dtype=torch.long, device=self.device).t().contiguous()
+        self.current_data.edge_index = edge_index
+
+        return True
+
+    def _swap_edges_by_betweenness(self) -> bool:
+        """
+        Scambia due archi ad alta betweenness centrality, riassegnando
+        i loro endpoint in modo incrociato, e mantiene invariati gli attributi x.
+        """
+        try:
+            # Converte a NetworkX (grafo non orientato)
+            G = to_networkx(self.current_data, to_undirected=True)
+
+            # Calcola betweenness centrality per arco
+            betweenness = nx.edge_betweenness_centrality(G)
+            if len(betweenness) < 2:
+                return False
+
+            # Prendi i due archi con betweenness più alta
+            sorted_edges = sorted(betweenness.items(), key=lambda x: x[1], reverse=True)
+            (u1, v1), _ = sorted_edges[0][0], sorted_edges[0][1]
+            (u2, v2), _ = sorted_edges[1][0], sorted_edges[1][1]
+
+            # Rimuovi i due archi
+            G.remove_edge(u1, v1)
+            G.remove_edge(u2, v2)
+
+            # Aggiungi le connessioni incrociate
+            G.add_edge(u1, v2)
+            G.add_edge(u2, v1)
+
+            # Verifica che rimanga connesso
+            if not nx.is_connected(G):
+                return False
+
+            # Ricostruisci solo edge_index, mantenendo data.x invariato
+            new_edge_list = list(G.edges())
+            edge_index = torch.tensor(new_edge_list, dtype=torch.long, device=self.device).t().contiguous()
+
+            # Per grafi diretti, duplicare in entrambi i versi se serve:
+            # edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+
+            self.current_data.edge_index = edge_index
+            return True
+
+        except Exception as e:
+            print(f"Errore in swap_edges_by_betweenness: {e}")
+            return False
+
+    def _is_connected(self, edge_index: torch.Tensor) -> bool:
+        """
+        Verifica se il grafo è connesso.
+        """
+        try:
+            temp_data = Data(edge_index=edge_index, num_nodes=self.current_data.num_nodes)
+            G = to_networkx(temp_data, to_undirected=True)
+            return nx.is_connected(G)
+        except:
+            return False
+
+    def _calculate_metrics(self, data: Data) -> Dict[str, float]:
+        """
+        Calcola metriche globali del grafo.
+
+        Args:
+            data: Oggetto Data PyG
+
+        Returns:
+            Dizionario con le metriche
+        """
+        try:
+            G = to_networkx(data, to_undirected=True)
+
+            # Hub score del nodo centrale
+            hub_score = G.degree(self.center_node_idx) if self.center_node_idx < data.num_nodes else 0
+
+            # Densità
+            density = nx.density(G)
+
+            # Modularità (usa partizionamento greedy)
+            try:
+                communities = nx.community.greedy_modularity_communities(G)
+                modularity = nx.community.modularity(G, communities)
+            except:
+                modularity = 0.0
+
+            # Cammino minimo medio
+            try:
+                if nx.is_connected(G):
+                    avg_shortest_path = nx.average_shortest_path_length(G)
+                else:
+                    avg_shortest_path = float('inf')
+            except:
+                avg_shortest_path = float('inf')
+
+            # Clustering coefficient
+            clustering = nx.average_clustering(G)
+
+            # Betweenness centrality media
+            betweenness = nx.betweenness_centrality(G)
+            avg_betweenness = np.mean(list(betweenness.values()))
 
             # Degree centrality
-            degree_centrality = total_degree / (num_nodes - 1 + eps)
-
-            # In-out ratio
-            in_out_ratio = fan_in / (fan_out + eps)
-
-            # Get global centrality measures
-            if global_centrality is None:
-                global_centrality = IncrementalFeatureComputer._compute_global_centrality(G)
-
-            pagerank = float(global_centrality['pagerank'].get(node_id, 0))
-            betweenness = float(global_centrality['betweenness'].get(node_id, 0))
-            closeness = float(global_centrality['closeness'].get(node_id, 0))
-
-            return [fan_in, fan_out, degree_centrality, in_out_ratio,
-                    pagerank, betweenness, closeness]
-
-        except Exception as e:
-            # Solo per debug - non loggare per ogni failure
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Feature computation failed for node {node_id}: {e}")
-            return [0.0] * 7
-
-    @staticmethod
-    def _compute_global_centrality(G: nx.Graph) -> Dict[str, Dict]:
-        """Compute global centrality measures efficiently"""
-        try:
-            num_nodes = len(G)
-
-            if num_nodes <= 100:
-                pagerank = nx.pagerank(G, alpha=0.85, max_iter=100, tol=1e-4)
-                betweenness = nx.betweenness_centrality(G, normalized=True)
-                closeness = nx.closeness_centrality(G, distance=None, wf_improved=True)
-            else:
-                # Simplified computation for large graphs
-                total_edges = G.number_of_edges()
-                pagerank = {n: float(G.degree(n)) / (2 * total_edges + 1e-8) for n in G.nodes()}
-                betweenness = {n: 0.0 for n in G.nodes()}
-                closeness = {n: 1.0 / (num_nodes - 1 + 1e-8) for n in G.nodes()}
+            degree_centrality = nx.degree_centrality(G)
+            avg_degree_centrality = np.mean(list(degree_centrality.values()))
 
             return {
-                'pagerank': pagerank,
-                'betweenness': betweenness,
-                'closeness': closeness
+                'hub_score': float(hub_score),
+                'density': float(density),
+                'modularity': float(modularity),
+                'avg_shortest_path': float(avg_shortest_path),
+                'clustering': float(clustering),
+                'avg_betweenness': float(avg_betweenness),
+                'avg_degree_centrality': float(avg_degree_centrality),
+                'num_nodes': int(data.num_nodes),
+                'num_edges': int(data.edge_index.shape[1]),
+                'connected': float(nx.is_connected(G))
             }
         except Exception as e:
-            # Solo errori critici per grafi grandi
-            if len(G.nodes()) > 100:
-                logger.error(f"Critical centrality computation failed for large graph ({len(G.nodes())} nodes): {e}")
-
-            # Fallback
-            empty_dict = {n: 0.0 for n in G.nodes()}
-            return {
-                'pagerank': empty_dict,
-                'betweenness': empty_dict,
-                'closeness': empty_dict
-            }
-
-    @staticmethod
-    def get_affected_nodes(modification_type: str, source_node: int, target_node: int,
-                           G: nx.Graph, radius: int = 2) -> Set[int]:
-        """Determine which nodes need feature updates"""
-        affected = {source_node, target_node}
-
-        try:
-            # Add direct neighbors of modified nodes
-            if source_node in G:
-                affected.update(set(G.predecessors(source_node)))
-                affected.update(set(G.successors(source_node)))
-
-            if target_node in G and target_node != source_node:
-                affected.update(set(G.predecessors(target_node)))
-                affected.update(set(G.successors(target_node)))
-
-            # For certain modifications, expand the radius
-            if modification_type in ['node_addition', 'node_removal', 'major_restructuring']:
-                expanded = set(affected)
-                for node in list(affected):
-                    if node in G:
-                        expanded.update(set(G.neighbors(node)))
-                affected = expanded
-
-        except Exception as e:
-            # Solo per debug
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Error determining affected nodes: {e}")
-
-        return affected
-
-    @staticmethod
-    def update_features_incremental(data: Data, affected_nodes: Set[int],
-                                    modification_info: Dict = None) -> Data:
-        """Update features for affected nodes incrementally"""
-        try:
-            # Convert to NetworkX for feature computation
-            G = to_networkx(data, to_undirected=False)
-
-            # Filter affected nodes to only those that exist
-            valid_affected = {node for node in affected_nodes if node < data.x.size(0) and node in G}
-
-            if not valid_affected:
-                return data
-
-            # Compute global centrality once for efficiency
-            global_centrality = IncrementalFeatureComputer._compute_global_centrality(G)
-
-            # Update features for each affected node
-            for node_idx in valid_affected:
-                try:
-                    new_features = IncrementalFeatureComputer.compute_single_node_features(
-                        node_idx, G, global_centrality
-                    )
-                    data.x[node_idx] = torch.tensor(new_features, dtype=torch.float32, device=data.x.device)
-                except Exception:
-                    continue  # Skip failed nodes
-
-            # Solo per debug
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Updated features for {len(valid_affected)} nodes")
-
-            return data
-
-        except Exception as e:
-            logger.error(f"Critical incremental feature update failed: {e}")
-            return data
-
-
-class HubRefactoringEnv:
-    """RL Environment with Hub-Focused refactoring patterns - Versione Ottimizzata"""
-
-    def __init__(self, initial_data: Data, discriminator: nn.Module,
-                 max_steps: int = 20, device: torch.device = torch.device('cpu'),
-                 reward_config=None):
-        self.device = device
-        self.discriminator = discriminator
-        self.max_steps = max_steps
-
-        # Store initial graph
-        self.initial_data = initial_data.to(device)
-        self.current_data = None
-        self.steps = 0
-
-        # Caching for expensive computations
-        self._cached_hub_score = None
-        self._graph_hash = None
-
-        # Load centralized reward configuration
-        if reward_config is None:
-            config = get_improved_config()
-            reward_config = config['rewards']
-
-        self.reward_config = reward_config
-
-        # EXISTING REWARD PARAMETERS
-        self.REWARD_SUCCESS = reward_config.REWARD_SUCCESS
-        self.REWARD_PARTIAL_SUCCESS = reward_config.REWARD_PARTIAL_SUCCESS
-        self.REWARD_FAILURE = reward_config.REWARD_FAILURE
-        self.REWARD_STEP = reward_config.REWARD_STEP
-        self.REWARD_HUB_REDUCTION = reward_config.REWARD_HUB_REDUCTION
-        self.REWARD_INVALID = reward_config.REWARD_INVALID
-        self.REWARD_SMALL_IMPROVEMENT = reward_config.REWARD_SMALL_IMPROVEMENT
-
-        # 🆕 ADVERSARIAL REWARD SHAPING PARAMETERS
-        self.adversarial_reward_scale = getattr(reward_config, 'adversarial_reward_scale', 5.0)
-        self.adversarial_reward_enabled = getattr(reward_config, 'adversarial_reward_enabled', True)
-        self.adversarial_threshold = getattr(reward_config, 'adversarial_threshold', 0.02)  # Min change to matter
-        self.potential_discount = getattr(reward_config, 'potential_discount', 0.99)  # γ for potential
-
-        # Hub score thresholds
-        self.HUB_SCORE_EXCELLENT = reward_config.HUB_SCORE_EXCELLENT
-        self.HUB_SCORE_GOOD = reward_config.HUB_SCORE_GOOD
-        self.HUB_SCORE_ACCEPTABLE = reward_config.HUB_SCORE_ACCEPTABLE
-
-        # Progressive reward scaling
-        self.improvement_multiplier_boost = reward_config.improvement_multiplier_boost
-        self.improvement_multiplier_decay = reward_config.improvement_multiplier_decay
-        self.improvement_multiplier_max = reward_config.improvement_multiplier_max
-        self.improvement_multiplier_min = reward_config.improvement_multiplier_min
-        self.improvement_multiplier = 1.0
-
-        # Tracking
-        self.action_history = []
-        self.initial_hub_score = None
-        self.best_hub_score = None
-        self.hub_score_history = []
-
-        # 🆕 ADVERSARIAL TRACKING
-        self.discriminator_probs_history = []
-        self.adversarial_rewards_history = []
-        self.last_discriminator_prob = None
-
-        # Log only initialization if debug active
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Environment initialized with Hub-Focused patterns + Adversarial Reward Shaping")
-
-    def _ensure_data_consistency(self, data: Data) -> Data:
-        """Ensure batch and edge_attr consistency CORRETTO"""
-        num_nodes = data.x.size(0)
-        num_edges = data.edge_index.size(1)
-
-        # Batch consistency
-        if not hasattr(data, 'batch') or data.batch is None or data.batch.size(0) != num_nodes:
-            data.batch = torch.zeros(num_nodes, dtype=torch.long, device=data.x.device)
-
-        # ✅ CORRETTO: Edge attr consistency con preservazione semantica
-        if not hasattr(data, 'edge_attr') or data.edge_attr is None:
-            data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
-        elif data.edge_attr.size(0) != num_edges:
-            if num_edges > 0:
-                # ✅ MIGLIORATO: preserva valori esistenti quando possibile
-                if data.edge_attr.size(0) > 0:
-                    # Ripeti gli attributi esistenti se necessario
-                    if num_edges > data.edge_attr.size(0):
-                        repeat_count = (num_edges // data.edge_attr.size(0)) + 1
-                        expanded_attr = data.edge_attr.repeat(repeat_count, 1)
-                        data.edge_attr = expanded_attr[:num_edges]
-                    else:
-                        data.edge_attr = data.edge_attr[:num_edges]
-                else:
-                    data.edge_attr = torch.ones(num_edges, 1, dtype=torch.float32, device=data.x.device)
-            else:
-                data.edge_attr = torch.empty(0, 1, dtype=torch.float32, device=data.x.device)
-
-        return data
-
-    def _get_discriminator_probability(self, state: Data, cache_key: str = None) -> float:
-        """🆕 Get discriminator probability for adversarial reward shaping"""
-        try:
-            # Ensure state consistency
-            state = self._ensure_data_consistency(state)
-
-            # Use cache if provided
-            if cache_key == "current" and self._cached_hub_score is not None:
-                current_hash = self._get_graph_hash(state)
-                if self._graph_hash == current_hash:
-                    return self._cached_hub_score
-
-            with torch.no_grad():
-                self.discriminator.eval()
-                disc_out = self.discriminator(state)
-
-                if disc_out is None or 'logits' not in disc_out:
-                    return 0.5  # Neutral fallback
-
-                logits = disc_out['logits']
-                if logits.dim() == 0 or logits.size(0) == 0:
-                    return 0.5
-
-                # Get probability of being "smelly" (hub-like)
-                probs = F.softmax(logits, dim=1)
-                if probs.size(1) < 2:
-                    return 0.5
-
-                prob_smelly = probs[0, 1].item()
-
-                # Validate probability
-                if not (0.0 <= prob_smelly <= 1.0) or math.isnan(prob_smelly):
-                    prob_smelly = 0.5
-
-                # Cache if this is current state
-                if cache_key == "current":
-                    self._cached_hub_score = prob_smelly
-                    self._graph_hash = self._get_graph_hash(state)
-
-                return prob_smelly
-
-        except Exception as e:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Discriminator probability computation failed: {e}")
-            return 0.5
-
-    def _compute_adversarial_reward(self, old_state: Data, new_state: Data) -> Tuple[float, Dict[str, Any]]:
-        """🆕 Compute potential-based adversarial reward shaping"""
-        if not self.adversarial_reward_enabled:
-            return 0.0, {'adversarial_reward': 0.0, 'enabled': False}
-
-        try:
-            # Get discriminator probabilities
-            old_prob = self._get_discriminator_probability(old_state)
-            new_prob = self._get_discriminator_probability(new_state, cache_key="current")
-
-            # Compute potential difference: Φ(s') - γΦ(s)
-            # Where Φ(s) = -discriminator_prob (negative because we want to minimize "smelly" probability)
-            old_potential = -old_prob
-            new_potential = -new_prob
-
-            # Potential-based shaping: F(s,a,s') = γΦ(s') - Φ(s)
-            adversarial_reward = self.potential_discount * new_potential - old_potential
-
-            # Scale by importance factor
-            adversarial_reward *= self.adversarial_reward_scale
-
-            # Only apply if change is significant
-            prob_change = abs(new_prob - old_prob)
-            if prob_change < self.adversarial_threshold:
-                adversarial_reward *= 0.1  # Reduce reward for tiny changes
-
-            # Track for debugging
-            self.discriminator_probs_history.append({
-                'old_prob': old_prob,
-                'new_prob': new_prob,
-                'prob_change': old_prob - new_prob,  # Positive = improvement
-                'potential_reward': adversarial_reward,
-                'step': self.steps
-            })
-            self.adversarial_rewards_history.append(adversarial_reward)
-            self.last_discriminator_prob = new_prob
-
-            adversarial_info = {
-                'adversarial_reward': adversarial_reward,
-                'old_prob': old_prob,
-                'new_prob': new_prob,
-                'prob_change': old_prob - new_prob,
-                'enabled': True,
-                'threshold_met': prob_change >= self.adversarial_threshold,
-                'old_potential': old_potential,
-                'new_potential': new_potential
-            }
-
-            return adversarial_reward, adversarial_info
-
-        except Exception as e:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Adversarial reward computation failed: {e}")
-            return 0.0, {'adversarial_reward': 0.0, 'error': str(e), 'enabled': self.adversarial_reward_enabled}
-
-    def get_adversarial_stats(self) -> Dict[str, Any]:
-        """🆕 Get adversarial reward statistics"""
-        if not self.adversarial_rewards_history:
-            return {
-                'adversarial_enabled': self.adversarial_reward_enabled,
-                'total_steps': 0,
-                'mean_adversarial_reward': 0.0,
-                'positive_adversarial_rewards': 0,
-                'negative_adversarial_rewards': 0
-            }
-
-        adversarial_rewards = np.array(self.adversarial_rewards_history)
-
-        return {
-            'adversarial_enabled': self.adversarial_reward_enabled,
-            'total_steps': len(adversarial_rewards),
-            'mean_adversarial_reward': float(np.mean(adversarial_rewards)),
-            'std_adversarial_reward': float(np.std(adversarial_rewards)),
-            'positive_adversarial_rewards': int(np.sum(adversarial_rewards > 0)),
-            'negative_adversarial_rewards': int(np.sum(adversarial_rewards < 0)),
-            'max_adversarial_reward': float(np.max(adversarial_rewards)),
-            'min_adversarial_reward': float(np.min(adversarial_rewards)),
-            'last_discriminator_prob': self.last_discriminator_prob,
-            'adversarial_scale': self.adversarial_reward_scale,
-            'adversarial_threshold': self.adversarial_threshold
-        }
-
-    def reset(self) -> Data:
-        """Reset environment"""
-        self.current_data = copy.deepcopy(self.initial_data)
-        self._ensure_data_consistency(self.current_data)
-        self.steps = 0
-        self.action_history.clear()
-        self.hub_score_history.clear()
-
-        # Reset cache
-        self._cached_hub_score = None
-        self._graph_hash = None
-
-        # Compute initial hub score
-        initial_score = self._get_current_hub_score()
-        self.initial_hub_score = initial_score
-        self.best_hub_score = initial_score
-        self.hub_score_history.append(initial_score)
-
-        # Reset improvement multiplier
-        self.improvement_multiplier = 1.0
-
-        # Log solo se debug attivo
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Environment reset - hub score: {initial_score:.4f}")
-
-        return self.current_data
-
-    def _get_graph_hash(self, data: Data) -> str:
-        """Generate hash for graph structure"""
-        try:
-            edge_hash = hash(tuple(data.edge_index.flatten().tolist()))
-            node_hash = hash(tuple(data.x.flatten().tolist()))
-            return f"{edge_hash}_{node_hash}"
-        except Exception:
-            return str(hash(str(data)))
-
-    def _get_current_hub_score(self) -> float:
-        """Hub score computation with caching"""
-        try:
-            self._ensure_data_consistency(self.current_data)
-            current_hash = self._get_graph_hash(self.current_data)
-
-            # Return cached score if graph hasn't changed
-            if self._cached_hub_score is not None and self._graph_hash == current_hash:
-                return self._cached_hub_score
-
-            # Compute new score
-            with torch.no_grad():
-                self.discriminator.eval()
-                disc_out = self.discriminator(self.current_data)
-
-                if disc_out is None or 'logits' not in disc_out:
-                    return 0.5  # Neutral fallback
-
-                logits = disc_out['logits']
-                if logits.dim() == 0 or logits.size(0) == 0:
-                    return 0.5
-
-                # Get probability of being "smelly" (hub-like)
-                probs = F.softmax(logits, dim=1)
-                if probs.size(1) < 2:
-                    return 0.5
-
-                score = probs[0, 1].item()
-
-            # Validate score
-            if not (0.0 <= score <= 1.0) or math.isnan(score):
-                score = 0.5
-
-            # Cache the result
-            self._cached_hub_score = score
-            self._graph_hash = current_hash
-
-            return score
-
-        except Exception as e:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Hub score computation failed: {e}")
-            return 0.5
-
-    def step(self, action: Tuple[int, int, int, bool]) -> Tuple[Data, float, bool, Dict]:
-        """🆕 Enhanced step with adversarial reward shaping"""
-        source, target, pattern, terminate = action
-        self.steps += 1
-
-        reward = self.REWARD_STEP
-        done = False
-
-        # Initialize info with default values
-        info = {
-            'valid': False,
-            'pattern': pattern,
-            'success': False,
-            'hub_improvement': 0.0,
-            'old_hub_score': 0.5,
-            'new_hub_score': 0.5,
-            'best_hub_score': self.best_hub_score if self.best_hub_score else 0.5,
-            'step_metrics_calculated': False,
-            'step_error': None,
-            # 🆕 ADVERSARIAL INFO
-            'adversarial_reward': 0.0,
-            'adversarial_info': {},
-            'reward_breakdown': {}
-        }
-
-        try:
-            # Check termination
-            if terminate or self.steps >= self.max_steps:
-                done = True
-                final_reward = self._evaluate_final_state()
-                reward += final_reward
-                info.update({
-                    'termination': 'requested' if terminate else 'max_steps',
-                    'final_reward': final_reward,
-                    'step_metrics_calculated': True
-                })
-                return self.current_data, reward, done, info
-
-            # Validate action
-            if source >= self.current_data.x.size(0) or target >= self.current_data.x.size(0):
-                reward += self.REWARD_INVALID
-                info.update({
-                    'error': 'invalid_node_index',
-                    'step_error': f'Invalid indices: source={source}, target={target}, max_nodes={self.current_data.x.size(0)}'
-                })
-                return self.current_data, reward, done, info
-
-            # 🆕 STORE OLD STATE FOR ADVERSARIAL REWARD
-            old_state = self.current_data.clone()
-            old_hub_score = self._get_current_hub_score_safe()
-            info['old_hub_score'] = old_hub_score
-
-            # Apply refactoring pattern
-            success, new_data, pattern_info = self._apply_pattern_incremental(pattern, source, target)
-
-            if success and new_data is not None:
-                # Update current data
-                new_state = new_data
-                self.current_data = new_state
-
-                # Invalidate cache after graph modification
-                self._cached_hub_score = None
-                self._graph_hash = None
-
-                # 🆕 COMPUTE ADVERSARIAL REWARD SHAPING
-                adversarial_reward, adversarial_info = self._compute_adversarial_reward(old_state, new_state)
-
-                # Get new hub score (will be cached by adversarial computation)
-                new_hub_score = self._get_current_hub_score_safe()
-                hub_improvement = old_hub_score - new_hub_score
-
-                # Track best score
-                if new_hub_score < self.best_hub_score:
-                    self.best_hub_score = new_hub_score
-                    info['new_best'] = True
-                    self.improvement_multiplier = min(
-                        self.improvement_multiplier * self.improvement_multiplier_boost,
-                        self.improvement_multiplier_max
-                    )
-
-                self.hub_score_history.append(new_hub_score)
-
-                # 🔥 TRADITIONAL REWARD CALCULATION
-                traditional_reward = 0.0
-                reward_type = "none"
-
-                if hub_improvement > 0.15:
-                    traditional_reward = self.REWARD_HUB_REDUCTION * hub_improvement * self.improvement_multiplier
-                    reward_type = 'significant_improvement'
-                elif hub_improvement > 0.05:
-                    traditional_reward = self.REWARD_PARTIAL_SUCCESS * hub_improvement * self.improvement_multiplier
-                    reward_type = 'good_improvement'
-                elif hub_improvement > 0.01:
-                    traditional_reward = self.REWARD_SMALL_IMPROVEMENT * hub_improvement * self.improvement_multiplier
-                    reward_type = 'small_improvement'
-                else:
-                    traditional_reward = self.REWARD_FAILURE * abs(hub_improvement)
-                    reward_type = 'worse'
-                    self.improvement_multiplier = max(
-                        self.improvement_multiplier * self.improvement_multiplier_decay,
-                        self.improvement_multiplier_min
-                    )
-
-                # 🔥 BONUS REWARDS
-                bonus_reward = 0.0
-                if new_hub_score < self.HUB_SCORE_EXCELLENT:
-                    bonus_reward = 1.0
-                    info['score_bonus'] = 'excellent'
-                elif new_hub_score < self.HUB_SCORE_GOOD:
-                    bonus_reward = 0.5
-                    info['score_bonus'] = 'good'
-                elif new_hub_score < self.HUB_SCORE_ACCEPTABLE:
-                    bonus_reward = 0.2
-                    info['score_bonus'] = 'acceptable'
-
-                # 🆕 COMBINE ALL REWARDS
-                total_reward = reward + traditional_reward + bonus_reward + adversarial_reward
-
-                # Record action
-                self.action_history.append((source, target, pattern, hub_improvement))
-
-                # 🆕 ENHANCED INFO WITH REWARD BREAKDOWN
-                info.update({
-                    'valid': True,
-                    'success': True,
-                    'hub_improvement': hub_improvement,
-                    'old_hub_score': old_hub_score,
-                    'new_hub_score': new_hub_score,
-                    'best_hub_score': self.best_hub_score,
-                    'pattern_info': pattern_info,
-                    'features_updated_incrementally': True,
-                    'affected_nodes': pattern_info.get('affected_nodes', []),
-                    'improvement_multiplier': self.improvement_multiplier,
-                    'step_metrics_calculated': True,
-                    'hub_score_is_fallback': old_hub_score == 0.5 and new_hub_score == 0.5,
-                    # 🆕 ADVERSARIAL INFO
-                    'adversarial_reward': adversarial_reward,
-                    'adversarial_info': adversarial_info,
-                    'reward_breakdown': {
-                        'base_step_reward': self.REWARD_STEP,
-                        'traditional_reward': traditional_reward,
-                        'bonus_reward': bonus_reward,
-                        'adversarial_reward': adversarial_reward,
-                        'total_reward': total_reward
-                    },
-                    'reward_type': reward_type
-                })
-
-                # Update final reward
-                reward = total_reward
-
-            else:
-                # Pattern failed
-                reward += self.REWARD_INVALID
-                info.update({
-                    'error': pattern_info.get('error', 'pattern_failed'),
-                    'reward_type': 'pattern_failed',
-                    'step_error': f"Pattern {pattern} failed: {pattern_info.get('error', 'unknown')}"
-                })
-
-        except Exception as e:
-            logger.error(f"Critical error in step: {e}")
-            reward += self.REWARD_INVALID
-            info.update({
-                'error': f'step_error: {str(e)}',
-                'reward_type': 'error',
-                'step_error': str(e)
-            })
-
-        return self.current_data, reward, done, info
-
-    def _apply_pattern_incremental(self, pattern: int, source: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
-        """Apply hub-focused refactoring pattern"""
-        patterns = {
-            0: self._split_by_responsibility_incremental,
-            1: self._extract_interface_incremental,
-            2: self._dependency_injection_incremental,
-            3: self._extract_superclass_incremental,
-            4: self._move_method_incremental
-        }
-
-        if pattern not in patterns:
-            return False, None, {'error': 'unknown_pattern'}
-
-        try:
-            success, new_data, info = patterns[pattern](source, target)
-
-            # Validation critica
-            if success and new_data is not None:
-                if new_data.x.size(0) == 0 or new_data.edge_index.size(1) == 0:
-                    logger.error(f"Pattern {pattern} created empty graph")
-                    return False, None, {'error': 'empty_graph_created'}
-
-                if torch.any(torch.isnan(new_data.x)) or torch.any(torch.isinf(new_data.x)):
-                    logger.error(f"Pattern {pattern} created invalid features")
-                    return False, None, {'error': 'invalid_features_created'}
-
-            return success, new_data, info
-
-        except Exception as e:
-            logger.error(f"Pattern {pattern} critical failure: {e}")
-            return False, None, {'error': f'pattern_exception: {str(e)}'}
-
-    def _extract_interface_incremental(self, hub: int, client: int) -> Tuple[bool, Optional[Data], Dict]:
-        """PATTERN 1: Extract interface"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Find valid connection
-            edge_mask = (data.edge_index[0] == hub) & (data.edge_index[1] == client)
-
-            if not edge_mask.any():
-                out_edges = data.edge_index[:, data.edge_index[0] == hub]
-                if out_edges.size(1) == 0:
-                    in_edges = data.edge_index[:, data.edge_index[1] == hub]
-                    if in_edges.size(1) == 0:
-                        return False, None, {'error': 'hub_has_no_connections'}
-                    client = in_edges[0, 0].item()
-                    edge_mask = (data.edge_index[0] == client) & (data.edge_index[1] == hub)
-                    if not edge_mask.any():
-                        return False, None, {'error': 'no_valid_connections_found'}
-                else:
-                    client = out_edges[1, 0].item()
-                    edge_mask = (data.edge_index[0] == hub) & (data.edge_index[1] == client)
-
-            # Create interface
-            n_nodes = data.x.size(0)
-            interface_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
-            data.x = torch.cat([data.x, interface_features], dim=0)
-
-            # Update node mappings if they exist
-            if hasattr(data, 'original_node_ids'):
-                interface_id = f"interface_{n_nodes}_hub{hub}_client{client}"
-                data.original_node_ids.append(interface_id)
-                if hasattr(data, 'node_id_to_index'):
-                    data.node_id_to_index[interface_id] = n_nodes
-                if hasattr(data, 'index_to_node_id'):
-                    data.index_to_node_id[n_nodes] = interface_id
-
-            # Redirect edge through interface
-            keep_mask = ~edge_mask
-            new_edges = torch.tensor([[hub, n_nodes], [n_nodes, client]], device=self.device).t()
-            data.edge_index = torch.cat([data.edge_index[:, keep_mask], new_edges], dim=1)
-
-            # Update edge attributes
-            if hasattr(data, 'edge_attr'):
-                data.edge_attr = data.edge_attr[keep_mask]
-                new_edge_attr = torch.ones(2, 1, device=self.device, dtype=torch.float32)
-                data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'interface_extraction', hub, client, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.add(n_nodes)
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'extract_interface', 'interface_node': n_nodes}
-            )
-
-            return True, data, {
-                'interface_node': n_nodes,
-                'decoupled': (hub, client),
-                'affected_nodes': list(affected_nodes),
-                'pattern_name': 'Extract Interface'
-            }
-        except Exception as e:
-            return False, None, {'error': f'extract_interface_failed: {str(e)}'}
-
-    def _dependency_injection_incremental(self, dependent: int, dependency: int) -> Tuple[bool, Optional[Data], Dict]:
-        """PATTERN 2: Dependency injection"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Find edge in either direction
-            forward_edge = (data.edge_index[0] == dependent) & (data.edge_index[1] == dependency)
-            backward_edge = (data.edge_index[0] == dependency) & (data.edge_index[1] == dependent)
-
-            edge_found = forward_edge.any() or backward_edge.any()
-
-            if not edge_found:
-                out_edges = data.edge_index[:, data.edge_index[0] == dependent]
-                in_edges = data.edge_index[:, data.edge_index[1] == dependent]
-
-                if out_edges.size(1) > 0:
-                    dependency = out_edges[1, 0].item()
-                    forward_edge = (data.edge_index[0] == dependent) & (data.edge_index[1] == dependency)
-                elif in_edges.size(1) > 0:
-                    dependency = in_edges[0, 0].item()
-                    backward_edge = (data.edge_index[0] == dependency) & (data.edge_index[1] == dependent)
-                else:
-                    return False, None, {'error': 'no_dependencies_available'}
-
-            # Remove appropriate edge
-            if forward_edge.any():
-                keep_mask = ~forward_edge
-                direction = 'forward'
-            else:
-                keep_mask = ~backward_edge
-                direction = 'backward'
-
-            data.edge_index = data.edge_index[:, keep_mask]
-
-            # Update edge attributes
-            if hasattr(data, 'edge_attr'):
-                data.edge_attr = data.edge_attr[keep_mask]
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'dependency_injection', dependent, dependency, to_networkx(data, to_undirected=False)
-            )
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'dependency_injection'}
-            )
-
-            return True, data, {
-                'injected_dependency': (dependent, dependency),
-                'direction_removed': direction,
-                'affected_nodes': list(affected_nodes),
-                'pattern_name': 'Dependency Injection'
-            }
-        except Exception as e:
-            return False, None, {'error': f'dependency_injection_failed: {str(e)}'}
-
-    def _extract_superclass_incremental(self, hub: int, target: int) -> Tuple[bool, Optional[Data], Dict]:
-        """PATTERN 3: Extract superclass"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Find commonalities
-            hub_out_mask = data.edge_index[0] == hub
-            target_out_mask = data.edge_index[0] == target
-
-            hub_targets = set(data.edge_index[1, hub_out_mask].tolist())
-            target_targets = set(data.edge_index[1, target_out_mask].tolist())
-
-            common_targets = hub_targets.intersection(target_targets)
-
-            # If no common outgoing, try incoming
-            if len(common_targets) < 1:
-                hub_in_mask = data.edge_index[1] == hub
-                target_in_mask = data.edge_index[1] == target
-
-                hub_sources = set(data.edge_index[0, hub_in_mask].tolist())
-                target_sources = set(data.edge_index[0, target_in_mask].tolist())
-
-                common_sources = hub_sources.intersection(target_sources)
-
-                if len(common_sources) >= 1:
-                    common_targets = common_sources
-                    extraction_direction = 'incoming'
-                else:
-                    # Structural similarity fallback
-                    hub_degree = hub_out_mask.sum() + (data.edge_index[1] == hub).sum()
-                    target_degree = target_out_mask.sum() + (data.edge_index[1] == target).sum()
-
-                    if hub_degree >= 1 and target_degree >= 2:
-                        common_targets = set()
-                        extraction_direction = 'structural_similarity'
-                    else:
-                        return False, None, {'error': 'insufficient_structural_similarity'}
-            else:
-                extraction_direction = 'outgoing'
-
-            # Create superclass node
-            n_nodes = data.x.size(0)
-            superclass_features = torch.zeros(1, 7, device=data.x.device, dtype=torch.float32)
-            data.x = torch.cat([data.x, superclass_features], dim=0)
-
-            # Update node mappings
-            if hasattr(data, 'original_node_ids'):
-                superclass_id = f"superclass_{n_nodes}_hub{hub}_target{target}"
-                data.original_node_ids.append(superclass_id)
-                if hasattr(data, 'node_id_to_index'):
-                    data.node_id_to_index[superclass_id] = n_nodes
-                if hasattr(data, 'index_to_node_id'):
-                    data.index_to_node_id[n_nodes] = superclass_id
-
-            # Handle different extraction types
-            new_edges = []
-            if extraction_direction == 'outgoing' and common_targets:
-                # Remove common dependencies
-                edges_to_remove = torch.zeros(data.edge_index.size(1), dtype=torch.bool, device=self.device)
-                for common_target in common_targets:
-                    hub_to_common = (data.edge_index[0] == hub) & (data.edge_index[1] == common_target)
-                    target_to_common = (data.edge_index[0] == target) & (data.edge_index[1] == common_target)
-                    edges_to_remove = edges_to_remove | hub_to_common | target_to_common
-
-                keep_mask = ~edges_to_remove
-                data.edge_index = data.edge_index[:, keep_mask]
-
-                # Add new edges
-                new_edges.append([hub, n_nodes])
-                new_edges.append([target, n_nodes])
-                for common_target in common_targets:
-                    new_edges.append([n_nodes, common_target])
-
-            elif extraction_direction == 'incoming' and common_targets:
-                # Handle common sources
-                edges_to_remove = torch.zeros(data.edge_index.size(1), dtype=torch.bool, device=self.device)
-                for common_source in common_targets:
-                    source_to_hub = (data.edge_index[0] == common_source) & (data.edge_index[1] == hub)
-                    source_to_target = (data.edge_index[0] == common_source) & (data.edge_index[1] == target)
-                    edges_to_remove = edges_to_remove | source_to_hub | source_to_target
-
-                keep_mask = ~edges_to_remove
-                data.edge_index = data.edge_index[:, keep_mask]
-
-                new_edges.append([hub, n_nodes])
-                new_edges.append([target, n_nodes])
-                for common_source in common_targets:
-                    new_edges.append([common_source, n_nodes])
-
-            else:
-                # Structural similarity - just create inheritance
-                new_edges.append([hub, n_nodes])
-                new_edges.append([target, n_nodes])
-
-            # Add new edges
-            if new_edges:
-                new_edges_tensor = torch.tensor(new_edges, device=self.device).t()
-                data.edge_index = torch.cat([data.edge_index, new_edges_tensor], dim=1)
-
-                # Update edge attributes
-                if hasattr(data, 'edge_attr'):
-                    if extraction_direction in ['outgoing', 'incoming']:
-                        data.edge_attr = data.edge_attr[keep_mask]
-                    new_edge_attr = torch.ones(len(new_edges), 1, device=self.device, dtype=torch.float32)
-                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'extract_superclass', hub, target, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.add(n_nodes)
-            affected_nodes.update(common_targets)
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'extract_superclass', 'superclass_node': n_nodes}
-            )
-
-            return True, data, {
-                'superclass_node': n_nodes,
-                'common_dependencies': list(common_targets),
-                'refactored_nodes': [hub, target],
-                'affected_nodes': list(affected_nodes),
-                'pattern_name': 'Extract Superclass'
-            }
-        except Exception as e:
-            return False, None, {'error': f'extract_superclass_failed: {str(e)}'}
-
-    def _move_method_incremental(self, from_hub: int, to_target: int) -> Tuple[bool, Optional[Data], Dict]:
-        """PATTERN 4: Move method"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            # Find methods to move
-            hub_out_mask = data.edge_index[0] == from_hub
-            hub_targets = data.edge_index[1, hub_out_mask]
-
-            if hub_targets.size(0) == 0:
-                # Try incoming edges
-                hub_in_mask = data.edge_index[1] == from_hub
-                hub_sources = data.edge_index[0, hub_in_mask]
-
-                if hub_sources.size(0) == 0:
-                    return False, None, {'error': 'hub_has_no_movable_methods'}
-
-                methods_to_move = hub_sources
-                move_direction = 'incoming'
-            else:
-                methods_to_move = hub_targets
-                move_direction = 'outgoing'
-
-            # Determine how many methods to move
-            total_methods = methods_to_move.size(0)
-            if total_methods == 1:
-                num_to_move = 1
-            elif total_methods <= 3:
-                num_to_move = 1
-            else:
-                num_to_move = max(1, total_methods // 3)
-
-            # Select methods to move
-            selected_methods = methods_to_move[:num_to_move]
-
-            # Move the methods
-            moved_methods = []
-            edges_to_remove = torch.zeros(data.edge_index.size(1), dtype=torch.bool, device=self.device)
-            new_edges = []
-
-            for method_target in selected_methods:
-                method_target_int = method_target.item()
-                moved_methods.append(method_target_int)
-
-                if move_direction == 'outgoing':
-                    edge_mask = (data.edge_index[0] == from_hub) & (data.edge_index[1] == method_target_int)
-                    edges_to_remove = edges_to_remove | edge_mask
-                    new_edges.append([to_target, method_target_int])
-                else:
-                    edge_mask = (data.edge_index[0] == method_target_int) & (data.edge_index[1] == from_hub)
-                    edges_to_remove = edges_to_remove | edge_mask
-                    new_edges.append([method_target_int, to_target])
-
-            # Apply changes
-            keep_mask = ~edges_to_remove
-            data.edge_index = data.edge_index[:, keep_mask]
-
-            if new_edges:
-                new_edges_tensor = torch.tensor(new_edges, device=self.device).t()
-                data.edge_index = torch.cat([data.edge_index, new_edges_tensor], dim=1)
-
-                # Update edge attributes
-                if hasattr(data, 'edge_attr'):
-                    data.edge_attr = data.edge_attr[keep_mask]
-                    new_edge_attr = torch.ones(len(new_edges), 1, device=self.device, dtype=torch.float32)
-                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'move_method', from_hub, to_target, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.update(moved_methods)
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'move_method', 'moved_methods': moved_methods}
-            )
-
-            return True, data, {
-                'moved_methods': moved_methods,
-                'from_node': from_hub,
-                'to_node': to_target,
-                'move_direction': move_direction,
-                'methods_moved_count': len(moved_methods),
-                'affected_nodes': list(affected_nodes),
-                'pattern_name': 'Move Method'
-            }
-        except Exception as e:
-            return False, None, {'error': f'move_method_failed: {str(e)}'}
-
-    def _split_by_responsibility_incremental(self, large_node: int, _: int) -> Tuple[bool, Optional[Data], Dict]:
-        """PATTERN 0: Split node by responsibilities"""
-        try:
-            data = copy.deepcopy(self.current_data)
-
-            out_mask = data.edge_index[0] == large_node
-            in_mask = data.edge_index[1] == large_node
-
-            out_degree = out_mask.sum().item()
-            in_degree = in_mask.sum().item()
-
-            # Lower threshold for better applicability
-            if out_degree + in_degree < 2:
-                return False, None, {'error': 'insufficient_connections_to_split'}
-
-            n_nodes = data.x.size(0)
-
-            resp_features = torch.zeros(2, 7, device=data.x.device, dtype=torch.float32)
-            data.x = torch.cat([data.x, resp_features], dim=0)
-
-            # Update node mappings
-            if hasattr(data, 'original_node_ids'):
-                resp1_id = f"class_moved_{n_nodes}"
-                resp2_id = f"class_moved_{n_nodes + 1}"
-                data.original_node_ids.extend([resp1_id, resp2_id])
-
-                if hasattr(data, 'node_id_to_index'):
-                    data.node_id_to_index[resp1_id] = n_nodes
-                    data.node_id_to_index[resp2_id] = n_nodes + 1
-                if hasattr(data, 'index_to_node_id'):
-                    data.index_to_node_id[n_nodes] = resp1_id
-                    data.index_to_node_id[n_nodes + 1] = resp2_id
-
-            # Redistribute outgoing edges
-            out_edges = data.edge_index[:, out_mask]
-
-            if out_edges.size(1) > 0:
-                if out_edges.size(1) == 1:
-                    mid = 1
-                else:
-                    mid = max(1, out_edges.size(1) // 2)
-
-                edges_to_resp1 = torch.stack([
-                    torch.full((mid,), n_nodes, device=self.device),
-                    out_edges[1, :mid]
-                ])
-
-                if out_edges.size(1) > mid:
-                    edges_to_resp2 = torch.stack([
-                        torch.full((out_edges.size(1) - mid,), n_nodes + 1, device=self.device),
-                        out_edges[1, mid:]
-                    ])
-                    new_edges = torch.cat([edges_to_resp1, edges_to_resp2], dim=1)
-                else:
-                    new_edges = edges_to_resp1
-
-                # Keep original edges (without outgoing) and add coordinator edges
-                keep_mask = ~out_mask
-                coord_edges = torch.tensor([[large_node, large_node], [n_nodes, n_nodes + 1]], device=self.device)
-
-                data.edge_index = torch.cat([data.edge_index[:, keep_mask], coord_edges, new_edges], dim=1)
-
-                # Update edge attributes
-                if hasattr(data, 'edge_attr'):
-                    data.edge_attr = data.edge_attr[keep_mask]
-                    num_new_edges = coord_edges.size(1) + new_edges.size(1)
-                    new_edge_attr = torch.ones(num_new_edges, 1, device=self.device, dtype=torch.float32)
-                    data.edge_attr = torch.cat([data.edge_attr, new_edge_attr], dim=0)
-
-            # Incremental feature update
-            affected_nodes = IncrementalFeatureComputer.get_affected_nodes(
-                'move_class', large_node, large_node, to_networkx(data, to_undirected=False)
-            )
-            affected_nodes.update([n_nodes, n_nodes + 1])
-
-            data = IncrementalFeatureComputer.update_features_incremental(
-                data, affected_nodes, {'pattern': 'move_class', 'moved_classes': [n_nodes, n_nodes + 1]}
-            )
-
-            return True, data, {
-                'moved_classes': [n_nodes, n_nodes + 1],
-                'original_hub': large_node,
-                'affected_nodes': list(affected_nodes),
-                'pattern_name': 'Split Responsibility',
-                'total_connections_used': out_degree + in_degree
-            }
-        except Exception as e:
-            return False, None, {'error': f'move_class_failed: {str(e)}'}
-
-    def _evaluate_final_state(self) -> float:
-        """Final state evaluation"""
-        try:
-            if self.initial_hub_score is None:
-                return 0.0
-
-            final_hub_score = self._get_current_hub_score()
-            total_improvement = self.initial_hub_score - final_hub_score
-
-            # Calculate relative improvement
-            relative_improvement = total_improvement / (self.initial_hub_score + 1e-8)
-
-            # Base reward calculation
-            if final_hub_score < self.HUB_SCORE_EXCELLENT:
-                base_reward = self.REWARD_SUCCESS * 1.5
-            elif final_hub_score < self.HUB_SCORE_GOOD:
-                base_reward = self.REWARD_SUCCESS
-            elif final_hub_score < self.HUB_SCORE_ACCEPTABLE:
-                base_reward = self.REWARD_PARTIAL_SUCCESS
-            elif total_improvement > 0.1:
-                base_reward = self.REWARD_PARTIAL_SUCCESS * 0.7
-            elif total_improvement > 0.05:
-                base_reward = self.REWARD_PARTIAL_SUCCESS * 0.3
-            else:
-                base_reward = self.REWARD_FAILURE
-
-            # Efficiency bonus
-            efficiency = 1.0 - (self.steps / self.max_steps)
-            efficiency_bonus = efficiency * 5.0
-
-            # Consistency bonus
-            consistency_bonus = 0.0
-            if len(self.hub_score_history) > 1:
-                improvements = [self.hub_score_history[i - 1] - self.hub_score_history[i]
-                                for i in range(1, len(self.hub_score_history))]
-                positive_improvements = [imp for imp in improvements if imp > 0]
-                if len(positive_improvements) > len(improvements) * 0.6:
-                    consistency_bonus = 3.0
-
-            total_reward = base_reward + efficiency_bonus + consistency_bonus
-
-            # Log solo per debug
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Final eval - improvement: {total_improvement:.4f}, reward: {total_reward:.2f}")
-
-            return total_reward
-
-        except Exception as e:
-            logger.error(f"Final state evaluation failed: {e}")
-            return 0.0
-
-    def _get_current_hub_score_safe(self) -> float:
-        """Safer hub score computation"""
-        try:
-            return self._get_current_hub_score()
-        except Exception as e:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Hub score fallback: {e}")
-            return 0.5
-
-    def get_reward_config_summary(self) -> Dict[str, Any]:
-        """Get current reward configuration (no logging)"""
-        return {
-            'REWARD_SUCCESS': self.REWARD_SUCCESS,
-            'REWARD_SMALL_IMPROVEMENT': self.REWARD_SMALL_IMPROVEMENT,
-            'HUB_SCORE_EXCELLENT': self.HUB_SCORE_EXCELLENT,
-            'current_improvement_multiplier': self.improvement_multiplier,
-            'config_source': 'centralized_hyperparameters_configuration'
-        }
-
-    def get_pattern_info(self) -> Dict[int, str]:
-        """Get information about available patterns"""
-        return {
-            0: "Split Responsibility (Move Class) - Primary hub resolution pattern",
-            1: "Extract Interface (Interface Segregation) - Decouple hub dependencies",
-            2: "Dependency Injection (Break Dependency) - Remove direct dependencies",
-            3: "Extract Superclass (Pull Up) - Factor out common dependencies",
-            4: "Move Method - Redistribute hub responsibilities"
-        }
-
-
-# Funzioni di utilità per configurare il logging
-def set_environment_logging_level(level: int = logging.WARNING):
-    """Configura il livello di logging per l'environment"""
-    env_logger = logging.getLogger(__name__)
-    env_logger.setLevel(level)
-
-    # Riduci anche altri logger correlati
-    logging.getLogger('networkx').setLevel(logging.ERROR)
-    logging.getLogger('torch_geometric').setLevel(logging.ERROR)
-
-
-def enable_environment_debug():
-    """Abilita debug temporaneo per troubleshooting"""
-    env_logger = logging.getLogger(__name__)
-    env_logger.setLevel(logging.DEBUG)
-    env_logger.debug("Environment debug mode enabled")
-
-
-def disable_environment_debug():
-    """Disabilita debug per training normale"""
-    env_logger = logging.getLogger(__name__)
-    env_logger.setLevel(logging.WARNING)
-
-
-# Configurazione di default quando il modulo viene importato
-set_environment_logging_level(logging.WARNING)
+            print(f"Errore nel calcolo delle metriche: {e}")
+            return {k: 0.0 for k in ['hub_score', 'density', 'modularity', 'avg_shortest_path',
+                                     'clustering', 'avg_betweenness', 'avg_degree_centrality',
+                                     'num_nodes', 'num_edges', 'connected']}
+
+    def _calculate_reward(self, prev_metrics: Dict[str, float],
+                          curr_metrics: Dict[str, float],
+                          action_success: bool) -> float:
+        """
+        Calcola il reward basato sui cambiamenti delle metriche.
+
+        Args:
+            prev_metrics: Metriche precedenti
+            curr_metrics: Metriche correnti
+            action_success: Se l'azione è stata applicata con successo
+
+        Returns:
+            Valore del reward
+        """
+        if not action_success:
+            return -0.1  # Penalità per azione fallita
+
+        reward = 0.0
+
+        # Componenti del reward basate sui delta delle metriche
+        delta_hub_score = curr_metrics['hub_score'] - prev_metrics['hub_score']
+        delta_modularity = curr_metrics['modularity'] - prev_metrics['modularity']
+        delta_density = curr_metrics['density'] - prev_metrics['density']
+
+        # Cammino minimo (più piccolo è meglio)
+        if curr_metrics['avg_shortest_path'] != float('inf') and prev_metrics['avg_shortest_path'] != float('inf'):
+            delta_avg_shortest_path = prev_metrics['avg_shortest_path'] - curr_metrics['avg_shortest_path']
+        else:
+            delta_avg_shortest_path = 0.0
+
+        # Calcola reward pesato
+        reward += self.reward_weights['hub_score'] * delta_hub_score
+        reward += self.reward_weights['modularity'] * delta_modularity
+        reward += self.reward_weights['density'] * delta_density
+        reward += self.reward_weights['avg_shortest_path'] * delta_avg_shortest_path
+
+        # Bonus per mantenere il grafo connesso
+        if curr_metrics['connected'] == 0:
+            reward -= 1.0
+
+        # Segnale dal discriminatore (se disponibile)
+        if self.discriminator is not None:
+            try:
+                with torch.no_grad():
+                    discriminator_score = self.discriminator(self.current_data).sigmoid().item()
+                    # Penalizza se il discriminatore classifica come "smelly"
+                    reward += self.reward_weights['discriminator'] * (1 - discriminator_score)
+            except:
+                pass
+
+        return reward
+
+    def _get_state(self) -> np.ndarray:
+        """
+        Estrae lo stato corrente dell'ambiente.
+
+        Returns:
+            Rappresentazione numerica dello stato
+        """
+        # Numero reale di nodi (dalla dimensione di x)
+        real_num_nodes = self.current_data.x.size(0)
+
+        # Node features (padding a max_nodes)
+        node_features = torch.zeros(self.max_nodes, 7, device=self.current_data.x.device)
+        node_features[:real_num_nodes] = self.current_data.x
+
+        # Adjacency matrix (padding a max_nodes x max_nodes)
+        adj_matrix = torch.zeros(self.max_nodes, self.max_nodes, device=self.current_data.edge_index.device)
+        for u, v in self.current_data.edge_index.t().tolist():
+            if u < self.max_nodes and v < self.max_nodes:
+                adj_matrix[u, v] = 1.0
+
+        # Global metrics
+        metrics = self._calculate_metrics(self.current_data)
+        global_features = torch.tensor([
+            metrics['hub_score'],
+            metrics['density'],
+            metrics['modularity'],
+            metrics['avg_shortest_path'] if metrics['avg_shortest_path'] != float('inf') else 10.0,
+            metrics['clustering'],
+            metrics['avg_betweenness'],
+            metrics['avg_degree_centrality'],
+            real_num_nodes,
+            metrics['num_edges'],
+            metrics['connected']
+        ], dtype=torch.float32, device=node_features.device)
+
+        # Concatena tutte le features
+        state = torch.cat([
+            node_features.flatten(),
+            adj_matrix.flatten(),
+            global_features
+        ])
+
+        return state.cpu().numpy()
+
+    def render(self, mode: str = 'human'):
+        """
+        Visualizza lo stato corrente dell'ambiente.
+        """
+        if self.current_data is None:
+            print("Ambiente non inizializzato")
+            return
+
+        metrics = self._calculate_metrics(self.current_data)
+        print(f"\n=== Step {self.current_step} ===")
+        print(f"Centro hub: {self.center_node_idx}")
+        print(f"Nodi: {metrics['num_nodes']}, Archi: {metrics['num_edges']}")
+        print(f"Hub score: {metrics['hub_score']:.3f}")
+        print(f"Density: {metrics['density']:.3f}")
+        print(f"Modularity: {metrics['modularity']:.3f}")
+        print(f"Avg shortest path: {metrics['avg_shortest_path']:.3f}")
+        print(f"Connected: {bool(metrics['connected'])}")
