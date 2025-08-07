@@ -490,6 +490,30 @@ class RefactorEnv(gym.Env):
                                      'clustering', 'avg_betweenness', 'avg_degree_centrality',
                                      'num_nodes', 'num_edges', 'connected']}
 
+    def _extract_global_features(self, data: Data) -> torch.Tensor:
+        """
+        Estrae il vettore delle feature globali da un PyG Data,
+        esattamente come usi in _get_state, ma operando su un Data arbitrario.
+        """
+        # Calcolo delle metriche
+        metrics = self._calculate_metrics(data)
+
+        # costruiamo il tensor in ordine coerente con _get_state()
+        global_feats = torch.tensor([
+            metrics['hub_score'],
+            metrics['density'],
+            metrics['modularity'],
+            metrics['avg_shortest_path'] if metrics['avg_shortest_path'] != float('inf') else 10.0,
+            metrics['clustering'],
+            metrics['avg_betweenness'],
+            metrics['avg_degree_centrality'],
+            data.num_nodes,
+            data.edge_index.shape[1],
+            float(metrics['connected'])
+        ], dtype=torch.float32, device=self.device)
+
+        return global_feats
+
     def _calculate_reward(self, prev_metrics: Dict[str, float],
                           curr_metrics: Dict[str, float],
                           action_success: bool) -> float:

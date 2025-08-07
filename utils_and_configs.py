@@ -31,11 +31,11 @@ class EnvironmentConfig:
     def __post_init__(self):
         if self.reward_weights is None:
             self.reward_weights = {
-                'hub_score': 1.0,
-                'modularity': 0.5,
-                'density': -0.3,
-                'avg_shortest_path': 0.2,
-                'discriminator': 0.4
+                'hub_score': 1.5,
+                'modularity': 0.3,
+                'density': -0.1,
+                'avg_shortest_path': 0.1,
+                'discriminator': 0.1
             }
 
 
@@ -54,12 +54,12 @@ class ModelConfig:
 @dataclass
 class OptimizationConfig:
     """Optimization configuration"""
-    lr_actor: float = 3e-4
-    lr_critic: float = 1e-3
-    lr_discriminator: float = 1e-4
+    lr_actor: float = 1e-4
+    lr_critic: float = 5e-5
+    lr_discriminator: float = 5e-4
     gamma: float = 0.95
     value_loss_coef: float = 0.5
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.02
     max_grad_norm: float = 0.5
     weight_decay: float = 1e-5
 
@@ -69,10 +69,10 @@ class TrainingScheduleConfig:
     """Training schedule configuration"""
     num_episodes: int = 2000
     warmup_episodes: int = 500
-    adversarial_start_episode: int = 1000
+    adversarial_start_episode: int = 500
     batch_size: int = 32
-    update_every: int = 20
-    discriminator_update_every: int = 100
+    update_every: int = 10
+    discriminator_update_every: int = 5
 
 
 @dataclass
@@ -80,9 +80,9 @@ class LoggingConfig:
     """Logging and evaluation configuration"""
     log_every: int = 50
     eval_every: int = 200
-    save_every: int = 500
+    save_every: int = 200
     num_eval_episodes: int = 50
-    early_stopping_patience: int = 200
+    early_stopping_patience: int = 100
     min_improvement: float = 0.01
 
 
