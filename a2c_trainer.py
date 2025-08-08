@@ -194,12 +194,23 @@ class ExperienceBuffer:
             log_prob: float, value: float):
         """Add experience to buffer"""
 
+        # --- CORREZIONE: Assicurati che num_nodes sia presente nei dati clonati ---
+        state_clone = state_data.clone()
+        if not hasattr(state_clone, 'num_nodes') or state_clone.num_nodes is None:
+            state_clone.num_nodes = state_clone.x.size(0)
+
+        next_state_clone = None
+        if next_state_data is not None:
+            next_state_clone = next_state_data.clone()
+            if not hasattr(next_state_clone, 'num_nodes') or next_state_clone.num_nodes is None:
+                next_state_clone.num_nodes = next_state_clone.x.size(0)
+
         experience = {
-            'state_data': state_data.clone(),
+            'state_data': state_clone,
             'global_features': global_features.clone(),
             'action': action,
             'reward': reward,
-            'next_state_data': next_state_data.clone() if next_state_data is not None else None,
+            'next_state_data': next_state_clone,
             'next_global_features': next_global_features.clone() if next_global_features is not None else None,
             'done': done,
             'log_prob': log_prob,
@@ -304,15 +315,16 @@ class A2CTrainer:
             'node_dim': 7,
             'hidden_dim': self.config.hidden_dim,
             'num_layers': self.config.num_layers,
-            'num_actions': self.config.num_actions,
+            'num_actions': 7,  # Aggiornato per 7 azioni
             'global_features_dim': 10,
             'dropout': self.config.dropout,
-            'shared_encoder': self.config.shared_encoder
+            'shared_encoder': False  # Disabilitato shared encoder
         }
 
         self.actor_critic = create_actor_critic(ac_config).to(self.device)
 
         self.logger.info(f"Actor-Critic model parameters: {sum(p.numel() for p in self.actor_critic.parameters()):,}")
+        self.logger.info(f"Using separate encoders for Actor and Critic")
 
     def _init_optimizers(self):
         """Initialize optimizers for all models"""
@@ -354,7 +366,7 @@ class A2CTrainer:
             metrics['connected']
         ], dtype=torch.float32, device=self.device).unsqueeze(0)
 
-        return global_features
+        return self.env._extract_global_features(data).unsqueeze(0)
 
     def _collect_episode(self, episode_idx: int) -> Dict[str, Any]:
         """Collect a single episode of experience"""
@@ -493,10 +505,16 @@ class A2CTrainer:
         old_log_probs = []
 
         for exp in batch:
-            states_data.append(exp['state_data'])
+            state_data = exp['state_data']
+
+            # --- CORREZIONE: Assicurati che num_nodes sia presente ---
+            if not hasattr(state_data, 'num_nodes') or state_data.num_nodes is None:
+                state_data.num_nodes = state_data.x.size(0)
+
+            states_data.append(state_data)
             global_features_list.append(exp['global_features'])
             actions.append(exp['action'])
-            returns.append(exp['reward'])  # Simplified - should use proper returns
+            returns.append(exp['reward'])
             old_log_probs.append(exp['log_prob'])
 
         # Create batched data
@@ -557,10 +575,17 @@ class A2CTrainer:
         negative_graphs = []  # RL-modified graphs
 
         for exp in recent_experiences:
-            # Use state as positive (original smelly) and modified state as negative
-            positive_graphs.append(exp['state_data'])
+            # --- CORREZIONE: Assicurati che num_nodes sia presente ---
+            state_data = exp['state_data']
+            if not hasattr(state_data, 'num_nodes') or state_data.num_nodes is None:
+                state_data.num_nodes = state_data.x.size(0)
+            positive_graphs.append(state_data)
+
             if exp['next_state_data'] is not None:
-                negative_graphs.append(exp['next_state_data'])
+                next_state_data = exp['next_state_data']
+                if not hasattr(next_state_data, 'num_nodes') or next_state_data.num_nodes is None:
+                    next_state_data.num_nodes = next_state_data.x.size(0)
+                negative_graphs.append(next_state_data)
 
         if not negative_graphs:
             return {}
@@ -631,7 +656,8 @@ class A2CTrainer:
 
             done = False
             while not done:
-                global_features = self._extract_global_features(current_data)
+                # --- CORREZIONE: usa metodo ambiente per consistenza ---
+                global_features = self.env._extract_global_features(current_data).unsqueeze(0)
 
                 # Use greedy action selection for evaluation
                 with torch.no_grad():

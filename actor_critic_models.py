@@ -295,30 +295,28 @@ class Critic(nn.Module):
 
 class ActorCritic(nn.Module):
     """
-    Combined Actor-Critic network with shared encoder.
-    More efficient than separate networks.
+    Combined Actor-Critic network with separate encoders.
     """
 
     def __init__(self,
                  node_dim: int = 7,
                  hidden_dim: int = 128,
                  num_layers: int = 3,
-                 num_actions: int = 5,
+                 num_actions: int = 7,  # Aggiornato per includere STOP
                  global_features_dim: int = 10,
                  dropout: float = 0.2,
-                 shared_encoder: bool = True):
+                 shared_encoder: bool = False):  # Modificato default a False
         super().__init__()
 
         self.shared_encoder = shared_encoder
         self.num_actions = num_actions
 
         if shared_encoder:
-            # Single shared encoder
+            # Single shared encoder (mantieni logica esistente)
             self.encoder = GraphEncoder(node_dim, hidden_dim, num_layers, dropout)
             graph_emb_dim = hidden_dim * 2
             combined_dim = graph_emb_dim + global_features_dim
 
-            # Separate heads for actor and critic
             self.actor_head = nn.Sequential(
                 nn.Linear(combined_dim, hidden_dim),
                 nn.ReLU(),
@@ -339,11 +337,34 @@ class ActorCritic(nn.Module):
                 nn.Linear(hidden_dim // 2, 1)
             )
         else:
-            # Separate networks
-            self.actor = Actor(node_dim, hidden_dim, num_layers, num_actions,
-                               global_features_dim, dropout)
-            self.critic = Critic(node_dim, hidden_dim, num_layers,
-                                 global_features_dim, dropout)
+            # --- Modifica: encoder separati per Actor e Critic ---
+            self.actor_encoder = GraphEncoder(node_dim, hidden_dim, num_layers, dropout)
+            self.critic_encoder = GraphEncoder(node_dim, hidden_dim, num_layers, dropout)
+
+            graph_emb_dim = hidden_dim * 2
+            combined_dim = graph_emb_dim + global_features_dim
+
+            # Actor head con supporto per azione STOP
+            self.actor_head = nn.Sequential(
+                nn.Linear(combined_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(dropout * 0.5),
+                nn.Linear(hidden_dim // 2, num_actions)
+            )
+
+            # Critic head con possibile output esteso (valore + terminazione)
+            self.critic_head = nn.Sequential(
+                nn.Linear(combined_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(dropout * 0.5),
+                nn.Linear(hidden_dim // 2, 2)  # valore + prob terminazione
+            )
 
         self._init_weights()
 
@@ -360,27 +381,15 @@ class ActorCritic(nn.Module):
     def forward(self, data: Data, global_features: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass through both actor and critic.
-
-        Args:
-            data: PyG Data object
-            global_features: Global graph metrics
-
-        Returns:
-            Dictionary with actor and critic outputs
         """
         if self.shared_encoder:
-            # Shared encoder path
+            # Shared encoder path (mantieni logica esistente)
             encoder_out = self.encoder(data)
             graph_emb = encoder_out['graph_embedding']
-
-            # Combine features
             combined_features = torch.cat([graph_emb, global_features], dim=-1)
 
-            # Actor output
             action_logits = self.actor_head(combined_features)
             action_probs = F.softmax(action_logits, dim=-1)
-
-            # Critic output
             state_value = self.critic_head(combined_features).squeeze(-1)
 
             return {
@@ -391,29 +400,44 @@ class ActorCritic(nn.Module):
                 'node_embeddings': encoder_out['node_embeddings']
             }
         else:
-            # Separate networks path
-            actor_out = self.actor(data, global_features)
-            critic_out = self.critic(data, global_features)
+            # --- Modifica: encoder separati ---
+            # Actor path
+            actor_encoder_out = self.actor_encoder(data)
+            actor_graph_emb = actor_encoder_out['graph_embedding']
+            actor_combined = torch.cat([actor_graph_emb, global_features], dim=-1)
+
+            action_logits = self.actor_head(actor_combined)
+            action_probs = F.softmax(action_logits, dim=-1)
+
+            # Critic path
+            critic_encoder_out = self.critic_encoder(data)
+            critic_graph_emb = critic_encoder_out['graph_embedding']
+            critic_combined = torch.cat([critic_graph_emb, global_features], dim=-1)
+
+            critic_output = self.critic_head(critic_combined)
+            state_value = critic_output[:, 0]  # Primo output: valore
+            termination_prob = torch.sigmoid(critic_output[:, 1])  # Secondo output: prob terminazione
 
             return {
-                'action_logits': actor_out['action_logits'],
-                'action_probs': actor_out['action_probs'],
-                'state_value': critic_out['state_value'],
-                'graph_embedding': actor_out['graph_embedding'],
-                'node_embeddings': actor_out['node_embeddings']
+                'action_logits': action_logits,
+                'action_probs': action_probs,
+                'state_value': state_value,
+                'termination_prob': termination_prob,
+                'actor_graph_embedding': actor_graph_emb,
+                'critic_graph_embedding': critic_graph_emb,
+                'actor_node_embeddings': actor_encoder_out['node_embeddings'],
+                'critic_node_embeddings': critic_encoder_out['node_embeddings']
             }
 
     def get_action_and_value(self, data: Data, global_features: torch.Tensor) -> Tuple[int, float, float]:
         """
         Sample action and get state value for a single step.
-
-        Returns:
-            Tuple of (action, log_prob, state_value)
+        Supporta il campionamento dell'azione STOP (indice = num_actions - 1).
         """
         with torch.no_grad():
             output = self.forward(data, global_features)
 
-            # Sample action
+            # Sample action con supporto per STOP
             action_dist = torch.distributions.Categorical(output['action_probs'])
             action = action_dist.sample()
             log_prob = action_dist.log_prob(action)
@@ -437,28 +461,20 @@ class ActorCritic(nn.Module):
 
         return log_probs, output['state_value'], entropy
 
-
 # Factory function for creating models
 def create_actor_critic(config: Dict) -> ActorCritic:
     """
     Factory function to create ActorCritic model from config.
-
-    Args:
-        config: Configuration dictionary
-
-    Returns:
-        ActorCritic model instance
     """
     return ActorCritic(
         node_dim=config.get('node_dim', 7),
         hidden_dim=config.get('hidden_dim', 128),
         num_layers=config.get('num_layers', 3),
-        num_actions=config.get('num_actions', 5),
+        num_actions=config.get('num_actions', 7),  # Aggiornato default
         global_features_dim=config.get('global_features_dim', 10),
         dropout=config.get('dropout', 0.2),
-        shared_encoder=config.get('shared_encoder', True)
+        shared_encoder=config.get('shared_encoder', False)  # Nuovo default
     )
-
 
 # Testing code
 if __name__ == "__main__":

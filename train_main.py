@@ -275,7 +275,7 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
             while not done:
                 # Extract global features
                 current_data = env.current_data
-                global_features = env._extract_global_features(current_data)
+                global_features = env._extract_global_features(current_data).unsqueeze(0)
 
                 # Get action from model (greedy)
                 with torch.no_grad():
