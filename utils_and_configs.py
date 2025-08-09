@@ -32,12 +32,16 @@ class EnvironmentConfig:
     
     def __post_init__(self):
         if self.reward_weights is None:
+            # FIXED: Reward weights ottimizzati per stabilità
             self.reward_weights = {
-                'hub_score': 2.0,
-                'modularity': 0.3,
-                'density': -0.1,
-                'avg_shortest_path': 0.1,
-                'discriminator': 0.1
+                'hub_score': 0.5,
+                'step_valid': 0.05,
+                'step_invalid': -0.01,
+                'cycle_penalty': -0.05,
+                'duplicate_penalty': -0.02,
+                'adversarial_weight': 0.2,
+                'terminal_thresh': 0.02,
+                'terminal_bonus': 2.0
             }
 
 
@@ -47,7 +51,7 @@ class ModelConfig:
     node_dim: int = 7
     hidden_dim: int = 128
     num_layers: int = 3
-    num_actions: int = 5
+    num_actions: int = 7
     global_features_dim: int = 10
     dropout: float = 0.2
     shared_encoder: bool = True
@@ -744,7 +748,7 @@ def test_models(actor_critic_class, discriminator_class, sample_data: Data):
             'num_actions': 5,
             'global_features_dim': 10,
             'dropout': 0.2,
-            'shared_encoder': True
+            'shared_encoder': False
         }
         
         actor_critic = actor_critic_class(**ac_config)

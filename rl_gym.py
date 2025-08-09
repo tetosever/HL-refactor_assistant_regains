@@ -46,13 +46,21 @@ class RefactorEnv(gym.Env):
 
         # Pesi default per il calcolo del reward
         self.reward_weights = reward_weights or {
-            'hub_score': 2.0,
-            'step_valid': 0.1,
-            'step_invalid': -0.1,
-            'cycle_penalty': -0.5,
-            'duplicate_penalty': -0.3,
-            'adversarial_weight': 0.5
+            'hub_score': 1.0,
+            'step_valid': 0.03,
+            'step_invalid': -0.02,
+            'cycle_penalty': -0.05,
+            'duplicate_penalty': -0.02,
+            'time_penalty': -0.01,
+            'adversarial_weight': 0.02,
+            'terminal_thresh': 0.01,
+            'terminal_bonus': 4.0,
+            'patience': 5
         }
+
+        self.best_hub_score = 0.0
+        self.no_improve_steps = 0
+        self.disc_start = 0.5
 
         # Aggiungi le nuove chiavi se mancanti
         if 'terminal_thresh' not in self.reward_weights:
@@ -400,10 +408,8 @@ class RefactorEnv(gym.Env):
         if graph_idx is None:
             graph_idx = np.random.randint(0, len(self.original_data_list))
 
-        # *** MODIFICA: Usa deepcopy e PULISCI i dati ***
         original_data = self.original_data_list[graph_idx]
 
-        # Crea copia PULITA con solo attributi standard
         self.current_data = Data(
             x=original_data.x.clone(),
             edge_index=original_data.edge_index.clone(),
@@ -421,11 +427,38 @@ class RefactorEnv(gym.Env):
 
         self.initial_metrics = self._calculate_metrics(self.current_data)
         self.prev_hub_score = self.initial_metrics['hub_score']
+
+        # *** PATCH 2: Aggiungi tracking best-so-far e discriminator iniziale ***
+        self.best_hub_score = self.prev_hub_score
+        self.no_improve_steps = 0
+
+        # Se c'è discriminatore, calcola p_smelly iniziale
+        if hasattr(self, 'discriminator') and self.discriminator is not None:
+            with torch.no_grad():
+                try:
+                    disc_output = self.discriminator(self.current_data)
+                    if isinstance(disc_output, dict):
+                        p_smelly = torch.softmax(disc_output['logits'], dim=1)[0, 1].item()
+                    else:
+                        p_smelly = torch.softmax(disc_output, dim=1)[0, 1].item()
+                    self.disc_start = p_smelly
+                except Exception:
+                    self.disc_start = 0.5  # Fallback
+        else:
+            self.disc_start = 0.5  # Default se non c'è discriminator
+
         return self._get_state()
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict]:
         """
         Esegue un'azione nell'ambiente.
+
+        MODIFICHE:
+        - Delta_step positivo = miglioramento
+        - STOP (action==6) non riceve step_valid
+        - Time penalty aggiunto a ogni step
+        - Tracking best_hub_score e no_improve_steps
+        - Patience termination opzionale
         """
         if self.current_data is None:
             raise RuntimeError("Ambiente non inizializzato. Chiama reset() prima.")
@@ -438,24 +471,45 @@ class RefactorEnv(gym.Env):
         # Calcola hub score corrente e shaping
         current_metrics = self._calculate_metrics(self.current_data)
         current_h = current_metrics['hub_score']
+
+        # *** PATCH 3: Delta positivo = miglioramento (prev - current) ***
         delta_step = self.prev_hub_score - current_h
-        scale = 0.05
         alpha = self.reward_weights.get('hub_score', 2.0)
 
+        # *** PATCH 3: Time penalty ***
+        time_penalty = self.reward_weights.get('time_penalty', 0.0)
+
         # Step reward basato sulla validità dell'azione
-        if success:
+        if success and action != 6:  # *** PATCH 3: STOP non riceve step_valid ***
             step_reward = self.reward_weights['step_valid']
             # Controlli aggiuntivi per penalità
             step_reward += self._check_penalties()
         else:
-            step_reward = self.reward_weights['step_invalid']
+            if action == 6:  # STOP
+                step_reward = 0.0  # Neutro per STOP
+            else:
+                step_reward = self.reward_weights['step_invalid']
 
-        # Aggiungi shaping al step_reward
-        step_reward += alpha * (delta_step / max(1e-3, scale))
+        # *** PATCH 3: Aggiungi shaping e time penalty ***
+        step_reward += alpha * delta_step  # Shaping: miglioramento = reward positivo
+        step_reward += time_penalty  # Time penalty (tipicamente negativo)
+
+        # *** PATCH 3: Aggiorna best-so-far e no_improve_steps ***
+        if current_h < self.best_hub_score:  # Miglioramento (score più basso è meglio)
+            self.best_hub_score = current_h
+            self.no_improve_steps = 0
+        else:
+            self.no_improve_steps += 1
+
         self.prev_hub_score = current_h
 
         # Controlla terminazione
         done = (action == 6) or (self.current_step >= self.max_steps)  # STOP action o max steps
+
+        # *** PATCH 3: Patience termination (opzionale) ***
+        patience = self.reward_weights.get('patience', None)
+        if patience is not None and self.no_improve_steps >= patience:
+            done = True
 
         # Reward finale solo alla terminazione
         final_reward = 0.0
@@ -464,7 +518,7 @@ class RefactorEnv(gym.Env):
 
         total_reward = step_reward + final_reward
 
-        # *** NUOVO: Aggiungi info sul tracking del hub ***
+        # *** PATCH 3: Info di debug ampliato ***
         info = {
             'action_success': success,
             'metrics': current_metrics,
@@ -474,7 +528,13 @@ class RefactorEnv(gym.Env):
             'current_hub_index': self._get_current_hub_index(),
             'step_reward': step_reward,
             'final_reward': final_reward,
-            'is_terminal': done
+            'is_terminal': done,
+            # Debug info aggiuntivo
+            'delta_step': delta_step,
+            'alpha_hub_term': alpha * delta_step,
+            'time_penalty': time_penalty,
+            'best_hub_score': self.best_hub_score,
+            'no_improve_steps': self.no_improve_steps
         }
 
         return self._get_state(), total_reward, done, info
@@ -808,30 +868,48 @@ class RefactorEnv(gym.Env):
     def _calculate_final_reward(self) -> float:
         """
         Calcola il reward finale basato su miglioramento hub score e discriminatore.
+
+        MODIFICHE:
+        - Usa BEST hub score dell'episodio invece di quello finale
+        - Δ-discriminator: disc_start - p_smelly_now
+        - Clamp termine avversariale in [-1,1]
         """
         try:
             current_metrics = self._calculate_metrics(self.current_data)
-            delta_episode = self.initial_metrics['hub_score'] - current_metrics['hub_score']
+
+            # *** PATCH 4: Usa best hub score dell'episodio ***
+            delta_episode = self.initial_metrics['hub_score'] - self.best_hub_score
+
             tau = self.reward_weights.get('terminal_thresh', 0.05)
             B = self.reward_weights.get('terminal_bonus', 3.0)
 
+            # Bonus/penalty terminale basato su miglioramento
             terminal = 0.0
             if delta_episode >= tau:
                 terminal += B
             elif delta_episode <= -tau:
                 terminal -= B
 
+            # *** PATCH 4: Termine avversariale con Δ-discriminator ***
             adversarial_reward = 0.0
-            if self.discriminator is not None:
+            if hasattr(self, 'discriminator') and self.discriminator is not None:
                 with torch.no_grad():
-                    out = self.discriminator(self.current_data)
-                    logits = out['logits'] if isinstance(out, dict) else out
-                    p_smelly = torch.softmax(logits, dim=1)[0, 1].item()
-                    adv_w = self.reward_weights.get('adversarial_weight', 0.5)
-                    adv_term = np.log(max(1.0 - p_smelly, 1e-6))
-                    adversarial_reward = float(np.clip(adv_w * adv_term, -1.0, 1.0))
+                    try:
+                        out = self.discriminator(self.current_data)
+                        logits = out['logits'] if isinstance(out, dict) else out
+                        p_smelly_now = torch.softmax(logits, dim=1)[0, 1].item()
+
+                        # Δ-discriminator: riduzione di smelly è positiva
+                        disc_delta = self.disc_start - p_smelly_now
+                        adv_w = self.reward_weights.get('adversarial_weight', 0.5)
+
+                        # *** PATCH 4: Clamp in [-1,1] ***
+                        adversarial_reward = float(np.clip(adv_w * disc_delta, -1.0, 1.0))
+                    except Exception:
+                        adversarial_reward = 0.0
 
             return terminal + adversarial_reward
+
         except Exception:
             return 0.0
 
@@ -944,21 +1022,24 @@ class RefactorEnv(gym.Env):
         except:
             return False
 
-    def compute_hub_score(self, G, hub_index, scaler=None, w1=1.0, w2=1.0):
+    def compute_hub_score(self, G, hub_index, scaler=None, w1=0.5, w2=0.5):
         """
         Calcola l'hub_score combinando gini_tot_deg e thr_mu_plus_sigma_share
         basato sul subgrafo 1-hop attorno al nodo hub (escludendo l'hub).
 
-        IMPORTANTE: G deve essere un DiGraph orientato per calcolare in_degree/out_degree
+        MODIFICHE:
+        - Normalizza score in [0,1] con clip
+        - Pesi w1=0.5, w2=0.5 con somma=1
+        - Garantisce Δ hub_score ∈ [-1,1] per reward shaping stabile
 
         Args:
             G: NetworkX DiGraph (orientato)
             hub_index: indice del nodo hub (può essere diverso dall'hub originale)
             scaler: scaler esistente per normalizzazione (opzionale)
-            w1, w2: pesi per gini e share (default 1.0 ciascuno)
+            w1, w2: pesi per gini e share (default 0.5 ciascuno)
 
         Returns:
-            float: hub_score combinato
+            float: hub_score combinato normalizzato in [0,1]
         """
         # *** MODIFICA: Usa sempre l'hub originale tracciato ***
         actual_hub = self._get_current_hub_index()
@@ -994,8 +1075,8 @@ class RefactorEnv(gym.Env):
         T = mu + sigma
         share = float(np.sum(x > T)) / k if k > 0 else 0.0
 
-        # 5) hub_score senza normalizzazione feature_scaler
-        return float(w1 * gini + w2 * share)
+        score = w1 * gini + w2 * share
+        return float(np.clip(score, 0.0, 1.0))
 
     def _calculate_metrics(self, data: Data) -> Dict[str, float]:
         """

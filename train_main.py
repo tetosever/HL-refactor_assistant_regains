@@ -20,6 +20,7 @@ from pre_training_discriminator import main as pretrain_discriminator
 from a2c_trainer import A2CTrainer, TrainingConfig
 from rl_gym import RefactorEnv
 from actor_critic_models import create_actor_critic
+from utils_and_configs import ConfigManager
 
 
 def setup_project_structure():
@@ -428,6 +429,64 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
     return eval_results
 
 
+def create_training_config_from_manager(config_manager: ConfigManager,
+                                        device: str,
+                                        experiment_name: str,
+                                        discriminator_path: str,
+                                        results_dir: str) -> TrainingConfig:
+    """Convert ConfigManager to TrainingConfig"""
+
+    env_config = config_manager.env_config
+    model_config = config_manager.model_config
+    opt_config = config_manager.opt_config
+    schedule_config = config_manager.schedule_config
+    logging_config = config_manager.logging_config
+
+    return TrainingConfig(
+        # General
+        device=device,
+        experiment_name=experiment_name,
+
+        # Environment
+        data_path=env_config.data_path,
+        discriminator_path=discriminator_path,
+        results_dir=results_dir,
+        max_episode_steps=env_config.max_episode_steps,
+        reward_weights=env_config.reward_weights,
+
+        # Model
+        hidden_dim=model_config.hidden_dim,
+        num_layers=model_config.num_layers,
+        num_actions=model_config.num_actions,
+        dropout=model_config.dropout,
+        shared_encoder=model_config.shared_encoder,
+
+        # Optimization
+        lr_actor=opt_config.lr_actor,
+        lr_critic=opt_config.lr_critic,
+        lr_discriminator=opt_config.lr_discriminator,
+        gamma=opt_config.gamma,
+        value_loss_coef=opt_config.value_loss_coef,
+        entropy_coef=opt_config.entropy_coef,
+        max_grad_norm=opt_config.max_grad_norm,
+
+        # Schedule
+        num_episodes=schedule_config.num_episodes,
+        warmup_episodes=schedule_config.warmup_episodes,
+        adversarial_start_episode=schedule_config.adversarial_start_episode,
+        batch_size=schedule_config.batch_size,
+        update_every=schedule_config.update_every,
+        discriminator_update_every=schedule_config.discriminator_update_every,
+
+        # Logging
+        log_every=logging_config.log_every,
+        eval_every=logging_config.eval_every,
+        save_every=logging_config.save_every,
+        num_eval_episodes=logging_config.num_eval_episodes,
+        early_stopping_patience=logging_config.early_stopping_patience,
+        min_improvement=logging_config.min_improvement
+    )
+
 def run_ablation_study(config: TrainingConfig) -> Dict[str, Any]:
     """Run ablation study to analyze component contributions"""
 
@@ -507,12 +566,13 @@ def run_ablation_study(config: TrainingConfig) -> Dict[str, Any]:
 
     return ablation_results
 
-
 def main():
     """Main training pipeline"""
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Graph Refactoring RL Training Pipeline')
+    parser.add_argument('--config-file', type=str, default=None,
+                        help='Path to configuration file (JSON/YAML)')
     parser.add_argument('--data-path', type=str, default='data_builder/dataset/graph_features',
                         help='Path to training data')
     parser.add_argument('--discriminator-path', type=str,
@@ -522,12 +582,6 @@ def main():
                         help='Directory to save results')
     parser.add_argument('--experiment-name', type=str, default='graph_refactor_rl_v1',
                         help='Experiment name')
-    parser.add_argument('--num-episodes', type=int, default=2000,
-                        help='Total number of training episodes')
-    parser.add_argument('--warmup-episodes', type=int, default=500,
-                        help='Number of warm-up episodes')
-    parser.add_argument('--adversarial-start', type=int, default=1000,
-                        help='Episode to start adversarial training')
     parser.add_argument('--device', type=str, default='auto',
                         help='Device to use (cuda/cpu/auto)')
     parser.add_argument('--skip-pretraining', action='store_true',
@@ -565,18 +619,26 @@ def main():
         logger.error("❌ Training data not available. Please prepare the dataset first.")
         sys.exit(1)
 
-    # Create training configuration
+    # ✅ NUOVO: Load configuration from utils_and_configs
     try:
-        config = TrainingConfig(
+        # Initialize config manager
+        config_manager = ConfigManager(config_file=args.config_file)
+
+        # Override with command line arguments if provided
+        if args.data_path != 'data_builder/dataset/graph_features':
+            config_manager.env_config.data_path = args.data_path
+
+        # Create TrainingConfig from the config manager
+        config = create_training_config_from_manager(
+            config_manager=config_manager,
             device=device,
             experiment_name=args.experiment_name,
-            data_path=args.data_path,
             discriminator_path=args.discriminator_path,
-            results_dir=args.results_dir,
-            num_episodes=args.num_episodes,
-            warmup_episodes=args.warmup_episodes,
-            adversarial_start_episode=args.adversarial_start
+            results_dir=args.results_dir
         )
+
+        logger.info("✅ Configuration loaded from utils_and_configs")
+
     except Exception as e:
         logger.error(f"❌ Failed to create training configuration: {e}")
         sys.exit(1)

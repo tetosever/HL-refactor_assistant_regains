@@ -52,6 +52,7 @@ class TrainingConfig:
     # Environment
     max_episode_steps: int = 20
     num_actions: int = 7
+    reward_weights: Dict[str, float] = None
 
     # Training phases
     num_episodes: int = 2000
@@ -303,7 +304,8 @@ class A2CTrainer:
         self.env = RefactorEnv(
             data_path=config.data_path,
             max_steps=config.max_episode_steps,
-            device=config.device
+            device=config.device,
+            reward_weights=config.reward_weights  # ✅ PASSA I REWARD WEIGHTS!
         )
 
         # Load discriminator
@@ -1251,7 +1253,7 @@ def main():
         step_size_up_critic=200,
 
         # Training ottimizzato
-        batch_size=64,
+        batch_size=32,
         update_every=20,
         discriminator_update_every=40,
 
