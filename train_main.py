@@ -159,14 +159,44 @@ def run_adversarial_training(config: TrainingConfig, warmup_results: Dict[str, A
     # Initialize trainer
     trainer = A2CTrainer(adversarial_config)
 
-    # Load warm-up model if available
+    # --- CORREZIONE: Load warm-up model con gestione corretta degli optimizer ---
     warmup_model_path = warmup_results.get('best_warmup_model')
     if warmup_model_path and Path(warmup_model_path).exists():
         try:
             checkpoint = torch.load(warmup_model_path, map_location=trainer.device)
+
+            # Load model state
             trainer.actor_critic.load_state_dict(checkpoint['actor_critic_state_dict'])
-            trainer.ac_optimizer.load_state_dict(checkpoint['ac_optimizer_state_dict'])
+
+            # Load optimizer states basato sulla configurazione
+            if trainer.config.use_cyclic_lr:
+                # CyclicLR usa optimizer separati
+                if hasattr(trainer, 'actor_optimizer') and 'actor_optimizer_state_dict' in checkpoint:
+                    trainer.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state_dict'])
+                if hasattr(trainer, 'critic_optimizer') and 'critic_optimizer_state_dict' in checkpoint:
+                    trainer.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
+
+                # Load scheduler states
+                if hasattr(trainer, 'actor_scheduler') and 'actor_scheduler_state_dict' in checkpoint:
+                    trainer.actor_scheduler.load_state_dict(checkpoint['actor_scheduler_state_dict'])
+                if hasattr(trainer, 'critic_scheduler') and 'critic_scheduler_state_dict' in checkpoint:
+                    trainer.critic_scheduler.load_state_dict(checkpoint['critic_scheduler_state_dict'])
+
+                logger.info("✅ Loaded warm-up model with CyclicLR optimizers")
+            else:
+                # Optimizer combinato tradizionale
+                if hasattr(trainer,
+                           'ac_optimizer') and trainer.ac_optimizer is not None and 'ac_optimizer_state_dict' in checkpoint:
+                    trainer.ac_optimizer.load_state_dict(checkpoint['ac_optimizer_state_dict'])
+
+                # Load scheduler state
+                if hasattr(trainer, 'ac_scheduler') and 'ac_scheduler_state_dict' in checkpoint:
+                    trainer.ac_scheduler.load_state_dict(checkpoint['ac_scheduler_state_dict'])
+
+                logger.info("✅ Loaded warm-up model with combined optimizer")
+
             logger.info(f"✅ Loaded warm-up model from {warmup_model_path}")
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to load warm-up model: {e}. Starting from scratch.")
 
@@ -203,15 +233,44 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
         # Load model
         checkpoint = torch.load(best_model_path, map_location=config.device)
 
+        state_dict_keys = list(checkpoint['actor_critic_state_dict'].keys())
+
+        # Controlla se usa encoder separati
+        has_actor_encoder = any('actor_encoder' in key for key in state_dict_keys)
+        has_shared_encoder = any('encoder.input_proj' in key for key in state_dict_keys)
+
+        # Determina shared_encoder
+        if has_actor_encoder:
+            actual_shared_encoder = False
+        elif has_shared_encoder:
+            actual_shared_encoder = True
+        else:
+            logger.error("Cannot determine encoder architecture from checkpoint")
+            return eval_results
+
+        # Determina numero di azioni dal peso dell'actor_head
+        actor_head_keys = [k for k in state_dict_keys if 'actor_head' in k and 'weight' in k]
+        if actor_head_keys:
+            # Prendi l'ultimo layer (quello finale)
+            final_layer_key = max(actor_head_keys, key=lambda x: int(x.split('.')[1]))
+            final_layer_shape = checkpoint['actor_critic_state_dict'][final_layer_key].shape
+            actual_num_actions = final_layer_shape[0]
+        else:
+            logger.error("Cannot determine number of actions from checkpoint")
+            return eval_results
+
+        logger.info(
+            f"🔍 Detected architecture: shared_encoder={actual_shared_encoder}, num_actions={actual_num_actions}")
+
         # Create model
         ac_config = {
             'node_dim': 7,
             'hidden_dim': config.hidden_dim,
             'num_layers': config.num_layers,
-            'num_actions': config.num_actions,
+            'num_actions': actual_num_actions,
             'global_features_dim': 10,
             'dropout': config.dropout,
-            'shared_encoder': config.shared_encoder
+            'shared_encoder': actual_shared_encoder
         }
 
         model = create_actor_critic(ac_config).to(config.device)

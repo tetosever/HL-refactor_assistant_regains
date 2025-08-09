@@ -5,6 +5,8 @@ Utility functions and configuration management for Graph Refactoring RL
 
 import os
 import json
+import time
+
 import yaml
 import torch
 import numpy as np
@@ -54,13 +56,13 @@ class ModelConfig:
 @dataclass
 class OptimizationConfig:
     """Optimization configuration"""
-    lr_actor: float = 1e-5
-    lr_critic: float = 1e-5
-    lr_discriminator: float = 1e-4
+    lr_actor: float = 1e-3
+    lr_critic: float = 2e-3
+    lr_discriminator: float = 5e-4
     gamma: float = 0.95
     value_loss_coef: float = 0.5
-    entropy_coef: float = 0.2
-    max_grad_norm: float = 0.5
+    entropy_coef: float = 0.1
+    max_grad_norm: float = 1.0
     weight_decay: float = 1e-5
 
 
@@ -68,11 +70,11 @@ class OptimizationConfig:
 class TrainingScheduleConfig:
     """Training schedule configuration"""
     num_episodes: int = 2000
-    warmup_episodes: int = 500
-    adversarial_start_episode: int = 300
-    batch_size: int = 8
+    warmup_episodes: int = 400
+    adversarial_start_episode: int = 800
+    batch_size: int = 16
     update_every: int = 10
-    discriminator_update_every: int = 1
+    discriminator_update_every: int = 200
 
 
 @dataclass

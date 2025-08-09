@@ -51,37 +51,54 @@ class TrainingConfig:
 
     # Environment
     max_episode_steps: int = 20
-    num_actions: int = 5
+    num_actions: int = 7
 
     # Training phases
     num_episodes: int = 2000
-    warmup_episodes: int = 500  # Warm-up with only Δhub_score reward
-    adversarial_start_episode: int = 1000  # When to start adversarial training
+    warmup_episodes: int = 500
+    adversarial_start_episode: int = 1000
 
     # A2C hyperparameters
-    gamma: float = 0.95  # Discount factor
+    gamma: float = 0.95
     lr_actor: float = 3e-4
     lr_critic: float = 1e-3
     lr_discriminator: float = 1e-4
     value_loss_coef: float = 0.5
     entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
+    use_cyclic_lr: bool = True
+
+    # Actor scheduler parameters
+    base_lr_actor: float = 5e-4
+    max_lr_actor: float = 2e-3
+    step_size_up_actor: int = 100
+    step_size_down_actor: int = None
+    cyclic_mode_actor: str = "triangular2"  # "triangular", "triangular2", "exp_range"
+    gamma_actor: float = 0.99
+
+    # Critic scheduler parameters
+    base_lr_critic: float = 1e-3
+    max_lr_critic: float = 5e-3
+    step_size_up_critic: int = 80
+    step_size_down_critic: int = None
+    cyclic_mode_critic: str = "triangular2"
+    gamma_critic: float = 0.99
 
     # Training details
-    batch_size: int = 32
-    update_every: int = 20  # Steps between updates
-    discriminator_update_every: int = 100  # Episodes between discriminator updates
+    batch_size: int = 16
+    update_every: int = 10
+    discriminator_update_every: int = 200
 
     # Reward normalization
     normalize_rewards: bool = True
-    reward_clip: float = 10.0
-    advantage_clip: float = 2.0
+    reward_clip: float = 5.0
+    advantage_clip: float = 1.0
 
     # Model architecture
     hidden_dim: int = 128
     num_layers: int = 3
     dropout: float = 0.2
-    shared_encoder: bool = True
+    shared_encoder: bool = False
 
     # Logging and evaluation
     log_every: int = 50
@@ -105,6 +122,23 @@ class TrainingConfig:
 
         # Create results directory
         Path(self.results_dir).mkdir(parents=True, exist_ok=True)
+
+        # --- NUOVO: Validation per CyclicLR parameters ---
+        if self.use_cyclic_lr:
+            # Assicurati che base_lr <= max_lr
+            if self.base_lr_actor > self.max_lr_actor:
+                logging.warning("base_lr_actor > max_lr_actor, swapping values")
+                self.base_lr_actor, self.max_lr_actor = self.max_lr_actor, self.base_lr_actor
+
+            if self.base_lr_critic > self.max_lr_critic:
+                logging.warning("base_lr_critic > max_lr_critic, swapping values")
+                self.base_lr_critic, self.max_lr_critic = self.max_lr_critic, self.base_lr_critic
+
+            # Set step_size_down se None
+            if self.step_size_down_actor is None:
+                self.step_size_down_actor = self.step_size_up_actor
+            if self.step_size_down_critic is None:
+                self.step_size_down_critic = self.step_size_up_critic
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'TrainingConfig':
@@ -192,25 +226,24 @@ class ExperienceBuffer:
             action: int, reward: float, next_state_data: Data,
             next_global_features: torch.Tensor, done: bool,
             log_prob: float, value: float):
-        """Add experience to buffer"""
+        """Add experience to buffer con Data CLEAN"""
 
-        # --- CORREZIONE: Assicurati che num_nodes sia presente nei dati clonati ---
-        state_clone = state_data.clone()
-        if not hasattr(state_clone, 'num_nodes') or state_clone.num_nodes is None:
-            state_clone.num_nodes = state_clone.x.size(0)
-
-        next_state_clone = None
-        if next_state_data is not None:
-            next_state_clone = next_state_data.clone()
-            if not hasattr(next_state_clone, 'num_nodes') or next_state_clone.num_nodes is None:
-                next_state_clone.num_nodes = next_state_clone.x.size(0)
+        # *** MODIFICA: Crea copie PULITE ***
+        def clean_data_copy(data):
+            if data is None:
+                return None
+            return Data(
+                x=data.x.clone(),
+                edge_index=data.edge_index.clone(),
+                num_nodes=data.x.size(0)  # Esplicito
+            )
 
         experience = {
-            'state_data': state_clone,
+            'state_data': clean_data_copy(state_data),
             'global_features': global_features.clone(),
             'action': action,
             'reward': reward,
-            'next_state_data': next_state_clone,
+            'next_state_data': clean_data_copy(next_state_data),
             'next_global_features': next_global_features.clone() if next_global_features is not None else None,
             'done': done,
             'log_prob': log_prob,
@@ -327,14 +360,102 @@ class A2CTrainer:
         self.logger.info(f"Using separate encoders for Actor and Critic")
 
     def _init_optimizers(self):
-        """Initialize optimizers for all models"""
+        """Initialize optimizers and schedulers for all models"""
 
-        # Actor-Critic optimizer (combined)
-        self.ac_optimizer = optim.Adam(
-            self.actor_critic.parameters(),
-            lr=self.config.lr_actor,
-            eps=1e-5
-        )
+        # --- NUOVO: CyclicLR Schedulers ---
+        if self.config.use_cyclic_lr:
+            self.logger.info("🔄 Setting up CyclicLR schedulers...")
+
+            # Separa Actor e Critic optimizer
+            # Identifica i parametri dell'actor e del critic correttamente
+            if hasattr(self.actor_critic, 'actor_encoder') and hasattr(self.actor_critic, 'critic_encoder'):
+                # Caso: encoder separati
+                actor_params = list(self.actor_critic.actor_encoder.parameters()) + \
+                               list(self.actor_critic.actor_head.parameters())
+                critic_params = list(self.actor_critic.critic_encoder.parameters()) + \
+                                list(self.actor_critic.critic_head.parameters())
+            elif hasattr(self.actor_critic, 'shared_encoder') and self.actor_critic.shared_encoder:
+                # Caso: encoder condiviso - separa solo le head
+                shared_params = list(self.actor_critic.encoder.parameters())
+                actor_head_params = list(self.actor_critic.actor_head.parameters())
+                critic_head_params = list(self.actor_critic.critic_head.parameters())
+
+                # Per encoder condiviso, ottimizziamo tutto insieme ma con scheduler diversi per le head
+                actor_params = shared_params + actor_head_params
+                critic_params = shared_params + critic_head_params
+            else:
+                # Fallback: cerca per nome dei parametri
+                actor_params = []
+                critic_params = []
+
+                for name, param in self.actor_critic.named_parameters():
+                    if any(keyword in name.lower() for keyword in ['actor', 'policy']):
+                        actor_params.append(param)
+                    elif any(keyword in name.lower() for keyword in ['critic', 'value']):
+                        critic_params.append(param)
+                    else:
+                        # Parametri condivisi vanno in entrambi
+                        actor_params.append(param)
+                        critic_params.append(param)
+
+            # Crea optimizer separati
+            self.actor_optimizer = optim.Adam(actor_params, lr=self.config.lr_actor, eps=1e-5)
+            self.critic_optimizer = optim.Adam(critic_params, lr=self.config.lr_critic, eps=1e-5)
+
+            # Calcola step_size basato sui update invece che sugli episodi
+            actor_step_size_up = max(1, self.config.step_size_up_actor // self.config.update_every)
+            actor_step_size_down = max(1, self.config.step_size_down_actor // self.config.update_every)
+            critic_step_size_up = max(1, self.config.step_size_up_critic // self.config.update_every)
+            critic_step_size_down = max(1, self.config.step_size_down_critic // self.config.update_every)
+
+            # Scheduler separati
+            self.actor_scheduler = optim.lr_scheduler.CyclicLR(
+                self.actor_optimizer,
+                base_lr=self.config.base_lr_actor,
+                max_lr=self.config.max_lr_actor,
+                step_size_up=actor_step_size_up,
+                step_size_down=actor_step_size_down,
+                mode=self.config.cyclic_mode_actor,
+                gamma=self.config.gamma_actor,
+                cycle_momentum=False
+            )
+
+            self.critic_scheduler = optim.lr_scheduler.CyclicLR(
+                self.critic_optimizer,
+                base_lr=self.config.base_lr_critic,
+                max_lr=self.config.max_lr_critic,
+                step_size_up=critic_step_size_up,
+                step_size_down=critic_step_size_down,
+                mode=self.config.cyclic_mode_critic,
+                gamma=self.config.gamma_critic,
+                cycle_momentum=False
+            )
+
+            self.logger.info(
+                f"✅ CyclicLR setup complete:\n"
+                f"   Actor: {self.config.base_lr_actor:.2e} ↔ {self.config.max_lr_actor:.2e} "
+                f"(step_size: {actor_step_size_up}↑/{actor_step_size_down}↓)\n"
+                f"   Critic: {self.config.base_lr_critic:.2e} ↔ {self.config.max_lr_critic:.2e} "
+                f"(step_size: {critic_step_size_up}↑/{critic_step_size_down}↓)\n"
+                f"   Mode: {self.config.cyclic_mode_actor}/{self.config.cyclic_mode_critic}"
+            )
+
+            # Non creare ac_optimizer quando usi CyclicLR
+            self.ac_optimizer = None
+
+        else:
+            # Fallback: Optimizer combinato tradizionale
+            self.ac_optimizer = optim.Adam(
+                self.actor_critic.parameters(),
+                lr=self.config.lr_actor,
+                eps=1e-5
+            )
+
+            # Learning rate scheduler tradizionale
+            self.ac_scheduler = optim.lr_scheduler.StepLR(
+                self.ac_optimizer, step_size=500, gamma=0.8
+            )
+            self.logger.info("📉 Using traditional combined optimizer with StepLR scheduler")
 
         # Discriminator optimizer (if available)
         if self.discriminator is not None:
@@ -343,10 +464,10 @@ class A2CTrainer:
                 lr=self.config.lr_discriminator
             )
 
-        # Learning rate schedulers
-        self.ac_scheduler = optim.lr_scheduler.StepLR(
-            self.ac_optimizer, step_size=500, gamma=0.8
-        )
+            # Discriminator scheduler (sempre StepLR per semplicità)
+            self.discriminator_scheduler = optim.lr_scheduler.StepLR(
+                self.discriminator_optimizer, step_size=300, gamma=0.9
+            )
 
     def _extract_global_features(self, data: Data) -> torch.Tensor:
         """Extract global features from graph data"""
@@ -369,11 +490,20 @@ class A2CTrainer:
         return self.env._extract_global_features(data).unsqueeze(0)
 
     def _collect_episode(self, episode_idx: int) -> Dict[str, Any]:
-        """Collect a single episode of experience"""
+        """Collect a single episode of experience con Data CLEAN"""
 
         # Reset environment
         state = self.env.reset()
-        current_data = self.env.current_data.clone()
+
+        # *** MODIFICA: Assicurati che current_data sia CLEAN ***
+        def ensure_clean_data(data):
+            return Data(
+                x=data.x.clone(),
+                edge_index=data.edge_index.clone(),
+                num_nodes=data.x.size(0)
+            )
+
+        current_data = ensure_clean_data(self.env.current_data)
 
         episode_reward = 0.0
         episode_length = 0
@@ -393,7 +523,9 @@ class A2CTrainer:
 
             # Take action in environment
             next_state, reward, done, info = self.env.step(action)
-            next_data = self.env.current_data.clone()
+
+            # *** MODIFICA: Assicurati che next_data sia CLEAN ***
+            next_data = ensure_clean_data(self.env.current_data)
 
             # Apply reward modifications based on training phase
             modified_reward = self._modify_reward(reward, episode_idx, info)
@@ -438,24 +570,39 @@ class A2CTrainer:
         }
 
     def _modify_reward(self, reward: float, episode_idx: int, info: Dict) -> float:
-        """Modify reward based on training phase"""
+        """Modify reward based on training phase - VERSIONE OTTIMIZZATA"""
 
-        # Warm-up phase: only hub score improvement
+        # Warm-up phase: focus solo su hub score con scaling migliore
         if episode_idx < self.config.warmup_episodes:
-            # Focus only on hub score changes
             hub_improvement = info.get('metrics', {}).get('hub_score', 0) - \
                               self.env.initial_metrics.get('hub_score', 0)
-            return hub_improvement
 
-        # Normal training: use full reward
+            # Scala il reward per warm-up con bonus/penalty
+            if hub_improvement > 2.0:
+                scaled_reward = hub_improvement * 3.0 + 5.0
+            elif hub_improvement > 0.5:
+                scaled_reward = hub_improvement * 2.0 + 2.0
+            elif hub_improvement < -1.0:
+                scaled_reward = hub_improvement * 2.0 - 3.0
+            else:
+                scaled_reward = hub_improvement
+
+            return np.clip(scaled_reward, -5.0, 10.0)
+
+        # Normal training: usa reward completo ma con normalizzazione migliorata
         modified_reward = reward
 
-        # Normalize reward if enabled
-        if self.config.normalize_rewards:
-            modified_reward = self.experience_buffer.get_normalized_reward(modified_reward)
+        # Normalizzazione più conservativa
+        if self.config.normalize_rewards and len(self.experience_buffer.rewards) > 50:
+            recent_rewards = list(self.experience_buffer.rewards)[-100:]  # Ultimi 100
+            mean_reward = np.mean(recent_rewards)
+            std_reward = np.std(recent_rewards) + 1e-6
 
-        # Clip reward
-        modified_reward = np.clip(modified_reward, -self.config.reward_clip, self.config.reward_clip)
+            # Normalizzazione più soft
+            modified_reward = (modified_reward - mean_reward) / (std_reward * 2.0)
+
+        # Clipping finale più stretto
+        modified_reward = np.clip(modified_reward, -3.0, 5.0)
 
         return modified_reward
 
@@ -507,7 +654,6 @@ class A2CTrainer:
         for exp in batch:
             state_data = exp['state_data']
 
-            # --- CORREZIONE: Assicurati che num_nodes sia presente ---
             if not hasattr(state_data, 'num_nodes') or state_data.num_nodes is None:
                 state_data.num_nodes = state_data.x.size(0)
 
@@ -538,25 +684,80 @@ class A2CTrainer:
         # Critic loss (value function)
         critic_loss = F.mse_loss(values, returns_tensor)
 
-        # Total loss
+        # Total loss (solo per logging)
         total_loss = (actor_loss +
                       self.config.value_loss_coef * critic_loss -
                       self.config.entropy_coef * entropy.mean())
 
-        # Optimization step
-        self.ac_optimizer.zero_grad()
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.config.max_grad_norm)
-        self.ac_optimizer.step()
+        # --- CORREZIONE: Optimization step con gestione corretta dei gradienti ---
+        if self.config.use_cyclic_lr and hasattr(self, 'actor_optimizer'):
+            # Usa optimizer separati
 
-        return {
-            'actor_loss': actor_loss.item(),
-            'critic_loss': critic_loss.item(),
-            'total_loss': total_loss.item(),
-            'entropy': entropy.mean().item(),
-            'advantages_mean': advantages.mean().item(),
-            'advantages_std': advantages.std().item()
-        }
+            # Zero gradients
+            self.actor_optimizer.zero_grad()
+            self.critic_optimizer.zero_grad()
+
+            # Compute losses separatamente
+            actor_total_loss = actor_loss - self.config.entropy_coef * entropy.mean()
+            critic_total_loss = self.config.value_loss_coef * critic_loss
+
+            # Backward pass separati
+            actor_total_loss.backward(retain_graph=True)
+            critic_total_loss.backward()
+
+            # Gradient clipping corretto per optimizer separati
+            if hasattr(self.actor_optimizer, 'param_groups'):
+                actor_params = []
+                for group in self.actor_optimizer.param_groups:
+                    actor_params.extend(group['params'])
+                torch.nn.utils.clip_grad_norm_(actor_params, self.config.max_grad_norm)
+
+            if hasattr(self.critic_optimizer, 'param_groups'):
+                critic_params = []
+                for group in self.critic_optimizer.param_groups:
+                    critic_params.extend(group['params'])
+                torch.nn.utils.clip_grad_norm_(critic_params, self.config.max_grad_norm)
+
+            # Optimization steps
+            self.actor_optimizer.step()
+            self.critic_optimizer.step()
+
+            # Learning rates per logging
+            current_lr_actor = self.actor_optimizer.param_groups[0]['lr']
+            current_lr_critic = self.critic_optimizer.param_groups[0]['lr']
+
+            return {
+                'actor_loss': actor_loss.item(),
+                'critic_loss': critic_loss.item(),
+                'total_loss': total_loss.item(),
+                'entropy': entropy.mean().item(),
+                'advantages_mean': advantages.mean().item(),
+                'advantages_std': advantages.std().item(),
+                'current_lr_actor': current_lr_actor,
+                'current_lr_critic': current_lr_critic
+            }
+
+        else:
+            # Fallback: optimizer combinato
+            if self.ac_optimizer is None:
+                raise ValueError("ac_optimizer is None but cyclic_lr is disabled. Check _init_optimizers().")
+
+            self.ac_optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.config.max_grad_norm)
+            self.ac_optimizer.step()
+
+            current_lr = self.ac_optimizer.param_groups[0]['lr']
+
+            return {
+                'actor_loss': actor_loss.item(),
+                'critic_loss': critic_loss.item(),
+                'total_loss': total_loss.item(),
+                'entropy': entropy.mean().item(),
+                'advantages_mean': advantages.mean().item(),
+                'advantages_std': advantages.std().item(),
+                'current_lr': current_lr
+            }
 
     def _update_discriminator(self):
         """Update discriminator on newly generated graphs"""
@@ -579,13 +780,23 @@ class A2CTrainer:
             state_data = exp['state_data']
             if not hasattr(state_data, 'num_nodes') or state_data.num_nodes is None:
                 state_data.num_nodes = state_data.x.size(0)
-            positive_graphs.append(state_data)
+            clean_state_data = Data(
+                x=state_data.x.detach().clone(),
+                edge_index=state_data.edge_index.detach().clone(),
+                num_nodes=state_data.num_nodes
+            )
+            positive_graphs.append(clean_state_data)
 
             if exp['next_state_data'] is not None:
                 next_state_data = exp['next_state_data']
                 if not hasattr(next_state_data, 'num_nodes') or next_state_data.num_nodes is None:
                     next_state_data.num_nodes = next_state_data.x.size(0)
-                negative_graphs.append(next_state_data)
+                clean_next_state_data = Data(
+                    x=next_state_data.x.detach().clone(),
+                    edge_index=next_state_data.edge_index.detach().clone(),
+                    num_nodes=next_state_data.num_nodes
+                )
+                negative_graphs.append(clean_next_state_data)
 
         if not negative_graphs:
             return {}
@@ -597,7 +808,7 @@ class A2CTrainer:
 
         # Combine and create labels
         all_graphs = positive_graphs + negative_graphs
-        labels = [1] * len(positive_graphs) + [0] * len(negative_graphs)
+        labels = [1] * len(positive_graphs) + [1] * len(negative_graphs)
 
         # Shuffle
         combined = list(zip(all_graphs, labels))
@@ -740,15 +951,36 @@ class A2CTrainer:
         checkpoint = {
             'episode': episode_idx,
             'actor_critic_state_dict': self.actor_critic.state_dict(),
-            'ac_optimizer_state_dict': self.ac_optimizer.state_dict(),
+            'model_config': {  # ← Aggiungi questo
+                'node_dim': 7,
+                'hidden_dim': self.config.hidden_dim,
+                'num_layers': self.config.num_layers,
+                'num_actions': 7,
+                'global_features_dim': 10,
+                'dropout': self.config.dropout,
+                'shared_encoder': False
+            },
             'training_stats': self.training_stats,
             'config': self.config,
             'best_reward': self.best_reward
         }
 
+        # --- CORREZIONE: Salva optimizer states corretti ---
+        if self.config.use_cyclic_lr and hasattr(self, 'actor_optimizer'):
+            checkpoint['actor_optimizer_state_dict'] = self.actor_optimizer.state_dict()
+            checkpoint['critic_optimizer_state_dict'] = self.critic_optimizer.state_dict()
+            checkpoint['actor_scheduler_state_dict'] = self.actor_scheduler.state_dict()
+            checkpoint['critic_scheduler_state_dict'] = self.critic_scheduler.state_dict()
+        elif hasattr(self, 'ac_optimizer') and self.ac_optimizer is not None:
+            checkpoint['ac_optimizer_state_dict'] = self.ac_optimizer.state_dict()
+            if hasattr(self, 'ac_scheduler'):
+                checkpoint['ac_scheduler_state_dict'] = self.ac_scheduler.state_dict()
+
         if self.discriminator is not None:
             checkpoint['discriminator_state_dict'] = self.discriminator.state_dict()
             checkpoint['discriminator_optimizer_state_dict'] = self.discriminator_optimizer.state_dict()
+            if hasattr(self, 'discriminator_scheduler'):
+                checkpoint['discriminator_scheduler_state_dict'] = self.discriminator_scheduler.state_dict()
 
         # Save regular checkpoint
         checkpoint_path = self.results_dir / f'checkpoint_episode_{episode_idx}.pt'
@@ -769,6 +1001,7 @@ class A2CTrainer:
         self.logger.info(f"Adversarial training starts at episode: {self.config.adversarial_start_episode}")
 
         start_time = time.time()
+        update_count = 0  # Traccia il numero di update per il scheduler
 
         for episode_idx in range(1, self.config.num_episodes + 1):
 
@@ -779,12 +1012,46 @@ class A2CTrainer:
             update_info = {}
             if episode_idx % self.config.update_every == 0:
                 update_info.update(self._update_actor_critic())
+                update_count += 1
+
+                # --- CORREZIONE: Step per CyclicLR schedulers ---
+                if self.config.use_cyclic_lr:
+                    # Usa scheduler separati
+                    if hasattr(self, 'actor_scheduler') and hasattr(self, 'critic_scheduler'):
+                        self.actor_scheduler.step()
+                        self.critic_scheduler.step()
+
+                        # Log learning rates attuali ogni tanto
+                        if update_count % 50 == 0:
+                            current_lr_actor = self.actor_scheduler.get_last_lr()[0]
+                            current_lr_critic = self.critic_scheduler.get_last_lr()[0]
+
+                            self.logger.info(
+                                f"📊 Update {update_count}: "
+                                f"Actor LR = {current_lr_actor:.2e}, "
+                                f"Critic LR = {current_lr_critic:.2e}"
+                            )
+
+                            # Aggiungi al TensorBoard
+                            self.writer.add_scalar('Learning_Rate/actor', current_lr_actor, update_count)
+                            self.writer.add_scalar('Learning_Rate/critic', current_lr_critic, update_count)
+                    else:
+                        self.logger.warning("⚠️ CyclicLR enabled but schedulers not found!")
+
+                else:
+                    # Scheduler tradizionale (ogni 100 episodi invece che ogni update)
+                    if episode_idx % 100 == 0 and hasattr(self, 'ac_scheduler'):
+                        self.ac_scheduler.step()
 
             # Update discriminator in adversarial phase
             if (episode_idx >= self.config.adversarial_start_episode and
                     episode_idx % self.config.discriminator_update_every == 0):
                 discriminator_info = self._update_discriminator()
                 update_info.update(discriminator_info)
+
+                # Step discriminator scheduler
+                if hasattr(self, 'discriminator_scheduler'):
+                    self.discriminator_scheduler.step()
 
             # Log metrics
             self._log_metrics(episode_idx, episode_info, update_info)
@@ -816,10 +1083,6 @@ class A2CTrainer:
             if episode_idx % self.config.save_every == 0:
                 self._save_checkpoint(episode_idx)
 
-            # Learning rate scheduling
-            if episode_idx % 100 == 0:
-                self.ac_scheduler.step()
-
             # Early stopping
             if self.early_stopping_counter >= self.config.early_stopping_patience:
                 self.logger.info(f"🛑 Early stopping at episode {episode_idx}")
@@ -833,6 +1096,20 @@ class A2CTrainer:
         self.logger.info(f"✅ Training completed in {training_time / 3600:.2f} hours")
         self.logger.info(f"Best reward: {self.best_reward:.3f}")
         self.logger.info(f"Final evaluation: {final_eval}")
+
+        if self.config.use_cyclic_lr:
+            if hasattr(self, 'actor_scheduler') and hasattr(self, 'critic_scheduler'):
+                final_lr_actor = self.actor_scheduler.get_last_lr()[0]
+                final_lr_critic = self.critic_scheduler.get_last_lr()[0]
+                self.logger.info(f"📈 Final learning rates - Actor: {final_lr_actor:.2e}, Critic: {final_lr_critic:.2e}")
+            else:
+                self.logger.info("📈 CyclicLR enabled but no scheduler info available")
+        else:
+            if hasattr(self, 'ac_scheduler'):
+                final_lr = self.ac_scheduler.get_last_lr()[0]
+                self.logger.info(f"📈 Final learning rate: {final_lr:.2e}")
+
+        self.logger.info(f"🔄 Total scheduler updates: {update_count}")
 
         # Save final results
         self._save_final_results(final_eval, training_time)
@@ -950,24 +1227,49 @@ class A2CTrainer:
 def main():
     """Main training function"""
 
-    # Configuration
+    # Configuration con CyclicLR abilitato
     config = TrainingConfig(
-        experiment_name="graph_refactor_a2c_v1",
+        experiment_name="graph_refactor_a2c_optimized_v2",
+
+        # Episodes ottimizzati
         num_episodes=2000,
-        warmup_episodes=500,
-        adversarial_start_episode=1000,
-        hidden_dim=128,
-        lr_actor=3e-4,
-        lr_critic=1e-3,
-        batch_size=32,
-        update_every=20
+        warmup_episodes=400,
+        adversarial_start_episode=800,
+
+        # Learning rates ottimizzati
+        lr_actor=1e-3,
+        lr_critic=2e-3,
+        lr_discriminator=5e-4,
+
+        # CyclicLR ottimizzato
+        use_cyclic_lr=True,
+        base_lr_actor=5e-4,
+        max_lr_actor=2e-3,
+        step_size_up_actor=100,
+        base_lr_critic=1e-3,
+        max_lr_critic=5e-3,
+        step_size_up_critic=80,
+
+        # Training ottimizzato
+        batch_size=16,
+        update_every=10,
+        discriminator_update_every=200,
+
+        # Regularization ottimizzata
+        entropy_coef=0.05,
+        max_grad_norm=1.0,
+        advantage_clip=1.0,
+        reward_clip=5.0,
     )
 
-    print("🚀 Starting Graph Refactoring RL Training")
+    print("🚀 Starting Graph Refactoring RL Training with CyclicLR")
     print(f"📊 Configuration: {config.experiment_name}")
     print(f"🎯 Episodes: {config.num_episodes}")
-    print(f"🔥 Warm-up: {config.warmup_episodes}")
-    print(f"⚔️  Adversarial: {config.adversarial_start_episode}")
+    print(f"🔄 CyclicLR enabled: {config.use_cyclic_lr}")
+    if config.use_cyclic_lr:
+        print(f"   Actor LR: {config.base_lr_actor:.2e} ↔ {config.max_lr_actor:.2e}")
+        print(f"   Critic LR: {config.base_lr_critic:.2e} ↔ {config.max_lr_critic:.2e}")
+        print(f"   Step sizes: Actor {config.step_size_up_actor}, Critic {config.step_size_up_critic}")
     print(f"🧠 Device: {config.device}")
 
     # Initialize trainer
@@ -977,6 +1279,12 @@ def main():
     try:
         training_stats = trainer.train()
         print("✅ Training completed successfully!")
+
+        # Print final scheduler info
+        if config.use_cyclic_lr and hasattr(trainer, 'actor_scheduler'):
+            final_lr_actor = trainer.actor_scheduler.get_last_lr()[0]
+            final_lr_critic = trainer.critic_scheduler.get_last_lr()[0]
+            print(f"📈 Final LRs - Actor: {final_lr_actor:.2e}, Critic: {final_lr_critic:.2e}")
 
     except KeyboardInterrupt:
         print("⏹️  Training interrupted by user")

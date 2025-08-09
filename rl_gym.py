@@ -97,8 +97,14 @@ class RefactorEnv(gym.Env):
     @staticmethod
     def _compute_node_features(G: nx.Graph) -> Dict[str, Dict[str, float]]:
         """Compute hub detection features for all nodes"""
-        in_degrees = dict(G.in_degree())
-        out_degrees = dict(G.out_degree())
+
+        # Gestisci sia grafi orientati che non orientati
+        if G.is_directed():
+            in_degrees = dict(G.in_degree())
+            out_degrees = dict(G.out_degree())
+        else:
+            raise RuntimeError("Grafo non orientato non supportato. Usa un grafo diretto.")
+
         pagerank, betweenness, closeness = RefactorEnv._compute_centrality_metrics(G)
 
         node_features = {}
@@ -125,10 +131,14 @@ class RefactorEnv(gym.Env):
 
         all_features = []
         sample_size = min(100, len(self.original_data_list))
-        sampled_data = np.random.choice(self.original_data_list, sample_size, replace=False)
+
+        # FIX: Usa random.sample invece di np.random.choice per oggetti complessi
+        sampled_indices = np.random.choice(len(self.original_data_list), sample_size, replace=False)
+        sampled_data = [self.original_data_list[i] for i in sampled_indices]
 
         for data in sampled_data:
-            G = to_networkx(data, to_undirected=True)
+            # FIX: Mantieni il grafo orientato per calcolare in_degree/out_degree
+            G = to_networkx(data, to_undirected=False)
             node_features = self._compute_node_features(G)
 
             for node_feats in node_features.values():
@@ -143,16 +153,24 @@ class RefactorEnv(gym.Env):
             print("⚠️ No features found for scaler fitting")
 
     def _create_fresh_data_object(self, x: torch.Tensor, edge_index: torch.Tensor) -> Data:
-        """Crea un nuovo oggetto Data fresco con metriche ricalcolate e normalizzate"""
+        """Crea un nuovo oggetto Data fresco CLEAN con solo attributi standard"""
         try:
+            num_nodes = x.size(0)
+
             # Crea grafo NetworkX temporaneo
             G = nx.DiGraph()
-            num_nodes = x.size(0)
             G.add_nodes_from(range(num_nodes))
 
             if edge_index.numel() > 0:
-                edge_list = edge_index.t().cpu().numpy().tolist()
-                G.add_edges_from(edge_list)
+                # Filtra archi per assicurarsi che siano validi
+                valid_edges = []
+                for i in range(edge_index.size(1)):
+                    src, dst = edge_index[0, i].item(), edge_index[1, i].item()
+                    if 0 <= src < num_nodes and 0 <= dst < num_nodes:
+                        valid_edges.append((src, dst))
+
+                if valid_edges:
+                    G.add_edges_from(valid_edges)
 
             # Calcola nuove features
             node_features = self._compute_node_features(G)
@@ -175,13 +193,12 @@ class RefactorEnv(gym.Env):
                 except Exception as e:
                     print(f"Warning: Feature normalization failed: {e}")
                     feature_matrix = (feature_matrix - feature_matrix.mean(axis=0)) / (
-                                feature_matrix.std(axis=0) + 1e-8)
+                            feature_matrix.std(axis=0) + 1e-8)
 
-            # Crea nuovo oggetto Data
             new_data = Data(
                 x=torch.tensor(feature_matrix, dtype=torch.float32, device=self.device),
                 edge_index=edge_index.clone(),
-                num_nodes=num_nodes
+                num_nodes=num_nodes  # Esplicito
             )
 
             return new_data
@@ -189,25 +206,43 @@ class RefactorEnv(gym.Env):
         except Exception as e:
             print(f"Error creating fresh data object: {e}")
             return Data(
-                x=x.clone(),
-                edge_index=edge_index.clone(),
+                x=torch.zeros((x.size(0), len(HUB_FEATURES)), dtype=torch.float32, device=self.device),
+                edge_index=torch.empty((2, 0), dtype=torch.long, device=self.device),
                 num_nodes=x.size(0)
             )
 
     def _rebuild_graph_with_fresh_data(self, new_x: torch.Tensor, new_edge_index: torch.Tensor) -> None:
         """Ricostruisce completamente current_data con features fresche e normalizzate"""
-        self.current_data = self._create_fresh_data_object(new_x, new_edge_index)
+
+        # FIX: Assicurati che le dimensioni siano coerenti
+        num_nodes = new_x.size(0)
+        self.max_nodes = max(self.max_nodes, num_nodes)
+
+        # Filtra edge_index per includere solo nodi validi
+        valid_edges = []
+        for i in range(new_edge_index.size(1)):
+            src, dst = new_edge_index[0, i].item(), new_edge_index[1, i].item()
+            if src < num_nodes and dst < num_nodes:
+                valid_edges.append([src, dst])
+
+        if valid_edges:
+            filtered_edge_index = torch.tensor(valid_edges, dtype=torch.long, device=self.device).t().contiguous()
+        else:
+            # Se non ci sono archi validi, crea un edge_index vuoto
+            filtered_edge_index = torch.empty((2, 0), dtype=torch.long, device=self.device)
+
+        self.current_data = self._create_fresh_data_object(new_x, filtered_edge_index)
 
         # Aggiorna center_node_idx se necessario
         if self.center_node_idx >= self.current_data.num_nodes:
-            degrees = torch.bincount(self.current_data.edge_index[0])
-            if len(degrees) > 0:
+            if filtered_edge_index.size(1) > 0:
+                degrees = torch.bincount(filtered_edge_index[0], minlength=self.current_data.num_nodes)
                 self.center_node_idx = degrees.argmax().item()
             else:
                 self.center_node_idx = 0
 
     def _load_and_preprocess_data(self, data_path: str) -> List[Data]:
-        """Carica e preprocessa i dati dalla directory contenente file .pt"""
+        """Carica e preprocessa i dati PULENDO gli oggetti Data"""
         print(f"Caricamento dati da: {data_path}")
 
         data_dir = Path(data_path)
@@ -231,8 +266,6 @@ class RefactorEnv(gym.Env):
                         graph_data = data['data']
                     else:
                         graph_data = Data(x=data['x'], edge_index=data['edge_index'])
-                        if 'edge_attr' in data:
-                            graph_data.edge_attr = data['edge_attr']
                 elif isinstance(data, Data):
                     graph_data = data
                 else:
@@ -262,32 +295,38 @@ class RefactorEnv(gym.Env):
 
         processed_data = []
         for data in data_list:
-            data_copy = copy.deepcopy(data)
-            normalized_features = scaler.transform(data_copy.x.cpu().numpy())
-            data_copy.x = torch.tensor(normalized_features, dtype=torch.float32).to(self.device)
+            # *** MODIFICA PRINCIPALE: Crea Data PULITO ***
+            normalized_features = scaler.transform(data.x.cpu().numpy())
+            edge_index, _ = add_self_loops(data.edge_index)
 
-            edge_index, _ = add_self_loops(data_copy.edge_index)
-            data_copy.edge_index = edge_index
+            # Crea nuovo oggetto Data CLEAN con SOLO attributi standard
+            clean_data = Data(
+                x=torch.tensor(normalized_features, dtype=torch.float32, device=self.device),
+                edge_index=edge_index,
+                num_nodes=data.x.size(0)  # Esplicito
+            )
 
-            # ✅ FIX: Assicura num_nodes
-            data_copy.num_nodes = data_copy.x.size(0)
+            processed_data.append(clean_data)
 
-            processed_data.append(data_copy)
-
-        print(f"Caricati e preprocessati {len(processed_data)} sub-graph")
+        print(f"Caricati e preprocessati {len(processed_data)} sub-graph CLEAN")
         return processed_data
 
     def reset(self, graph_idx: Optional[int] = None) -> np.ndarray:
-        """Resetta l'ambiente per un nuovo episodio"""
+        """Resetta l'ambiente per un nuovo episodio con Data CLEAN"""
         if graph_idx is None:
             graph_idx = np.random.randint(0, len(self.original_data_list))
 
-        self.current_data = copy.deepcopy(self.original_data_list[graph_idx])
-        self.current_step = 0
+        # *** MODIFICA: Usa deepcopy e PULISCI i dati ***
+        original_data = self.original_data_list[graph_idx]
 
-        # ✅ FIX: Assicura num_nodes nel reset
-        if not hasattr(self.current_data, 'num_nodes') or self.current_data.num_nodes is None:
-            self.current_data.num_nodes = self.current_data.x.size(0)
+        # Crea copia PULITA con solo attributi standard
+        self.current_data = Data(
+            x=original_data.x.clone(),
+            edge_index=original_data.edge_index.clone(),
+            num_nodes=original_data.x.size(0)  # Esplicito
+        )
+
+        self.current_step = 0
 
         degrees = torch.bincount(self.current_data.edge_index[0])
         self.center_node_idx = degrees.argmax().item()
