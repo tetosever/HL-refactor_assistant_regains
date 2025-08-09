@@ -8,7 +8,7 @@ from gym import spaces
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import Data
-from torch_geometric.utils import to_networkx, from_networkx, add_self_loops, remove_self_loops
+from torch_geometric.utils import to_networkx, from_networkx, remove_self_loops
 import networkx as nx
 import numpy as np
 import copy
@@ -54,12 +54,19 @@ class RefactorEnv(gym.Env):
             'adversarial_weight': 0.5
         }
 
+        # Aggiungi le nuove chiavi se mancanti
+        if 'terminal_thresh' not in self.reward_weights:
+            self.reward_weights['terminal_thresh'] = 0.05
+        if 'terminal_bonus' not in self.reward_weights:
+            self.reward_weights['terminal_bonus'] = 3.0
+
         # Carica e preprocessa i dati
         self.original_data_list = self._load_and_preprocess_data(data_path)
         self.current_data = None
         self.current_step = 0
         self.center_node_idx = None
         self.initial_metrics = {}
+        self.prev_hub_score = 0.0
 
         # *** NUOVO: Tracking degli ID dei nodi ***
         self.node_id_mapping = {}      # stable_id -> current_index
@@ -373,14 +380,13 @@ class RefactorEnv(gym.Env):
 
         processed_data = []
         for data in data_list:
-            # *** MODIFICA PRINCIPALE: Crea Data PULITO ***
+            # *** MODIFICA PRINCIPALE: Crea Data PULITO senza self-loops ***
             normalized_features = scaler.transform(data.x.cpu().numpy())
-            edge_index, _ = add_self_loops(data.edge_index)
 
-            # Crea nuovo oggetto Data CLEAN con SOLO attributi standard
+            # Crea nuovo oggetto Data CLEAN con SOLO attributi standard senza self-loops
             clean_data = Data(
                 x=torch.tensor(normalized_features, dtype=torch.float32, device=self.device),
-                edge_index=edge_index,
+                edge_index=data.edge_index,
                 num_nodes=data.x.size(0)  # Esplicito
             )
 
@@ -414,6 +420,7 @@ class RefactorEnv(gym.Env):
         self.original_hub_id = self.reverse_id_mapping[self.center_node_idx]
 
         self.initial_metrics = self._calculate_metrics(self.current_data)
+        self.prev_hub_score = self.initial_metrics['hub_score']
         return self._get_state()
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict]:
@@ -428,6 +435,13 @@ class RefactorEnv(gym.Env):
         # Applica l'azione
         success = self._apply_action(action)
 
+        # Calcola hub score corrente e shaping
+        current_metrics = self._calculate_metrics(self.current_data)
+        current_h = current_metrics['hub_score']
+        delta_step = self.prev_hub_score - current_h
+        scale = 0.05
+        alpha = self.reward_weights.get('hub_score', 2.0)
+
         # Step reward basato sulla validità dell'azione
         if success:
             step_reward = self.reward_weights['step_valid']
@@ -435,6 +449,10 @@ class RefactorEnv(gym.Env):
             step_reward += self._check_penalties()
         else:
             step_reward = self.reward_weights['step_invalid']
+
+        # Aggiungi shaping al step_reward
+        step_reward += alpha * (delta_step / max(1e-3, scale))
+        self.prev_hub_score = current_h
 
         # Controlla terminazione
         done = (action == 6) or (self.current_step >= self.max_steps)  # STOP action o max steps
@@ -445,9 +463,6 @@ class RefactorEnv(gym.Env):
             final_reward = self._calculate_final_reward()
 
         total_reward = step_reward + final_reward
-
-        # Calcola metriche correnti per info
-        current_metrics = self._calculate_metrics(self.current_data)
 
         # *** NUOVO: Aggiungi info sul tracking del hub ***
         info = {
@@ -769,27 +784,25 @@ class RefactorEnv(gym.Env):
         Controlla penalità aggiuntive per azioni problematiche.
         """
         penalty = 0.0
-
         try:
-            # Controllo cicli
-            G = to_networkx(self.current_data, to_undirected=True)
-            if not nx.is_forest(G):  # Se non è una foresta, ha cicli
+            Gd = to_networkx(self.current_data, to_undirected=False)
+
+            cyc_found = False
+            for _ in nx.simple_cycles(Gd):
+                cyc_found = True
+                break
+            if cyc_found:
                 penalty += self.reward_weights['cycle_penalty']
 
-            # Controllo archi duplicati
-            edge_set = set()
-            for i in range(self.current_data.edge_index.shape[1]):
-                u, v = self.current_data.edge_index[0, i].item(), self.current_data.edge_index[1, i].item()
-                edge = (min(u, v), max(u, v))
-                if edge in edge_set:
+            seen = set()
+            for u, v in self.current_data.edge_index.t().tolist():
+                key = (u, v)
+                if key in seen:
                     penalty += self.reward_weights['duplicate_penalty']
                     break
-                edge_set.add(edge)
-
+                seen.add(key)
         except Exception:
-            # Se ci sono errori nel controllo, applica penalità generica
             penalty += self.reward_weights['cycle_penalty']
-
         return penalty
 
     def _calculate_final_reward(self) -> float:
@@ -798,35 +811,28 @@ class RefactorEnv(gym.Env):
         """
         try:
             current_metrics = self._calculate_metrics(self.current_data)
+            delta_episode = self.initial_metrics['hub_score'] - current_metrics['hub_score']
+            tau = self.reward_weights.get('terminal_thresh', 0.05)
+            B = self.reward_weights.get('terminal_bonus', 3.0)
 
-            # Delta hub score (diminuzione è positiva)
-            delta_hub = self.initial_metrics['hub_score'] - current_metrics['hub_score']
-            hub_reward = delta_hub * self.reward_weights['hub_score']
+            terminal = 0.0
+            if delta_episode >= tau:
+                terminal += B
+            elif delta_episode <= -tau:
+                terminal -= B
 
-            # Reward adversarial dal discriminatore
             adversarial_reward = 0.0
             if self.discriminator is not None:
-                try:
-                    with torch.no_grad():
-                        disc_output = self.discriminator(self.current_data)
-                        if isinstance(disc_output, dict):
-                            p_smelly = torch.softmax(disc_output['logits'], dim=1)[0, 1].item()
-                        else:
-                            p_smelly = torch.softmax(disc_output, dim=1)[0, 1].item()
+                with torch.no_grad():
+                    out = self.discriminator(self.current_data)
+                    logits = out['logits'] if isinstance(out, dict) else out
+                    p_smelly = torch.softmax(logits, dim=1)[0, 1].item()
+                    adv_w = self.reward_weights.get('adversarial_weight', 0.5)
+                    adv_term = np.log(max(1.0 - p_smelly, 1e-6))
+                    adversarial_reward = float(np.clip(adv_w * adv_term, -1.0, 1.0))
 
-                        # -log(1 - p_smelly) clampato in [-1, 1]
-                        adversarial_term = -np.log(max(1 - p_smelly, 1e-8))
-                        adversarial_reward = np.clip(
-                            -self.reward_weights['adversarial_weight'] * adversarial_term,
-                            -1.0, 1.0
-                        )
-                except Exception as e:
-                    print(f"Errore nel calcolo adversarial reward: {e}")
-
-            return hub_reward + adversarial_reward
-
-        except Exception as e:
-            print(f"Errore nel calcolo reward finale: {e}")
+            return terminal + adversarial_reward
+        except Exception:
             return 0.0
 
     def _create_helper_and_reassign(self) -> bool:
@@ -932,9 +938,9 @@ class RefactorEnv(gym.Env):
         Verifica se il grafo è connesso.
         """
         try:
-            temp_data = Data(edge_index=edge_index, num_nodes=self.current_data.num_nodes)
-            G = to_networkx(temp_data, to_undirected=True)
-            return nx.is_connected(G)
+            temp = Data(edge_index=edge_index, num_nodes=self.current_data.num_nodes)
+            Gd = to_networkx(temp, to_undirected=False)
+            return nx.is_weakly_connected(Gd)
         except:
             return False
 
@@ -988,27 +994,8 @@ class RefactorEnv(gym.Env):
         T = mu + sigma
         share = float(np.sum(x > T)) / k if k > 0 else 0.0
 
-        # 5) (Opzionale) standardizzazione con feature_scaler se disponibile
-        feats = np.array([[gini, share]], dtype=float)
-        if hasattr(self, 'feature_scaler') and self.feature_scaler is not None:
-            try:
-                # Usa lo scaler esistente se compatibile
-                feats = self.feature_scaler.transform(feats)
-            except Exception:
-                # Se lo scaler non è compatibile con 2 feature, lascia invariato
-                pass
-        elif scaler is not None:
-            try:
-                feats = scaler.transform(feats)
-            except Exception:
-                pass
-
-        gini_v, share_v = feats.ravel()
-
-        # 6) hub_score con pesi unitari
-        hub_score_value = float(w1 * gini_v + w2 * share_v)
-
-        return hub_score_value
+        # 5) hub_score senza normalizzazione feature_scaler
+        return float(w1 * gini + w2 * share)
 
     def _calculate_metrics(self, data: Data) -> Dict[str, float]:
         """

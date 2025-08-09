@@ -1232,33 +1232,33 @@ def main():
         experiment_name="graph_refactor_a2c_optimized_v2",
 
         # Episodes ottimizzati
-        num_episodes=2000,
+        num_episodes=2200,
         warmup_episodes=400,
-        adversarial_start_episode=800,
+        adversarial_start_episode=500,
 
         # Learning rates ottimizzati
-        lr_actor=1e-3,
-        lr_critic=2e-3,
-        lr_discriminator=5e-4,
+        lr_actor=3e-4,
+        lr_critic=1e-4,
+        lr_discriminator=1e-4,
 
         # CyclicLR ottimizzato
         use_cyclic_lr=True,
-        base_lr_actor=5e-4,
-        max_lr_actor=2e-3,
-        step_size_up_actor=100,
-        base_lr_critic=1e-3,
-        max_lr_critic=5e-3,
-        step_size_up_critic=80,
+        base_lr_actor=3e-4,
+        max_lr_actor=1e-3,
+        step_size_up_actor=150,
+        base_lr_critic=1e-4,
+        max_lr_critic=3e-4,
+        step_size_up_critic=200,
 
         # Training ottimizzato
-        batch_size=16,
-        update_every=10,
-        discriminator_update_every=200,
+        batch_size=64,
+        update_every=20,
+        discriminator_update_every=40,
 
         # Regularization ottimizzata
-        entropy_coef=0.05,
-        max_grad_norm=1.0,
-        advantage_clip=1.0,
+        entropy_coef=0.1,
+        max_grad_norm=0.5,
+        advantage_clip=0.5,
         reward_clip=5.0,
     )
 
