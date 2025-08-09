@@ -46,16 +46,18 @@ class RefactorEnv(gym.Env):
 
         # Pesi default per il calcolo del reward
         self.reward_weights = reward_weights or {
-            'hub_score': 1.0,
-            'step_valid': 0.03,
-            'step_invalid': -0.02,
-            'cycle_penalty': -0.05,
-            'duplicate_penalty': -0.02,
+            # *** Step rewards RIDOTTI (meno importanti) ***
+            'step_valid': 0.01,
+            'step_invalid': -0.01,
             'time_penalty': -0.01,
-            'adversarial_weight': 0.02,
-            'terminal_thresh': 0.01,
-            'terminal_bonus': 4.0,
-            'patience': 5
+            'cycle_penalty': -0.02,  # Mantenuto basso
+            'duplicate_penalty': -0.01,  # Mantenuto basso
+            # *** Final rewards POTENZIATI ***
+            'adversarial_weight': 0.1,  # Aumentato (era 0.02)
+            'patience': 8,  # Più paziente (era 5)
+            'hub_score': 0.0,  # DISABILITATO (era 1.0)
+            'terminal_thresh': 0.01,  # Mantenuto
+            'terminal_bonus': 0.0  # DISABILITATO - sostituito da improvement_reward
         }
 
         self.best_hub_score = 0.0
@@ -468,34 +470,25 @@ class RefactorEnv(gym.Env):
         # Applica l'azione
         success = self._apply_action(action)
 
-        # Calcola hub score corrente e shaping
         current_metrics = self._calculate_metrics(self.current_data)
         current_h = current_metrics['hub_score']
 
-        # *** PATCH 3: Delta positivo = miglioramento (prev - current) ***
-        delta_step = self.prev_hub_score - current_h
-        alpha = self.reward_weights.get('hub_score', 2.0)
+        hub_improvement = self.initial_metrics['hub_score'] - current_h
 
-        # *** PATCH 3: Time penalty ***
-        time_penalty = self.reward_weights.get('time_penalty', 0.0)
-
-        # Step reward basato sulla validità dell'azione
-        if success and action != 6:  # *** PATCH 3: STOP non riceve step_valid ***
+        if success and action != 6:  # Azione valida (non STOP)
             step_reward = self.reward_weights['step_valid']
-            # Controlli aggiuntivi per penalità
+            # Penalità strutturali (cicli, duplicati)
             step_reward += self._check_penalties()
-        else:
-            if action == 6:  # STOP
-                step_reward = 0.0  # Neutro per STOP
-            else:
-                step_reward = self.reward_weights['step_invalid']
+        elif action == 6:  # STOP
+            step_reward = 0.0  # Neutro
+        else:  # Azione invalida
+            step_reward = self.reward_weights['step_invalid']
 
-        # *** PATCH 3: Aggiungi shaping e time penalty ***
-        step_reward += alpha * delta_step  # Shaping: miglioramento = reward positivo
-        step_reward += time_penalty  # Time penalty (tipicamente negativo)
+        time_penalty = self.reward_weights.get('time_penalty', 0.0)
+        step_reward += time_penalty
 
-        # *** PATCH 3: Aggiorna best-so-far e no_improve_steps ***
-        if current_h < self.best_hub_score:  # Miglioramento (score più basso è meglio)
+        # Aggiorna tracking (per debug, non per reward)
+        if current_h < self.best_hub_score:
             self.best_hub_score = current_h
             self.no_improve_steps = 0
         else:
@@ -503,38 +496,34 @@ class RefactorEnv(gym.Env):
 
         self.prev_hub_score = current_h
 
-        # Controlla terminazione
-        done = (action == 6) or (self.current_step >= self.max_steps)  # STOP action o max steps
+        # Terminazione
+        done = (action == 6) or (self.current_step >= self.max_steps)
 
-        # *** PATCH 3: Patience termination (opzionale) ***
+        # Patience termination (opzionale)
         patience = self.reward_weights.get('patience', None)
         if patience is not None and self.no_improve_steps >= patience:
             done = True
 
-        # Reward finale solo alla terminazione
+        # *** CHIAVE: Final reward SOLO alla terminazione ***
         final_reward = 0.0
         if done:
             final_reward = self._calculate_final_reward()
 
         total_reward = step_reward + final_reward
 
-        # *** PATCH 3: Info di debug ampliato ***
+        # Info di debug
         info = {
             'action_success': success,
             'metrics': current_metrics,
             'step': self.current_step,
-            'center_node': self.center_node_idx,
-            'original_hub_id': self.original_hub_id,
-            'current_hub_index': self._get_current_hub_index(),
             'step_reward': step_reward,
             'final_reward': final_reward,
             'is_terminal': done,
-            # Debug info aggiuntivo
-            'delta_step': delta_step,
-            'alpha_hub_term': alpha * delta_step,
-            'time_penalty': time_penalty,
+            'current_hub_score': current_h,
             'best_hub_score': self.best_hub_score,
-            'no_improve_steps': self.no_improve_steps
+            'no_improve_steps': self.no_improve_steps,
+            'hub_improvement': hub_improvement if done else 0.0,  # *** Solo se done=True ***
+            'time_penalty': time_penalty
         }
 
         return self._get_state(), total_reward, done, info
@@ -875,23 +864,35 @@ class RefactorEnv(gym.Env):
         - Clamp termine avversariale in [-1,1]
         """
         try:
-            current_metrics = self._calculate_metrics(self.current_data)
+            # *** MIGLIORAMENTO PRINCIPALE: Usa BEST hub score ***
+            initial_score = self.initial_metrics['hub_score']
+            best_score = self.best_hub_score
+            improvement = initial_score - best_score  # Positivo = miglioramento
 
-            # *** PATCH 4: Usa best hub score dell'episodio ***
-            delta_episode = self.initial_metrics['hub_score'] - self.best_hub_score
+            # *** REWARD PROGRESSIVO basato su miglioramento ***
+            improvement_reward = 0.0
 
-            tau = self.reward_weights.get('terminal_thresh', 0.05)
-            B = self.reward_weights.get('terminal_bonus', 3.0)
+            if improvement >= 0.1:  # Miglioramento significativo
+                improvement_reward = 15.0 + (improvement - 0.1) * 50.0
+            elif improvement >= 0.05:  # Miglioramento medio
+                improvement_reward = 8.0 + (improvement - 0.05) * 20.0
+            elif improvement >= 0.01:  # Miglioramento piccolo
+                improvement_reward = 3.0 + (improvement - 0.01) * 15.0
+            elif improvement > 0:  # Miglioramento minimo
+                improvement_reward = improvement * 100.0
+            elif improvement < -0.01:  # Peggioramento significativo
+                improvement_reward = improvement * 200.0  # Penalty doppia
+            else:  # Nessun cambiamento
+                improvement_reward = -1.0  # Piccola penalty per stagnazione
 
-            # Bonus/penalty terminale basato su miglioramento
-            terminal = 0.0
-            if delta_episode >= tau:
-                terminal += B
-            elif delta_episode <= -tau:
-                terminal -= B
+            # *** BONUS EFFICIENZA ***
+            efficiency_bonus = 0.0
+            if improvement > 0:
+                steps_saved = self.max_steps - self.current_step
+                efficiency_bonus = steps_saved * 0.1
 
-            # *** PATCH 4: Termine avversariale con Δ-discriminator ***
-            adversarial_reward = 0.0
+            # *** TERMINE DISCRIMINATORE ***
+            discriminator_reward = 0.0
             if hasattr(self, 'discriminator') and self.discriminator is not None:
                 with torch.no_grad():
                     try:
@@ -899,18 +900,29 @@ class RefactorEnv(gym.Env):
                         logits = out['logits'] if isinstance(out, dict) else out
                         p_smelly_now = torch.softmax(logits, dim=1)[0, 1].item()
 
-                        # Δ-discriminator: riduzione di smelly è positiva
-                        disc_delta = self.disc_start - p_smelly_now
-                        adv_w = self.reward_weights.get('adversarial_weight', 0.5)
-
-                        # *** PATCH 4: Clamp in [-1,1] ***
-                        adversarial_reward = float(np.clip(adv_w * disc_delta, -1.0, 1.0))
+                        disc_improvement = self.disc_start - p_smelly_now
+                        adv_weight = self.reward_weights.get('adversarial_weight', 0.1)
+                        discriminator_reward = adv_weight * disc_improvement * 10.0
+                        discriminator_reward = np.clip(discriminator_reward, -3.0, 3.0)
                     except Exception:
-                        adversarial_reward = 0.0
+                        discriminator_reward = 0.0
 
-            return terminal + adversarial_reward
+            total_final_reward = improvement_reward + efficiency_bonus + discriminator_reward
+            total_final_reward = np.clip(total_final_reward, -20.0, 50.0)
 
-        except Exception:
+            # Debug logging
+            if abs(improvement) > 1e-6 or total_final_reward != 0:
+                print(f"FINAL REWARD BREAKDOWN:")
+                print(f"  Improvement: {improvement:.6f}")
+                print(f"  Improvement reward: {improvement_reward:.3f}")
+                print(f"  Efficiency bonus: {efficiency_bonus:.3f}")
+                print(f"  Discriminator reward: {discriminator_reward:.3f}")
+                print(f"  TOTAL: {total_final_reward:.3f}")
+
+            return float(total_final_reward)
+
+        except Exception as e:
+            print(f"Error in final reward calculation: {e}")
             return 0.0
 
     def _create_helper_and_reassign(self) -> bool:

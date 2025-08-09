@@ -210,6 +210,16 @@ def load_discriminator(discriminator_path: str, device: str):
         logging.error(f"Failed to load discriminator: {e}")
         return None
 
+@staticmethod
+def ensure_clean_data(data):
+    """Assicura che Data object sia pulito"""
+    if data is None:
+        return None
+    return Data(
+        x=data.x.clone(),
+        edge_index=data.edge_index.clone(),
+        num_nodes=data.x.size(0)
+    )
 
 # =============================================================================
 # EXPERIENCE BUFFER
@@ -252,7 +262,8 @@ class ExperienceBuffer:
         }
 
         self.buffer.append(experience)
-        self.rewards.append(reward)
+        if done:
+            self.rewards.append(reward)
 
     def get_normalized_reward(self, reward: float) -> float:
         """Normalize reward using running statistics"""
@@ -473,102 +484,58 @@ class A2CTrainer:
 
     def _extract_global_features(self, data: Data) -> torch.Tensor:
         """Extract global features from graph data"""
-        # This should match the metrics calculated in the environment
-        metrics = self.env._calculate_metrics(data)
+        global_features = self.env._extract_global_features(data)
 
-        global_features = torch.tensor([
-            metrics['hub_score'],
-            metrics['density'],
-            metrics['modularity'],
-            metrics['avg_shortest_path'] if metrics['avg_shortest_path'] != float('inf') else 10.0,
-            metrics['clustering'],
-            metrics['avg_betweenness'],
-            metrics['avg_degree_centrality'],
-            metrics['num_nodes'],
-            metrics['num_edges'],
-            metrics['connected']
-        ], dtype=torch.float32, device=self.device).unsqueeze(0)
+        # Assicurati che abbia dimensione batch
+        if global_features.dim() == 1:
+            global_features = global_features.unsqueeze(0)
+        else:
+            print("Le dimensioni di global_features non matchano")
 
-        return self.env._extract_global_features(data).unsqueeze(0)
+        return global_features
 
     def _collect_episode(self, episode_idx: int) -> Dict[str, Any]:
         """Collect a single episode of experience con Data CLEAN"""
 
         # Reset environment
         state = self.env.reset()
-
-        # *** MODIFICA: Assicurati che current_data sia CLEAN ***
-        def ensure_clean_data(data):
-            return Data(
-                x=data.x.clone(),
-                edge_index=data.edge_index.clone(),
-                num_nodes=data.x.size(0)
-            )
-
         current_data = ensure_clean_data(self.env.current_data)
 
         episode_reward = 0.0
         episode_length = 0
-        episode_experiences = []
 
         initial_hub_score = self.env.initial_metrics['hub_score']
 
         done = False
         while not done:
-            # Extract global features
+            # Get action
             global_features = self._extract_global_features(current_data)
 
-            # Get action and value from actor-critic
             action, log_prob, value = self.actor_critic.get_action_and_value(
                 current_data, global_features
             )
 
-            # Take action in environment
+            # Take action
             next_state, reward, done, info = self.env.step(action)
+            current_data = ensure_clean_data(self.env.current_data)
 
-            # *** MODIFICA: Assicurati che next_data sia CLEAN ***
-            next_data = ensure_clean_data(self.env.current_data)
-
-            # Apply reward modifications based on training phase
-            modified_reward = self._modify_reward(reward, episode_idx, info)
-
-            # Extract next global features
-            next_global_features = self._extract_global_features(next_data) if not done else None
-
-            # Store experience
-            self.experience_buffer.add(
-                state_data=current_data,
-                global_features=global_features,
-                action=action,
-                reward=modified_reward,
-                next_state_data=next_data if not done else None,
-                next_global_features=next_global_features,
-                done=done,
-                log_prob=log_prob,
-                value=value
-            )
-
-            episode_experiences.append({
-                'reward': modified_reward,
-                'value': value,
-                'done': done
-            })
-
-            episode_reward += modified_reward
+            episode_reward += reward
             episode_length += 1
-            current_data = next_data
 
-        # Calculate final hub score improvement
         final_hub_score = self.env._calculate_metrics(current_data)['hub_score']
-        hub_score_improvement = final_hub_score - initial_hub_score
+        hub_score_improvement = initial_hub_score - final_hub_score  # Positivo = miglioramento
+
+        best_hub_improvement = initial_hub_score - self.env.best_hub_score
 
         return {
             'episode_reward': episode_reward,
             'episode_length': episode_length,
             'hub_score_improvement': hub_score_improvement,
-            'experiences': episode_experiences,
+            'best_hub_improvement': best_hub_improvement,
             'initial_hub_score': initial_hub_score,
-            'final_hub_score': final_hub_score
+            'final_hub_score': final_hub_score,
+            'best_hub_score': self.env.best_hub_score,
+            'no_improve_steps': self.env.no_improve_steps
         }
 
     def _modify_reward(self, reward: float, episode_idx: int, info: Dict) -> float:
@@ -869,8 +836,7 @@ class A2CTrainer:
 
             done = False
             while not done:
-                # --- CORREZIONE: usa metodo ambiente per consistenza ---
-                global_features = self.env._extract_global_features(current_data).unsqueeze(0)
+                global_features = self._extract_global_features(current_data)
 
                 # Use greedy action selection for evaluation
                 with torch.no_grad():
@@ -885,7 +851,7 @@ class A2CTrainer:
 
             # Calculate hub score improvement
             final_hub_score = self.env._calculate_metrics(current_data)['hub_score']
-            hub_improvement = final_hub_score - initial_hub_score
+            hub_improvement = initial_hub_score - final_hub_score
             eval_hub_improvements.append(hub_improvement)
 
             # Get discriminator score if available
@@ -910,12 +876,14 @@ class A2CTrainer:
         }
 
     def _log_metrics(self, episode_idx: int, episode_info: Dict, update_info: Dict = None):
-        """Log training metrics"""
+        """Logging migliorato con metriche final-only (versione corretta)"""
 
         # Update training statistics
         self.training_stats['episode_rewards'].append(episode_info['episode_reward'])
         self.training_stats['episode_lengths'].append(episode_info['episode_length'])
-        self.training_stats['hub_score_improvements'].append(episode_info['hub_score_improvement'])
+
+        final_improvement = episode_info.get('hub_score_improvement', 0)
+        self.training_stats['hub_score_improvements'].append(final_improvement)  # ← FIX: Cambia qui
 
         if update_info:
             if 'actor_loss' in update_info:
@@ -928,7 +896,8 @@ class A2CTrainer:
         # TensorBoard logging
         self.writer.add_scalar('Episode/Reward', episode_info['episode_reward'], episode_idx)
         self.writer.add_scalar('Episode/Length', episode_info['episode_length'], episode_idx)
-        self.writer.add_scalar('Episode/HubScoreImprovement', episode_info['hub_score_improvement'], episode_idx)
+        self.writer.add_scalar('Episode/HubImprovement', final_improvement, episode_idx)
+        self.writer.add_scalar('Episode/BestHubImprovement', episode_info.get('best_hub_improvement', 0), episode_idx)
 
         if update_info:
             for key, value in update_info.items():
@@ -938,12 +907,15 @@ class A2CTrainer:
         # Console logging
         if episode_idx % self.config.log_every == 0:
             recent_rewards = self.training_stats['episode_rewards'][-self.config.log_every:]
-            recent_hub_improvements = self.training_stats['hub_score_improvements'][-self.config.log_every:]
+            recent_improvements = self.training_stats['hub_score_improvements'][-self.config.log_every:]
+
+            success_rate = sum(1 for imp in recent_improvements if imp > 0.01) / len(recent_improvements)
 
             self.logger.info(
                 f"Episode {episode_idx:4d} | "
                 f"Reward: {np.mean(recent_rewards):6.3f}±{np.std(recent_rewards):5.3f} | "
-                f"Hub Δ: {np.mean(recent_hub_improvements):6.3f}±{np.std(recent_hub_improvements):5.3f} | "
+                f"Hub Δ (final): {np.mean(recent_improvements):6.3f}±{np.std(recent_improvements):5.3f} | "
+                f"Success: {success_rate:.1%} | "
                 f"Buffer: {len(self.experience_buffer)}"
             )
 
