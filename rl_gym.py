@@ -61,6 +61,12 @@ class RefactorEnv(gym.Env):
         self.center_node_idx = None
         self.initial_metrics = {}
 
+        # *** NUOVO: Tracking degli ID dei nodi ***
+        self.node_id_mapping = {}      # stable_id -> current_index
+        self.reverse_id_mapping = {}   # current_index -> stable_id
+        self.original_hub_id = None    # ID stabile del nodo hub originale
+        self.next_node_id = 0          # Counter per assegnare nuovi ID
+
         # 7 azioni: RemoveEdge, AddEdge, MoveEdge, ExtractMethod, ExtractAbstractUnit, ExtractUnit, STOP
         self.num_actions = 7
         self.action_space = spaces.Discrete(self.num_actions)
@@ -152,6 +158,69 @@ class RefactorEnv(gym.Env):
         else:
             print("⚠️ No features found for scaler fitting")
 
+    def _initialize_node_tracking(self):
+        """Inizializza il sistema di tracking degli ID dei nodi"""
+        self.node_id_mapping = {}
+        self.reverse_id_mapping = {}
+        self.next_node_id = 0
+
+        # Assegna ID stabili a tutti i nodi esistenti
+        for current_index in range(self.current_data.num_nodes):
+            stable_id = f"node_{self.next_node_id}"
+            self.node_id_mapping[stable_id] = current_index
+            self.reverse_id_mapping[current_index] = stable_id
+            self.next_node_id += 1
+
+    def _get_current_hub_index(self) -> int:
+        """Trova l'indice corrente del nodo hub originale"""
+        if self.original_hub_id is None:
+            return 0
+
+        current_index = self.node_id_mapping.get(self.original_hub_id, None)
+
+        if current_index is None or current_index >= self.current_data.num_nodes:
+            print(f"⚠️ ERRORE: Hub originale {self.original_hub_id} non trovato! Usando fallback.")
+            return 0 if self.current_data.num_nodes > 0 else 0
+
+        return current_index
+
+    def _update_node_mapping_after_addition(self, num_new_nodes: int, start_index: int):
+        """Aggiorna mapping quando vengono aggiunti nuovi nodi"""
+        for i in range(num_new_nodes):
+            new_index = start_index + i
+            stable_id = f"node_{self.next_node_id}"
+            self.node_id_mapping[stable_id] = new_index
+            self.reverse_id_mapping[new_index] = stable_id
+            self.next_node_id += 1
+
+    def _rebuild_node_mapping(self, old_num_nodes: int):
+        """Ricostruisce il mapping dopo modifiche al grafo"""
+        new_mapping = {}
+        new_reverse_mapping = {}
+
+        # Mantieni mapping per nodi esistenti (assume che mantengano lo stesso ordine)
+        for old_index in range(min(old_num_nodes, self.current_data.num_nodes)):
+            if old_index in self.reverse_id_mapping:
+                stable_id = self.reverse_id_mapping[old_index]
+                new_mapping[stable_id] = old_index
+                new_reverse_mapping[old_index] = stable_id
+
+        # Gestisci nuovi nodi se presenti
+        if self.current_data.num_nodes > old_num_nodes:
+            self._update_node_mapping_after_addition(
+                self.current_data.num_nodes - old_num_nodes,
+                old_num_nodes
+            )
+            # Aggiungi i nuovi mapping a quelli esistenti
+            for new_index in range(old_num_nodes, self.current_data.num_nodes):
+                if new_index in self.reverse_id_mapping:
+                    stable_id = self.reverse_id_mapping[new_index]
+                    new_mapping[stable_id] = new_index
+                    new_reverse_mapping[new_index] = stable_id
+
+        self.node_id_mapping = new_mapping
+        self.reverse_id_mapping = new_reverse_mapping
+
     def _create_fresh_data_object(self, x: torch.Tensor, edge_index: torch.Tensor) -> Data:
         """Crea un nuovo oggetto Data fresco CLEAN con solo attributi standard"""
         try:
@@ -214,6 +283,8 @@ class RefactorEnv(gym.Env):
     def _rebuild_graph_with_fresh_data(self, new_x: torch.Tensor, new_edge_index: torch.Tensor) -> None:
         """Ricostruisce completamente current_data con features fresche e normalizzate"""
 
+        old_num_nodes = self.current_data.num_nodes
+
         # FIX: Assicurati che le dimensioni siano coerenti
         num_nodes = new_x.size(0)
         self.max_nodes = max(self.max_nodes, num_nodes)
@@ -233,8 +304,15 @@ class RefactorEnv(gym.Env):
 
         self.current_data = self._create_fresh_data_object(new_x, filtered_edge_index)
 
-        # Aggiorna center_node_idx se necessario
-        if self.center_node_idx >= self.current_data.num_nodes:
+        # *** NUOVO: Aggiorna mapping nodi e hub tracking ***
+        self._rebuild_node_mapping(old_num_nodes)
+
+        # Aggiorna center_node_idx usando il tracking del hub originale
+        new_hub_index = self._get_current_hub_index()
+        if new_hub_index < self.current_data.num_nodes:
+            self.center_node_idx = new_hub_index
+        else:
+            print(f"⚠️ Hub originale perso, usando fallback")
             if filtered_edge_index.size(1) > 0:
                 degrees = torch.bincount(filtered_edge_index[0], minlength=self.current_data.num_nodes)
                 self.center_node_idx = degrees.argmax().item()
@@ -331,6 +409,10 @@ class RefactorEnv(gym.Env):
         degrees = torch.bincount(self.current_data.edge_index[0])
         self.center_node_idx = degrees.argmax().item()
 
+        # *** NUOVO: Inizializza tracking nodi e memorizza hub originale ***
+        self._initialize_node_tracking()
+        self.original_hub_id = self.reverse_id_mapping[self.center_node_idx]
+
         self.initial_metrics = self._calculate_metrics(self.current_data)
         return self._get_state()
 
@@ -367,11 +449,14 @@ class RefactorEnv(gym.Env):
         # Calcola metriche correnti per info
         current_metrics = self._calculate_metrics(self.current_data)
 
+        # *** NUOVO: Aggiungi info sul tracking del hub ***
         info = {
             'action_success': success,
             'metrics': current_metrics,
             'step': self.current_step,
             'center_node': self.center_node_idx,
+            'original_hub_id': self.original_hub_id,
+            'current_hub_index': self._get_current_hub_index(),
             'step_reward': step_reward,
             'final_reward': final_reward,
             'is_terminal': done
@@ -414,12 +499,15 @@ class RefactorEnv(gym.Env):
         """
         Rimuove un arco casuale dal nodo hub.
         """
+        # *** MODIFICA: Usa sempre l'hub originale tracciato ***
+        current_hub = self._get_current_hub_index()
+
         hub_edges = []
         edge_index = self.current_data.edge_index
 
         for i in range(edge_index.shape[1]):
             u, v = edge_index[0, i].item(), edge_index[1, i].item()
-            if u == self.center_node_idx and u != v:  # No self-loops
+            if u == current_hub and u != v:  # No self-loops
                 hub_edges.append(i)
 
         if not hub_edges:
@@ -443,6 +531,9 @@ class RefactorEnv(gym.Env):
         """
         Aggiunge un arco dal nodo hub a un nodo casuale.
         """
+        # *** MODIFICA: Usa sempre l'hub originale tracciato ***
+        current_hub = self._get_current_hub_index()
+
         possible_targets = []
         edge_index = self.current_data.edge_index
 
@@ -450,18 +541,18 @@ class RefactorEnv(gym.Env):
         connected_nodes = set()
         for i in range(edge_index.shape[1]):
             u, v = edge_index[0, i].item(), edge_index[1, i].item()
-            if u == self.center_node_idx:
+            if u == current_hub:
                 connected_nodes.add(v)
 
         for node in range(self.current_data.num_nodes):
-            if node not in connected_nodes and node != self.center_node_idx:
+            if node not in connected_nodes and node != current_hub:
                 possible_targets.append(node)
 
         if not possible_targets:
             return False
 
         target = np.random.choice(possible_targets)
-        new_edge = torch.tensor([[self.center_node_idx], [target]], device=self.device)
+        new_edge = torch.tensor([[current_hub], [target]], device=self.device)
         new_edge_index = torch.cat([edge_index, new_edge], dim=1)
 
         self._rebuild_graph_with_fresh_data(self.current_data.x, new_edge_index)
@@ -490,6 +581,10 @@ class RefactorEnv(gym.Env):
         # Non processare self-loops
         if u == v:
             return False
+
+        # *** NUOVO: Log dell'operazione con ID stabili ***
+        u_id = self.reverse_id_mapping.get(u, f"unknown_{u}")
+        v_id = self.reverse_id_mapping.get(v, f"unknown_{v}")
 
         # Crea feature per il nuovo nodo method (media delle features originali, non normalizzate)
         u_features_orig = self.current_data.x[u]
@@ -555,6 +650,10 @@ class RefactorEnv(gym.Env):
         num_to_abstract = min(3, len(unique_sources))
         selected_sources = np.random.choice(unique_sources, num_to_abstract, replace=False)
 
+        # *** NUOVO: Log dell'operazione con ID stabili ***
+        source_ids = [self.reverse_id_mapping.get(src, f"unknown_{src}") for src in selected_sources]
+        target_id = self.reverse_id_mapping.get(target_dst, f"unknown_{target_dst}")
+
         # Crea nodo astratto
         abstract_idx = self.current_data.x.size(0)
         selected_features = self.current_data.x[selected_sources]
@@ -589,16 +688,20 @@ class RefactorEnv(gym.Env):
         """
         ExtractUnit: Divide le responsabilità del nodo hub in unità separate.
         """
-        if self.center_node_idx is None or self.center_node_idx >= self.current_data.num_nodes:
+        # *** MODIFICA: Usa sempre l'hub originale tracciato ***
+        current_hub = self._get_current_hub_index()
+
+        if current_hub >= self.current_data.num_nodes:
+            print(f"⚠️ Hub originale non trovato per ExtractUnit")
             return False
 
         edge_index = self.current_data.edge_index
 
-        # Trova tutti i vicini del hub
+        # Trova tutti i vicini del hub ORIGINALE
         hub_neighbors = []
         for i in range(edge_index.shape[1]):
             src, dst = edge_index[0, i].item(), edge_index[1, i].item()
-            if src == self.center_node_idx and dst != self.center_node_idx:
+            if src == current_hub and dst != current_hub:
                 hub_neighbors.append(dst)
 
         # Rimuovi duplicati
@@ -606,6 +709,10 @@ class RefactorEnv(gym.Env):
 
         if len(hub_neighbors) < 2:
             return False
+
+        # *** NUOVO: Log dell'operazione con ID stabili ***
+        hub_id = self.reverse_id_mapping.get(current_hub, f"unknown_{current_hub}")
+        neighbor_ids = [self.reverse_id_mapping.get(n, f"unknown_{n}") for n in hub_neighbors]
 
         # Dividi i vicini in due gruppi (splitting delle responsabilità)
         mid_point = len(hub_neighbors) // 2
@@ -620,7 +727,7 @@ class RefactorEnv(gym.Env):
         unit2_idx = unit1_idx + 1
 
         # Feature dei nuovi unit (basate sui loro gruppi di dipendenze)
-        hub_features = self.current_data.x[self.center_node_idx]
+        hub_features = self.current_data.x[current_hub]
         group1_features = self.current_data.x[group1].mean(dim=0) if group1 else hub_features
         group2_features = self.current_data.x[group2].mean(dim=0) if group2 else hub_features
 
@@ -629,25 +736,23 @@ class RefactorEnv(gym.Env):
         unit2_features = ((hub_features + group2_features) / 2).unsqueeze(0)
 
         # Ricostruisci edge_index
-        unit1_idx = self.current_data.x.size(0)
-        unit2_idx = unit1_idx + 1
         new_edges = []
 
         # Mantieni tutti gli archi che non coinvolgono il hub
         for i in range(edge_index.shape[1]):
             src, dst = edge_index[0, i].item(), edge_index[1, i].item()
-            if src != self.center_node_idx and dst != self.center_node_idx:
+            if src != current_hub and dst != current_hub:
                 new_edges.append((src, dst))
-            elif src == self.center_node_idx and dst in group1:
+            elif src == current_hub and dst in group1:
                 new_edges.append((unit1_idx, dst))
-            elif src == self.center_node_idx and dst in group2:
+            elif src == current_hub and dst in group2:
                 new_edges.append((unit2_idx, dst))
-            elif dst == self.center_node_idx:
+            elif dst == current_hub:
                 new_edges.append((src, dst))
 
         # Aggiungi connessioni hub → units
-        new_edges.append((self.center_node_idx, unit1_idx))
-        new_edges.append((self.center_node_idx, unit2_idx))
+        new_edges.append((current_hub, unit1_idx))
+        new_edges.append((current_hub, unit2_idx))
 
         # Crea nuovi tensori
         new_features = torch.cat([unit1_features, unit2_features], dim=0)
@@ -729,11 +834,14 @@ class RefactorEnv(gym.Env):
         Crea un nodo helper e riassegna alcuni figli del hub ad esso,
         mettendo sempre in coerenza `num_nodes` con la dimensione di x.
         """
+        # *** MODIFICA: Usa sempre l'hub originale tracciato ***
+        current_hub = self._get_current_hub_index()
+
         # Trova tutti i figli del nodo hub (escludendo self-loops)
         children = []
         ei = self.current_data.edge_index
         for u, v in ei.t().tolist():
-            if u == self.center_node_idx and u != v:
+            if u == current_hub and u != v:
                 children.append(v)
 
         # Serve almeno 2 figli per split
@@ -759,11 +867,11 @@ class RefactorEnv(gym.Env):
         # Ricostruisci la lista di archi
         new_edges: List[Tuple[int,int]] = []
         # 1) arco hub -> helper
-        new_edges.append((self.center_node_idx, helper_idx))
+        new_edges.append((current_hub, helper_idx))
         # 2) per ogni arco originale, rimappalo o mantienilo
         for u, v in ei.t().tolist():
-            if u == self.center_node_idx and v in children_to_reassign:
-                # sposta il figlio dal hub all’helper
+            if u == current_hub and v in children_to_reassign:
+                # sposta il figlio dal hub all'helper
                 new_edges.append((helper_idx, v))
             else:
                 new_edges.append((u, v))
@@ -830,9 +938,81 @@ class RefactorEnv(gym.Env):
         except:
             return False
 
+    def compute_hub_score(self, G, hub_index, scaler=None, w1=1.0, w2=1.0):
+        """
+        Calcola l'hub_score combinando gini_tot_deg e thr_mu_plus_sigma_share
+        basato sul subgrafo 1-hop attorno al nodo hub (escludendo l'hub).
+
+        IMPORTANTE: G deve essere un DiGraph orientato per calcolare in_degree/out_degree
+
+        Args:
+            G: NetworkX DiGraph (orientato)
+            hub_index: indice del nodo hub (può essere diverso dall'hub originale)
+            scaler: scaler esistente per normalizzazione (opzionale)
+            w1, w2: pesi per gini e share (default 1.0 ciascuno)
+
+        Returns:
+            float: hub_score combinato
+        """
+        # *** MODIFICA: Usa sempre l'hub originale tracciato ***
+        actual_hub = self._get_current_hub_index()
+
+        # Verifica che il nodo hub esista
+        if actual_hub not in G.nodes():
+            return 0.0
+
+        # 1) Vicini 1-hop del nodo hub (escludi l'hub stesso)
+        # Per grafi orientati: unisci successori e predecessori
+        neigh = set(G.successors(actual_hub)) | set(G.predecessors(actual_hub))
+        neigh.discard(actual_hub)  # Rimuovi l'hub stesso se presente (self-loop)
+
+        if not neigh:
+            return 0.0
+
+        # 2) Gradi totali dei vicini (in_degree + out_degree)
+        x = np.array([G.in_degree(v) + G.out_degree(v) for v in neigh], dtype=float)
+        k = len(x)
+
+        # 3) gini_tot_deg (senza hub)
+        s = x.sum()
+        if s == 0.0:
+            gini = 0.0
+        else:
+            xs = np.sort(x)
+            i = np.arange(1, k + 1, dtype=float)
+            gini = (2.0 * np.sum(i * xs) / (k * s)) - (k + 1.0) / k
+
+        # 4) thr_mu_plus_sigma_deg (share, senza hub)
+        mu = float(x.mean())
+        sigma = float(x.std())
+        T = mu + sigma
+        share = float(np.sum(x > T)) / k if k > 0 else 0.0
+
+        # 5) (Opzionale) standardizzazione con feature_scaler se disponibile
+        feats = np.array([[gini, share]], dtype=float)
+        if hasattr(self, 'feature_scaler') and self.feature_scaler is not None:
+            try:
+                # Usa lo scaler esistente se compatibile
+                feats = self.feature_scaler.transform(feats)
+            except Exception:
+                # Se lo scaler non è compatibile con 2 feature, lascia invariato
+                pass
+        elif scaler is not None:
+            try:
+                feats = scaler.transform(feats)
+            except Exception:
+                pass
+
+        gini_v, share_v = feats.ravel()
+
+        # 6) hub_score con pesi unitari
+        hub_score_value = float(w1 * gini_v + w2 * share_v)
+
+        return hub_score_value
+
     def _calculate_metrics(self, data: Data) -> Dict[str, float]:
         """
-        Calcola metriche globali del grafo.
+        Calcola metriche globali del grafo usando sempre l'hub originale tracciato.
 
         Args:
             data: Oggetto Data PyG
@@ -841,12 +1021,17 @@ class RefactorEnv(gym.Env):
             Dizionario con le metriche
         """
         try:
+            # Mantieni il grafo ORIENTATO per l'hub score
+            G_directed = to_networkx(data, to_undirected=False)
+
+            # *** MODIFICA: Usa sempre l'hub originale tracciato ***
+            current_hub = self._get_current_hub_index()
+
+            # NUOVO Hub score con le due metriche richieste (usa grafo orientato)
+            hub_score = self.compute_hub_score(G_directed, current_hub) if current_hub < data.num_nodes else 0
+
+            # Per le altre metriche, usa grafo non orientato come nel codice originale
             G = to_networkx(data, to_undirected=True)
-
-            # Hub score del nodo centrale
-            hub_score = G.degree(self.center_node_idx) if self.center_node_idx < data.num_nodes else 0
-
-            # Densità
             density = nx.density(G)
 
             # Modularità (usa partizionamento greedy)
@@ -971,11 +1156,14 @@ class RefactorEnv(gym.Env):
             return
 
         metrics = self._calculate_metrics(self.current_data)
+        current_hub = self._get_current_hub_index()
+
         print(f"\n=== Step {self.current_step} ===")
-        print(f"Centro hub: {self.center_node_idx}")
-        print(f"Nodi: {metrics['num_nodes']}, Archi: {metrics['num_edges']}")
-        print(f"Hub score: {metrics['hub_score']:.3f}")
-        print(f"Density: {metrics['density']:.3f}")
-        print(f"Modularity: {metrics['modularity']:.3f}")
-        print(f"Avg shortest path: {metrics['avg_shortest_path']:.3f}")
-        print(f"Connected: {bool(metrics['connected'])}")
+        print(f"🎯 Hub originale: ID {self.original_hub_id} -> indice corrente {current_hub}")
+        print(f"📊 Nodi: {metrics['num_nodes']}, Archi: {metrics['num_edges']}")
+        print(f"📈 Hub score: {metrics['hub_score']:.3f}")
+        print(f"🔗 Density: {metrics['density']:.3f}")
+        print(f"🧩 Modularity: {metrics['modularity']:.3f}")
+        print(f"📏 Avg shortest path: {metrics['avg_shortest_path']:.3f}")
+        print(f"🌐 Connected: {bool(metrics['connected'])}")
+        print(f"🗺️  Nodi tracciati: {len(self.node_id_mapping)}")
