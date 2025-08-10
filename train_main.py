@@ -234,65 +234,100 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
         # Load model
         checkpoint = torch.load(best_model_path, map_location=config.device)
 
-        state_dict_keys = list(checkpoint['actor_critic_state_dict'].keys())
-
-        # Controlla se usa encoder separati
-        has_actor_encoder = any('actor_encoder' in key for key in state_dict_keys)
-        has_shared_encoder = any('encoder.input_proj' in key for key in state_dict_keys)
-
-        # Determina shared_encoder
-        if has_actor_encoder:
-            actual_shared_encoder = False
-        elif has_shared_encoder:
-            actual_shared_encoder = True
+        # 🔧 FIX: Usa la configurazione SALVATA nel checkpoint invece di ricrearla
+        if 'model_config' in checkpoint:
+            # Usa la config del modello salvata
+            ac_config = checkpoint['model_config']
+            logger.info(f"🔧 Using saved model config: {ac_config}")
         else:
-            logger.error("Cannot determine encoder architecture from checkpoint")
-            return eval_results
+            # Fallback: prova a inferire dalle dimensioni del checkpoint
+            state_dict = checkpoint['actor_critic_state_dict']
 
-        # Determina numero di azioni dal peso dell'actor_head
-        actor_head_keys = [k for k in state_dict_keys if 'actor_head' in k and 'weight' in k]
-        if actor_head_keys:
-            # Prendi l'ultimo layer (quello finale)
-            final_layer_key = max(actor_head_keys, key=lambda x: int(x.split('.')[1]))
-            final_layer_shape = checkpoint['actor_critic_state_dict'][final_layer_key].shape
-            actual_num_actions = final_layer_shape[0]
-        else:
-            logger.error("Cannot determine number of actions from checkpoint")
-            return eval_results
+            # Trova il primo layer per inferire input_dim
+            actor_head_key = None
+            for key in state_dict.keys():
+                if 'actor_head' in key and 'weight' in key:
+                    actor_head_key = key
+                    break
 
-        logger.info(
-            f"🔍 Detected architecture: shared_encoder={actual_shared_encoder}, num_actions={actual_num_actions}")
+            if actor_head_key:
+                input_dim = state_dict[actor_head_key].shape[1]
+                logger.info(f"🔍 Inferred input dimension from checkpoint: {input_dim}")
 
-        # Create model
-        ac_config = {
-            'node_dim': 7,
-            'hidden_dim': config.hidden_dim,
-            'num_layers': config.num_layers,
-            'num_actions': actual_num_actions,
-            'global_features_dim': 10,
-            'dropout': config.dropout,
-            'shared_encoder': actual_shared_encoder
-        }
+                # Ricostruisci config basandoti sulle dimensioni
+                # input_dim = max_nodes * 7 + max_nodes^2 + global_features
+                # Prova diverse combinazioni per trovare quella corretta
 
+                possible_configs = []
+                for max_nodes in [30, 40, 50, 60, 66, 70]:
+                    for global_feat in [4, 10]:
+                        expected_dim = max_nodes * 7 + max_nodes * max_nodes + global_feat
+                        if expected_dim == input_dim:
+                            possible_configs.append((max_nodes, global_feat))
+
+                if possible_configs:
+                    max_nodes_inferred, global_feat_inferred = possible_configs[0]
+                    logger.info(f"🎯 Inferred: max_nodes={max_nodes_inferred}, global_features={global_feat_inferred}")
+
+                    ac_config = {
+                        'node_dim': 7,
+                        'hidden_dim': config.hidden_dim,
+                        'num_layers': config.num_layers,
+                        'num_actions': 7,
+                        'global_features_dim': global_feat_inferred,
+                        'dropout': config.dropout,
+                        'shared_encoder': False
+                    }
+                else:
+                    logger.error(f"❌ Cannot infer model config from input_dim={input_dim}")
+                    return eval_results
+            else:
+                logger.error("❌ Cannot find actor_head in checkpoint")
+                return eval_results
+
+        # Create model con la config corretta
+        from actor_critic_models import create_actor_critic
         model = create_actor_critic(ac_config).to(config.device)
+
+        # Load state dict
         model.load_state_dict(checkpoint['actor_critic_state_dict'])
         model.eval()
 
         # Load discriminator if available
         discriminator = None
         if Path(config.discriminator_path).exists():
-            disc_checkpoint = torch.load(config.discriminator_path, map_location=config.device)
-            discriminator = create_discriminator(**disc_checkpoint['model_config'])
-            discriminator.load_state_dict(disc_checkpoint['model_state_dict'])
-            discriminator.to(config.device)
-            discriminator.eval()
+            try:
+                disc_checkpoint = torch.load(config.discriminator_path, map_location=config.device)
+                from discriminator import create_discriminator
+                discriminator = create_discriminator(**disc_checkpoint['model_config'])
+                discriminator.load_state_dict(disc_checkpoint['model_state_dict'])
+                discriminator.to(config.device)
+                discriminator.eval()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not load discriminator: {e}")
 
-        # Initialize environment for evaluation
+        # 🔧 FIX: Initialize environment con config compatibile
+        # Usa le stesse global_features del modello
+
+        # Crea reward_weights compatibili
+        eval_reward_weights = {
+            'hub_weight': 10.0,
+            'step_valid': 0.05,
+            'step_invalid': -0.1,
+            'time_penalty': -0.01,
+            'early_stop_penalty': -0.5,
+            'cycle_penalty': -0.2,
+            'duplicate_penalty': -0.1,
+            'adversarial_weight': 2.0,
+            'patience': 15
+        }
+
         env = RefactorEnv(
             data_path=config.data_path,
             discriminator=discriminator,
             max_steps=config.max_episode_steps,
-            device=config.device
+            device=config.device,
+            reward_weights=eval_reward_weights  # 🔧 Aggiungi reward_weights
         )
 
         # Run evaluation episodes
@@ -319,13 +354,16 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
             # Get initial discriminator score
             if discriminator is not None:
                 with torch.no_grad():
-                    disc_output = discriminator(initial_data)
-                    if isinstance(disc_output, dict):
-                        initial_disc_score = torch.softmax(disc_output['logits'], dim=1)[
-                            0, 1].item()  # Smelly probability
-                    else:
-                        initial_disc_score = torch.softmax(disc_output, dim=1)[0, 1].item()
-                    eval_metrics['discriminator_scores_before'].append(initial_disc_score)
+                    try:
+                        disc_output = discriminator(initial_data)
+                        if isinstance(disc_output, dict):
+                            initial_disc_score = torch.softmax(disc_output['logits'], dim=1)[
+                                0, 1].item()  # Smelly probability
+                        else:
+                            initial_disc_score = torch.softmax(disc_output, dim=1)[0, 1].item()
+                        eval_metrics['discriminator_scores_before'].append(initial_disc_score)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Discriminator error on initial: {e}")
 
             # Run episode
             episode_reward = 0.0
@@ -333,9 +371,23 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
             done = False
 
             while not done:
-                # Extract global features
+                # Extract global features COMPATIBILI con il modello
                 current_data = env.current_data
                 global_features = env._extract_global_features(current_data).unsqueeze(0)
+
+                # 🔧 VERIFICA DIMENSIONI
+                expected_obs_dim = ac_config.get('global_features_dim', 4)
+                if global_features.shape[1] != expected_obs_dim:
+                    logger.warning(
+                        f"⚠️ Global features mismatch: got {global_features.shape[1]}, expected {expected_obs_dim}")
+                    # Adatta le dimensioni
+                    if global_features.shape[1] > expected_obs_dim:
+                        global_features = global_features[:, :expected_obs_dim]
+                    else:
+                        # Pad con zeri
+                        padding = torch.zeros(1, expected_obs_dim - global_features.shape[1],
+                                              device=global_features.device)
+                        global_features = torch.cat([global_features, padding], dim=1)
 
                 # Get action from model (greedy)
                 with torch.no_grad():
@@ -355,13 +407,16 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
             # Get final discriminator score
             if discriminator is not None:
                 with torch.no_grad():
-                    disc_output = discriminator(final_data)
-                    if isinstance(disc_output, dict):
-                        final_disc_score = torch.softmax(disc_output['logits'], dim=1)[
-                            0, 1].item()  # Smelly probability
-                    else:
-                        final_disc_score = torch.softmax(disc_output, dim=1)[0, 1].item()
-                    eval_metrics['discriminator_scores_after'].append(final_disc_score)
+                    try:
+                        disc_output = discriminator(final_data)
+                        if isinstance(disc_output, dict):
+                            final_disc_score = torch.softmax(disc_output['logits'], dim=1)[
+                                0, 1].item()  # Smelly probability
+                        else:
+                            final_disc_score = torch.softmax(disc_output, dim=1)[0, 1].item()
+                        eval_metrics['discriminator_scores_after'].append(final_disc_score)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Discriminator error on final: {e}")
 
             # Record metrics
             eval_metrics['episode_rewards'].append(episode_reward)
@@ -391,8 +446,7 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
         if eval_metrics['discriminator_scores_before'] and eval_metrics['discriminator_scores_after']:
             avg_disc_before = float(np.mean(eval_metrics['discriminator_scores_before']))
             avg_disc_after = float(np.mean(eval_metrics['discriminator_scores_after']))
-            eval_summary[
-                'discriminator_improvement'] = avg_disc_before - avg_disc_after  # Reduction in smelly probability
+            eval_summary['discriminator_improvement'] = avg_disc_before - avg_disc_after
             eval_summary['avg_discriminator_score_before'] = avg_disc_before
             eval_summary['avg_discriminator_score_after'] = avg_disc_after
 
@@ -427,7 +481,6 @@ def run_evaluation(config: TrainingConfig, training_results: Dict[str, Any]) -> 
         raise
 
     return eval_results
-
 
 def create_training_config_from_manager(config_manager: ConfigManager,
                                         device: str,

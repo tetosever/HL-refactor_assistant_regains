@@ -36,7 +36,7 @@ optimization:
   weight_decay: 0.00001
 
 schedule:
-  num_episodes: 1000        # Mantenuto per test rapidi
+  num_episodes: 2000        # Mantenuto per test rapidi
   warmup_episodes: 600      # Aumentato per stabilità
   adversarial_start_episode: 600  # *** PATCH: Starts at warmup end ***
   batch_size: 64            # *** PATCH: Aumentato per stabilità ***
