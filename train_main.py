@@ -642,7 +642,6 @@ def main():
         epsilon_start=0.3,  # High initial exploration
         epsilon_end=0.05,  # Minimum exploration
         epsilon_decay_episodes=1000,  # Long decay for sustained exploration
-        epsilon_warmup_episodes=100,  # Smooth ramp-up
 
         # 📈 ENHANCED ENTROPY REGULARIZATION
         entropy_coef_base=0.05,  # Warmup phase

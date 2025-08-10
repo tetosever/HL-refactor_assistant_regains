@@ -73,10 +73,9 @@ class TrainingConfig:
 
     # 🚀 NEW: Epsilon-Greedy Exploration Parameters
     use_epsilon_greedy: bool = True
-    epsilon_start: float = 0.3  # High initial exploration in adversarial phase
-    epsilon_end: float = 0.05  # Minimum exploration level
+    epsilon_start: float = 0.3  # Initial exploration rate
+    epsilon_end: float = 0.05  # Minimum exploration rate
     epsilon_decay_episodes: int = 1000  # Episodes to decay from start to end
-    epsilon_warmup_episodes: int = 100  # Episodes to ramp up epsilon in adversarial
 
     # 🎯 NEW: Enhanced Entropy Regularization
     entropy_coef_base: float = 0.05  # Base entropy coefficient
@@ -186,25 +185,12 @@ class TrainingConfig:
         if not self.use_epsilon_greedy:
             return 0.0
 
-        if episode_idx < self.adversarial_start_episode:
-            return 0.0  # No epsilon during warmup
-
-        # Episodes since adversarial started
-        adv_episode = episode_idx - self.adversarial_start_episode
-
-        if adv_episode < self.epsilon_warmup_episodes:
-            # Ramp up epsilon during warmup period
-            progress = adv_episode / self.epsilon_warmup_episodes
-            return self.epsilon_start * progress
-
-        # Decay epsilon from start to end
-        decay_episode = adv_episode - self.epsilon_warmup_episodes
-        if decay_episode >= self.epsilon_decay_episodes:
+        # Linear decay starting from episode 1
+        if episode_idx >= self.epsilon_decay_episodes:
             return self.epsilon_end
 
-        # Linear decay
-        progress = decay_episode / self.epsilon_decay_episodes
-        return self.epsilon_start - (self.epsilon_start - self.epsilon_end) * progress
+        progress = (episode_idx - 1) / (self.epsilon_decay_episodes - 1)
+        return self.epsilon_start + (self.epsilon_end - self.epsilon_start) * progress
 
     def get_entropy_coef(self, episode_idx: int) -> float:
         """Calculate current entropy coefficient"""
@@ -1226,9 +1212,13 @@ class A2CTrainer:
             self.writer.add_scalar('Exploration/ExplorationScore', episode_info['exploration_score'], episode_idx)
 
         # Dynamic parameters
-        self.writer.add_scalar('Parameters/Epsilon', self.current_epsilon, episode_idx)
+        epsilon_effective = self.current_epsilon
+        self.writer.add_scalar('Parameters/EpsilonEffective', epsilon_effective, episode_idx)
         self.writer.add_scalar('Parameters/EntropyCoef', self.current_entropy_coef, episode_idx)
         self.writer.add_scalar('Parameters/AdversarialWeight', self.current_adversarial_weight, episode_idx)
+
+        # Log epsilon_effective to standard logger
+        self.logger.info(f"Episode {episode_idx} | epsilon_effective={epsilon_effective:.3f}")
 
         # Training phase indicators
         is_warmup = episode_idx < self.config.adversarial_start_episode
