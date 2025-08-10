@@ -619,164 +619,196 @@ def run_ablation_study(config: TrainingConfig) -> Dict[str, Any]:
 
     return ablation_results
 
+
 def main():
-    """Main training pipeline"""
+    """Enhanced main training function with exploration-focused configuration"""
 
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Graph Refactoring RL Training Pipeline')
-    parser.add_argument('--config-file', type=str, default=None,
-                        help='Path to configuration file (JSON/YAML)')
-    parser.add_argument('--data-path', type=str, default='data_builder/dataset/graph_features',
-                        help='Path to training data')
-    parser.add_argument('--discriminator-path', type=str,
-                        default='results/discriminator_pretraining/pretrained_discriminator.pt',
-                        help='Path to pre-trained discriminator')
-    parser.add_argument('--results-dir', type=str, default='results/rl_training',
-                        help='Directory to save results')
-    parser.add_argument('--experiment-name', type=str, default='graph_refactor_rl_v1',
-                        help='Experiment name')
-    parser.add_argument('--device', type=str, default='auto',
-                        help='Device to use (cuda/cpu/auto)')
-    parser.add_argument('--skip-pretraining', action='store_true',
-                        help='Skip discriminator pre-training')
-    parser.add_argument('--skip-warmup', action='store_true',
-                        help='Skip warm-up phase')
-    parser.add_argument('--skip-adversarial', action='store_true',
-                        help='Skip adversarial phase')
-    parser.add_argument('--skip-evaluation', action='store_true',
-                        help='Skip evaluation phase')
-    parser.add_argument('--run-ablation', action='store_true',
-                        help='Run ablation study')
-    parser.add_argument('--force-retrain', action='store_true',
-                        help='Force retrain discriminator even if exists')
+    # 🔧 Enhanced configuration with exploration parameters
+    config = TrainingConfig(
+        experiment_name="graph_refactor_a2c_exploration_v4",
 
-    args = parser.parse_args()
+        # 🚀 EXTENDED training for plateau breakthrough
+        num_episodes=3500,  # Increased from 2200
+        warmup_episodes=600,  # Maintained
+        adversarial_start_episode=600,
 
-    # Setup
-    setup_project_structure()
-    logger = setup_logging()
+        # 🎯 Base learning rates (will be enhanced by curriculum)
+        lr_actor=3e-4,
+        lr_critic=1e-4,
+        lr_discriminator=1e-4,
 
-    # Device selection
-    if args.device == 'auto':
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    else:
-        device = args.device
+        # 🔥 EXPLORATION PARAMETERS
+        use_epsilon_greedy=True,
+        epsilon_start=0.3,  # High initial exploration
+        epsilon_end=0.05,  # Minimum exploration
+        epsilon_decay_episodes=1000,  # Long decay for sustained exploration
+        epsilon_warmup_episodes=100,  # Smooth ramp-up
 
-    logger.info("🚀 Starting Graph Refactoring RL Training Pipeline")
-    logger.info(f"📁 Data path: {args.data_path}")
-    logger.info(f"🧠 Device: {device}")
-    logger.info(f"🎯 Experiment: {args.experiment_name}")
+        # 📈 ENHANCED ENTROPY REGULARIZATION
+        entropy_coef_base=0.05,  # Warmup phase
+        entropy_coef_adversarial=0.15,  # Higher entropy during adversarial
+        entropy_ramp_episodes=200,  # Smooth transition
 
-    # Check data availability
-    if not check_data_availability(args.data_path):
-        logger.error("❌ Training data not available. Please prepare the dataset first.")
-        sys.exit(1)
+        # 🎯 CURRICULUM ADVERSARIAL LEARNING
+        use_curriculum_adversarial=True,
+        adversarial_weight_start=0.5,  # Start gentle
+        adversarial_weight_end=2.0,  # Ramp to full strength
+        adversarial_ramp_episodes=800,  # Long curriculum
 
-    # ✅ NUOVO: Load configuration from utils_and_configs
+        # 🔍 EXPLORATION MONITORING
+        track_action_entropy=True,
+        track_policy_variance=True,
+        exploration_log_every=25,
+
+        # CyclicLR maintained but with longer cycles
+        use_cyclic_lr=True,
+        base_lr_actor=3e-4,
+        max_lr_actor=1e-3,
+        step_size_up_actor=200,  # Longer cycles for stability
+        base_lr_critic=1e-4,
+        max_lr_critic=3e-4,
+        step_size_up_critic=250,  # Longer cycles
+
+        # Training parameters optimized for exploration
+        batch_size=32,
+        update_every=15,  # More frequent updates
+        discriminator_update_every=40,  # More frequent discriminator updates
+
+        # Enhanced regularization
+        entropy_coef=0.1,  # Will be overridden by dynamic scheduling
+        max_grad_norm=0.5,
+        advantage_clip=0.5,
+        reward_clip=5.0,
+
+        # Extended patience for exploration
+        early_stopping_patience=400,  # Much longer patience
+        min_improvement=0.005,  # More sensitive improvement detection
+
+        # Enhanced logging
+        log_every=25,
+        eval_every=150,  # More frequent evaluation
+        save_every=250,
+        num_eval_episodes=30,  # More evaluation episodes
+    )
+
+    print("🚀 Starting Enhanced Graph Refactoring RL Training")
+    print("=" * 60)
+    print(f"🎯 Experiment: {config.experiment_name}")
+    print(f"📊 Total Episodes: {config.num_episodes}")
+    print(f"🧠 Device: {config.device}")
+    print("")
+
+    # 🔥 EXPLORATION CONFIGURATION SUMMARY
+    print("🎲 EXPLORATION CONFIGURATION:")
+    print(f"   Epsilon-Greedy: {config.use_epsilon_greedy}")
+    if config.use_epsilon_greedy:
+        print(
+            f"   Epsilon: {config.epsilon_start:.3f} → {config.epsilon_end:.3f} over {config.epsilon_decay_episodes} episodes")
+    print(f"   Entropy Regularization: {config.entropy_coef_base:.3f} → {config.entropy_coef_adversarial:.3f}")
+    print(f"   Curriculum Adversarial: {config.use_curriculum_adversarial}")
+    if config.use_curriculum_adversarial:
+        print(f"   Adversarial Weight: {config.adversarial_weight_start:.3f} → {config.adversarial_weight_end:.3f}")
+    print("")
+
+    # 📊 TRAINING PHASES
+    print("📅 TRAINING PHASES:")
+    print(f"   Phase 1 - Warmup: Episodes 1-{config.warmup_episodes}")
+    print(f"   Phase 2 - Adversarial: Episodes {config.adversarial_start_episode}-{config.num_episodes}")
+    print(f"   Exploration Boost: Auto-triggered on plateau detection")
+    print("")
+
+    # 🔄 CYCLICRL CONFIGURATION
+    if config.use_cyclic_lr:
+        print("🔄 CYCLICRL CONFIGURATION:")
+        print(
+            f"   Actor LR: {config.base_lr_actor:.2e} ↔ {config.max_lr_actor:.2e} (cycle: {config.step_size_up_actor})")
+        print(
+            f"   Critic LR: {config.base_lr_critic:.2e} ↔ {config.max_lr_critic:.2e} (cycle: {config.step_size_up_critic})")
+    print("")
+    print("=" * 60)
+
+    # Initialize trainer with enhanced configuration
+    trainer = A2CTrainer(config)
+
+    # Start training with comprehensive error handling
     try:
-        # Initialize config manager
-        config_manager = ConfigManager(config_file=args.config_file)
+        print("🚀 Starting enhanced training with exploration focus...")
+        print(f"🎯 Target: Break plateau at hub_improvement=0.5, reach 0.7+")
+        print(f"📈 Expected: Higher action entropy, increased episode variance")
+        print("")
 
-        # Override with command line arguments if provided
-        if args.data_path != 'data_builder/dataset/graph_features':
-            config_manager.env_config.data_path = args.data_path
+        training_stats = trainer.train()
 
-        # Create TrainingConfig from the config manager
-        config = create_training_config_from_manager(
-            config_manager=config_manager,
-            device=device,
-            experiment_name=args.experiment_name,
-            discriminator_path=args.discriminator_path,
-            results_dir=args.results_dir
-        )
+        print("")
+        print("✅ Training completed successfully!")
+        print("=" * 60)
 
-        logger.info("✅ Configuration loaded from utils_and_configs")
+        # Print final exploration statistics
+        if hasattr(trainer, 'exploration_stats') and trainer.exploration_stats:
+            final_entropy = trainer.exploration_stats['action_entropies'][-50:] if trainer.exploration_stats[
+                'action_entropies'] else [0]
+            final_epsilon = trainer.exploration_stats['epsilon_values'][-1] if trainer.exploration_stats[
+                'epsilon_values'] else 0
+            final_adversarial = trainer.exploration_stats['adversarial_weight_values'][-1] if trainer.exploration_stats[
+                'adversarial_weight_values'] else 0
 
-    except Exception as e:
-        logger.error(f"❌ Failed to create training configuration: {e}")
-        sys.exit(1)
+            print("📊 FINAL EXPLORATION STATS:")
+            print(f"   Final Action Entropy: {np.mean(final_entropy):.3f}")
+            print(f"   Final Epsilon: {final_epsilon:.3f}")
+            print(f"   Final Adversarial Weight: {final_adversarial:.3f}")
+            print("")
 
-    training_results = {}
+        # Print performance summary
+        if training_stats and 'hub_score_improvements' in training_stats:
+            recent_improvements = training_stats['hub_score_improvements'][-100:]
+            best_improvement = max(training_stats['hub_score_improvements']) if training_stats[
+                'hub_score_improvements'] else 0
+            mean_recent = np.mean(recent_improvements) if recent_improvements else 0
+            success_rate = sum(1 for imp in recent_improvements if imp > 0.01) / len(
+                recent_improvements) if recent_improvements else 0
 
-    try:
-        # Phase 1: Discriminator Pre-training
-        if not args.skip_pretraining:
-            logger.info("\n" + "=" * 60)
-            logger.info("PHASE 1: DISCRIMINATOR PRE-TRAINING")
-            logger.info("=" * 60)
+            print("🎯 PERFORMANCE SUMMARY:")
+            print(f"   Best Hub Improvement: {best_improvement:.4f}")
+            print(f"   Recent Mean Improvement: {mean_recent:.4f}")
+            print(f"   Success Rate (recent): {success_rate:.1%}")
 
-            discriminator_path = run_discriminator_pretraining({
-                'discriminator_path': args.discriminator_path
-            }, force_retrain=args.force_retrain)
+            # Check if plateau was broken
+            if best_improvement > 0.6:
+                print("🎉 SUCCESS: Plateau breakthrough achieved!")
+            elif best_improvement > 0.5:
+                print("📈 PROGRESS: Improvement beyond previous plateau")
+            else:
+                print("⚠️  PLATEAU: Consider further exploration tuning")
 
-            training_results['discriminator_path'] = discriminator_path
-
-        # Phase 2: Warm-up RL Training
-        if not args.skip_warmup:
-            logger.info("\n" + "=" * 60)
-            logger.info("PHASE 2: WARM-UP RL TRAINING")
-            logger.info("=" * 60)
-
-            warmup_results = run_warmup_training(config)
-            training_results.update(warmup_results)
-
-        # Phase 3: Adversarial Fine-tuning
-        if not args.skip_adversarial:
-            logger.info("\n" + "=" * 60)
-            logger.info("PHASE 3: ADVERSARIAL FINE-TUNING")
-            logger.info("=" * 60)
-
-            adversarial_results = run_adversarial_training(config, training_results)
-            training_results.update(adversarial_results)
-
-        # Phase 4: Evaluation
-        if not args.skip_evaluation:
-            logger.info("\n" + "=" * 60)
-            logger.info("PHASE 4: COMPREHENSIVE EVALUATION")
-            logger.info("=" * 60)
-
-            eval_results = run_evaluation(config, training_results)
-            training_results['evaluation'] = eval_results
-
-        # Phase 5: Ablation Study (Optional)
-        if args.run_ablation:
-            logger.info("\n" + "=" * 60)
-            logger.info("PHASE 5: ABLATION STUDY")
-            logger.info("=" * 60)
-
-            ablation_results = run_ablation_study(config)
-            training_results['ablation'] = ablation_results
-
-        # Save complete results
-        final_results_path = Path(args.results_dir) / 'complete_training_results.json'
-        with open(final_results_path, 'w') as f:
-            json.dump(training_results, f, indent=2, default=str)
-
-        logger.info("\n" + "=" * 60)
-        logger.info("✅ TRAINING PIPELINE COMPLETED SUCCESSFULLY!")
-        logger.info("=" * 60)
-        logger.info(f"📊 Complete results saved to: {final_results_path}")
-
-        # Print summary
-        if 'evaluation' in training_results:
-            eval_summary = training_results['evaluation']['summary']
-            logger.info("\n📈 Final Performance Summary:")
-            logger.info(f"  Success Rate: {eval_summary.get('success_rate', 0):.1%}")
-            logger.info(f"  Avg Hub Improvement: {eval_summary.get('avg_hub_improvement', 0):.3f}")
-            logger.info(f"  Avg Episode Reward: {eval_summary.get('avg_episode_reward', 0):.3f}")
+        # Print final scheduler info
+        if config.use_cyclic_lr and hasattr(trainer, 'actor_scheduler'):
+            final_lr_actor = trainer.actor_scheduler.get_last_lr()[0]
+            final_lr_critic = trainer.critic_scheduler.get_last_lr()[0]
+            print(f"📈 Final LRs - Actor: {final_lr_actor:.2e}, Critic: {final_lr_critic:.2e}")
 
     except KeyboardInterrupt:
-        logger.info("⏹️ Training interrupted by user")
+        print("⏹️  Training interrupted by user")
+        trainer._save_checkpoint(0, is_best=False)
+        print("💾 Emergency checkpoint saved")
 
     except Exception as e:
-        logger.error(f"❌ Training pipeline failed: {e}")
+        print(f"❌ Training failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # Save emergency checkpoint
+        try:
+            trainer._save_checkpoint(0, is_best=False)
+            print("💾 Emergency checkpoint saved")
+        except:
+            print("❌ Could not save emergency checkpoint")
         raise
 
     finally:
-        logger.info("🏁 Training pipeline finished")
+        if hasattr(trainer, 'writer'):
+            trainer.writer.close()
+        print("🏁 Training session ended")
 
 
 if __name__ == "__main__":
-    import numpy as np  # Import needed for evaluation
-
     main()
