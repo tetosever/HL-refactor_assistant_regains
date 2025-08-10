@@ -118,6 +118,10 @@ class TrainingConfig:
     # Reward normalization
     normalize_rewards: bool = True
     reward_clip: float = 5.0
+
+    # Plateau detection tolerances
+    tol_reward: float = 0.01
+    tol_hub: float = 0.01
     advantage_clip: float = 1.0
 
     # Model architecture
@@ -568,6 +572,15 @@ class A2CTrainer:
             'exploration_scores': []
         }
 
+        # Rolling evaluation statistics
+        self.reward_median_queue = deque(maxlen=5)
+        self.hub_median_queue = deque(maxlen=5)
+
+        # Exploration boost tracking
+        self.episodes_remaining_in_boost = 0
+        self.boost_epsilon = 0.2
+        self.boost_entropy = 0.1
+
         self.logger.info("🚀 A2C Trainer initialized successfully!")
 
     def _init_models(self):
@@ -723,11 +736,20 @@ class A2CTrainer:
         """
         🔧 NEW: Update dynamic training parameters based on curriculum
         """
-        # Update epsilon for epsilon-greedy
-        self.current_epsilon = self.config.get_epsilon(episode_idx)
+        # Base parameters from schedules
+        base_epsilon = self.config.get_epsilon(episode_idx)
+        base_entropy = self.config.get_entropy_coef(episode_idx)
 
-        # Update entropy coefficient
-        self.current_entropy_coef = self.config.get_entropy_coef(episode_idx)
+        if self.episodes_remaining_in_boost > 0:
+            if self.config.use_epsilon_greedy:
+                self.current_epsilon = min(0.4, base_epsilon + self.boost_epsilon)
+            else:
+                self.current_epsilon = base_epsilon
+            self.current_entropy_coef = min(0.25, base_entropy + self.boost_entropy)
+            self.episodes_remaining_in_boost -= 1
+        else:
+            self.current_epsilon = base_epsilon
+            self.current_entropy_coef = base_entropy
 
         # Update adversarial weight in environment
         self.current_adversarial_weight = self.config.get_adversarial_weight(episode_idx)
@@ -738,6 +760,8 @@ class A2CTrainer:
         self.exploration_stats['epsilon_values'].append(self.current_epsilon)
         self.exploration_stats['entropy_coef_values'].append(self.current_entropy_coef)
         self.exploration_stats['adversarial_weight_values'].append(self.current_adversarial_weight)
+
+        self.writer.add_scalar('Boost/EpisodesRemaining', self.episodes_remaining_in_boost, episode_idx)
 
     def _extract_global_features(self, data: Data) -> torch.Tensor:
         """✅ FIX: Extract global features usando il metodo corretto dall'ambiente"""
@@ -1175,8 +1199,10 @@ class A2CTrainer:
         return {
             'eval_reward_mean': np.mean(eval_rewards),
             'eval_reward_std': np.std(eval_rewards),
+            'eval_reward_median': float(np.median(eval_rewards)),
             'eval_hub_improvement_mean': np.mean(eval_hub_improvements),
             'eval_hub_improvement_std': np.std(eval_hub_improvements),
+            'eval_hub_improvement_median': float(np.median(eval_hub_improvements)),
             'eval_discriminator_score_mean': np.mean(eval_discriminator_scores) if eval_discriminator_scores else 0.0,
             'eval_discriminator_score_std': np.std(eval_discriminator_scores) if eval_discriminator_scores else 0.0,
 
@@ -1454,8 +1480,12 @@ class A2CTrainer:
                 for key, value in eval_metrics.items():
                     self.writer.add_scalar(f'Evaluation/{key}', value, episode_idx)
 
+                # Update rolling median queues
+                self.reward_median_queue.append(eval_metrics['eval_reward_median'])
+                self.hub_median_queue.append(eval_metrics['eval_hub_improvement_median'])
+
                 # 🚨 NEW: Plateau detection and exploration boost
-                if self._detect_plateau_and_adjust(episode_idx, eval_metrics):
+                if self._detect_plateau_and_adjust(episode_idx):
                     plateau_detections += 1
                     exploration_boosts += 1
 
@@ -1970,56 +2000,34 @@ class A2CTrainer:
 
         return exploration_reward
 
-    def _detect_plateau_and_adjust(self, episode_idx: int, eval_metrics: Dict[str, float]) -> bool:
-        """
-        🚀 NEW: Detect performance plateau and trigger exploration boost
-
-        Returns:
-            True if plateau detected and adjustments made
-        """
-        if episode_idx < self.config.adversarial_start_episode + 200:
-            return False  # Too early to detect plateau
-
-        # Check recent performance
-        recent_improvements = self.training_stats['hub_score_improvements'][-100:] if len(
-            self.training_stats['hub_score_improvements']) >= 100 else []
-
-        if len(recent_improvements) < 50:
+    def _detect_plateau_and_adjust(self, episode_idx: int) -> bool:
+        """Detect performance plateau using rolling median queues"""
+        if len(self.reward_median_queue) < self.reward_median_queue.maxlen:
             return False
 
-        # Plateau criteria
-        mean_improvement = np.mean(recent_improvements)
-        std_improvement = np.std(recent_improvements)
-        success_rate = sum(1 for imp in recent_improvements if imp > 0.01) / len(recent_improvements)
+        reward_range = max(self.reward_median_queue) - min(self.reward_median_queue)
+        hub_range = max(self.hub_median_queue) - min(self.hub_median_queue)
 
-        # Detect plateau: low variance and low success rate
-        is_plateau = (std_improvement < 0.05 and success_rate < 0.3 and mean_improvement < 0.3)
-
-        if is_plateau and episode_idx % 200 == 0:  # Check every 200 episodes
+        if reward_range < self.config.tol_reward and hub_range < self.config.tol_hub:
             self.logger.info(f"🚨 PLATEAU DETECTED at episode {episode_idx}")
-            self.logger.info(f"   Mean improvement: {mean_improvement:.4f}")
-            self.logger.info(f"   Std improvement: {std_improvement:.4f}")
-            self.logger.info(f"   Success rate: {success_rate:.3f}")
-
-            # Trigger exploration boost
+            self.logger.info(f"   Reward median range: {reward_range:.4f}")
+            self.logger.info(f"   Hub Δ median range: {hub_range:.4f}")
             self._trigger_exploration_boost(episode_idx)
             return True
 
         return False
 
     def _trigger_exploration_boost(self, episode_idx: int):
-        """
-        🚀 NEW: Trigger temporary exploration boost to escape plateau
-        """
+        """Trigger temporary exploration boost to escape plateau"""
         self.logger.info("🚀 TRIGGERING EXPLORATION BOOST")
 
-        # Temporarily increase epsilon
+        self.episodes_remaining_in_boost = 100
+
         if self.config.use_epsilon_greedy:
-            self.current_epsilon = min(0.4, self.current_epsilon + 0.2)
+            self.current_epsilon = min(0.4, self.current_epsilon + self.boost_epsilon)
             self.logger.info(f"   Boosted epsilon to {self.current_epsilon:.3f}")
 
-        # Temporarily increase entropy coefficient
-        self.current_entropy_coef = min(0.25, self.current_entropy_coef + 0.1)
+        self.current_entropy_coef = min(0.25, self.current_entropy_coef + self.boost_entropy)
         self.logger.info(f"   Boosted entropy coefficient to {self.current_entropy_coef:.3f}")
 
         # Reset experience buffer exploration tracking
@@ -2030,21 +2038,6 @@ class A2CTrainer:
         self.writer.add_scalar('Boost/ExplorationBoostTriggered', 1.0, episode_idx)
         self.writer.add_scalar('Boost/BoostedEpsilon', self.current_epsilon, episode_idx)
         self.writer.add_scalar('Boost/BoostedEntropyCoef', self.current_entropy_coef, episode_idx)
-
-        return {
-            'actor_loss': actor_loss.item(),
-            'critic_loss': critic_loss.item(),
-            'total_loss': total_loss.item(),
-            'entropy': entropy.mean().item(),
-            'entropy_loss': entropy_loss.item(),
-            'advantages_mean': advantages.mean().item(),
-            'advantages_std': advantages.std().item(),
-            'current_lr_actor': current_lr_actor,
-            'current_lr_critic': current_lr_critic,
-            'current_entropy_coef': self.current_entropy_coef,
-            'current_epsilon': self.current_epsilon,
-            'current_adversarial_weight': self.current_adversarial_weight
-        }
 
 # =============================================================================
 # MAIN TRAINING SCRIPT
