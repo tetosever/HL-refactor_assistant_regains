@@ -93,6 +93,10 @@ class TrainingConfig:
     track_policy_variance: bool = True
     exploration_log_every: int = 25  # Log exploration metrics frequency
 
+    # 🔄 NEW: Entropy sliding window monitoring
+    entropy_window_size: int = 50
+    entropy_threshold: float = 0.05
+
     # Actor scheduler parameters
     base_lr_actor: float = 1e-4
     max_lr_actor: float = 5e-4
@@ -560,6 +564,9 @@ class A2CTrainer:
             'critic_max': 0.0
         }
         self.update_step = 0
+
+        # Sliding window to monitor action entropy
+        self.entropy_window = deque(maxlen=self.config.entropy_window_size)
 
         self.logger.info("🚀 A2C Trainer initialized successfully!")
 
@@ -1428,6 +1435,21 @@ class A2CTrainer:
             if episode_idx % self.config.update_every == 0:
                 update_info.update(self._update_actor_critic())
 
+                # 🔄 Monitor action entropy to detect exploration collapse
+                if 'entropy' in update_info:
+                    self.entropy_window.append(update_info['entropy'])
+                    avg_entropy = np.mean(self.entropy_window)
+
+                    if (
+                        episode_idx > self.config.warmup_episodes and
+                        len(self.entropy_window) == self.entropy_window.maxlen and
+                        avg_entropy < self.config.entropy_threshold
+                    ):
+                        self.logger.info(
+                            f"🔎 Low entropy detected ({avg_entropy:.3f}), triggering exploration boost"
+                        )
+                        self._trigger_exploration_boost(episode_idx)
+
             # Update discriminator in adversarial phase
             if (episode_idx >= self.config.adversarial_start_episode and
                     episode_idx % self.config.discriminator_update_every == 0):
@@ -2038,20 +2060,8 @@ class A2CTrainer:
         self.writer.add_scalar('Boost/BoostedEpsilon', self.current_epsilon, episode_idx)
         self.writer.add_scalar('Boost/BoostedEntropyCoef', self.current_entropy_coef, episode_idx)
 
-        return {
-            'actor_loss': actor_loss.item(),
-            'critic_loss': critic_loss.item(),
-            'total_loss': total_loss.item(),
-            'entropy': entropy.mean().item(),
-            'entropy_loss': entropy_loss.item(),
-            'advantages_mean': advantages.mean().item(),
-            'advantages_std': advantages.std().item(),
-            'current_lr_actor': current_lr_actor,
-            'current_lr_critic': current_lr_critic,
-            'current_entropy_coef': self.current_entropy_coef,
-            'current_epsilon': self.current_epsilon,
-            'current_adversarial_weight': self.current_adversarial_weight
-        }
+        # Function used for side effects only
+        return
 
 # =============================================================================
 # MAIN TRAINING SCRIPT
