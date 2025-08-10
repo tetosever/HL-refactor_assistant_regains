@@ -203,9 +203,9 @@ class RefactorEnv(gym.Env):
 
         self.reward_weights = reward_weights or {
             'hub_weight': 10.0,  # Peso principale per hub improvement
-            'step_valid': 0.05,  # Bonus per azioni valide
+            'step_valid': 0.0,  # Bonus disabilitato per evitare reward non meritato
             'step_invalid': -0.1,  # Penalty per azioni invalide
-            'time_penalty': -0.01,  # Penalty per ogni step
+            'time_penalty': -0.02,  # Penalty per ogni step (compensa eventuali bonus)
             'early_stop_penalty': -0.5,  # Penalty per STOP prematuro
             'cycle_penalty': -0.2,  # Penalty per cicli
             'duplicate_penalty': -0.1,  # Penalty per archi duplicati
@@ -293,10 +293,12 @@ class RefactorEnv(gym.Env):
 
         return np.clip(adv_reward, -1.0, 1.0)
 
-    def _action_reward(self, action: int, success: bool) -> float:
-        """Reward per validità azione"""
-        if success and action != 6:
-            return self.reward_weights.get('step_valid', 0.05)
+    def _action_reward(self, action: int, success: bool, improved: bool) -> float:
+        """Reward per validità azione e miglioramento effettivo"""
+        if success and action != 6 and improved:
+            return self.reward_weights.get('step_valid', 0.0)
+        elif success and action != 6 and not improved:
+            return 0.0  # Nessun bonus senza miglioramento
         elif action == 6:
             return 0.0  # STOP neutro
         else:
@@ -760,11 +762,12 @@ class RefactorEnv(gym.Env):
         # 2. Adversarial potential reward
         adversarial_reward = self._adversarial_potential_reward(prev_disc_score, current_disc_score)
 
-        # 3. Action validity reward
-        action_reward = self._action_reward(action, success)
+        # 3. Action validity reward (solo se c'è miglioramento)
+        improved = (prev_hub_score - current_hub_score) > 0
+        action_reward = self._action_reward(action, success, improved)
 
         # 4. Time penalty (costante) - 🔧 FIX con get()
-        time_penalty = self.reward_weights.get('time_penalty', -0.01)
+        time_penalty = self.reward_weights.get('time_penalty', -0.02)
 
         # 5. Structural penalties
         structural_penalty = self._check_structural_penalties() if success else 0.0
