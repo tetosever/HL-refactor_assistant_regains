@@ -784,6 +784,12 @@ def main():
             final_lr_actor = trainer.actor_scheduler.get_last_lr()[0]
             final_lr_critic = trainer.critic_scheduler.get_last_lr()[0]
             print(f"📈 Final LRs - Actor: {final_lr_actor:.2e}, Critic: {final_lr_critic:.2e}")
+            lr_stats = getattr(trainer, 'lr_stats', None)
+            if lr_stats:
+                print(
+                    f"   Actor LR range: {lr_stats['actor_min']:.2e} - {lr_stats['actor_max']:.2e}")
+                print(
+                    f"   Critic LR range: {lr_stats['critic_min']:.2e} - {lr_stats['critic_max']:.2e}")
 
     except KeyboardInterrupt:
         print("⏹️  Training interrupted by user")
