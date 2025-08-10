@@ -147,13 +147,11 @@ class TrainingConfig:
         Path(self.results_dir).mkdir(parents=True, exist_ok=True)
 
         if self.use_cyclic_lr:
-            if self.base_lr_actor > self.max_lr_actor:
-                logging.warning("base_lr_actor > max_lr_actor, swapping values")
-                self.base_lr_actor, self.max_lr_actor = self.max_lr_actor, self.base_lr_actor
+            if self.base_lr_actor >= self.max_lr_actor:
+                raise ValueError("base_lr_actor must be less than max_lr_actor")
 
-            if self.base_lr_critic > self.max_lr_critic:
-                logging.warning("base_lr_critic > max_lr_critic, swapping values")
-                self.base_lr_critic, self.max_lr_critic = self.max_lr_critic, self.base_lr_critic
+            if self.base_lr_critic >= self.max_lr_critic:
+                raise ValueError("base_lr_critic must be less than max_lr_critic")
 
             if self.step_size_down_actor is None:
                 self.step_size_down_actor = self.step_size_up_actor
@@ -568,6 +566,15 @@ class A2CTrainer:
             'exploration_scores': []
         }
 
+        # Learning rate tracking
+        self.lr_stats = {
+            'actor_min': float('inf'),
+            'actor_max': 0.0,
+            'critic_min': float('inf'),
+            'critic_max': 0.0
+        }
+        self.update_step = 0
+
         self.logger.info("🚀 A2C Trainer initialized successfully!")
 
     def _init_models(self):
@@ -594,6 +601,10 @@ class A2CTrainer:
         """Initialize optimizers and schedulers for all models"""
 
         if self.config.use_cyclic_lr:
+            if self.config.base_lr_actor >= self.config.max_lr_actor:
+                raise ValueError("base_lr_actor must be less than max_lr_actor")
+            if self.config.base_lr_critic >= self.config.max_lr_critic:
+                raise ValueError("base_lr_critic must be less than max_lr_critic")
             self.logger.info("🔄 Setting up CyclicLR schedulers...")
 
             # Identifica parametri actor e critic
@@ -978,8 +989,22 @@ class A2CTrainer:
             self.actor_optimizer.step()
             self.critic_optimizer.step()
 
+            if hasattr(self, 'actor_scheduler'):
+                self.actor_scheduler.step()
+            if hasattr(self, 'critic_scheduler'):
+                self.critic_scheduler.step()
+
             current_lr_actor = self.actor_optimizer.param_groups[0]['lr']
             current_lr_critic = self.critic_optimizer.param_groups[0]['lr']
+
+            self.update_step += 1
+            self.writer.add_scalar('Learning_Rate/actor', current_lr_actor, self.update_step)
+            self.writer.add_scalar('Learning_Rate/critic', current_lr_critic, self.update_step)
+
+            self.lr_stats['actor_min'] = min(self.lr_stats['actor_min'], current_lr_actor)
+            self.lr_stats['actor_max'] = max(self.lr_stats['actor_max'], current_lr_actor)
+            self.lr_stats['critic_min'] = min(self.lr_stats['critic_min'], current_lr_critic)
+            self.lr_stats['critic_max'] = max(self.lr_stats['critic_max'], current_lr_critic)
 
             return {
                 'actor_loss': actor_loss.item(),
@@ -1006,7 +1031,19 @@ class A2CTrainer:
             torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.config.max_grad_norm)
             self.ac_optimizer.step()
 
+            if hasattr(self, 'ac_scheduler'):
+                self.ac_scheduler.step()
+
             current_lr = self.ac_optimizer.param_groups[0]['lr']
+
+            self.update_step += 1
+            self.writer.add_scalar('Learning_Rate/actor', current_lr, self.update_step)
+            self.writer.add_scalar('Learning_Rate/critic', current_lr, self.update_step)
+
+            self.lr_stats['actor_min'] = min(self.lr_stats['actor_min'], current_lr)
+            self.lr_stats['actor_max'] = max(self.lr_stats['actor_max'], current_lr)
+            self.lr_stats['critic_min'] = min(self.lr_stats['critic_min'], current_lr)
+            self.lr_stats['critic_max'] = max(self.lr_stats['critic_max'], current_lr)
 
             return {
                 'actor_loss': actor_loss.item(),
@@ -1097,6 +1134,8 @@ class A2CTrainer:
         discriminator_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.max_grad_norm)
         self.discriminator_optimizer.step()
+        if hasattr(self, 'discriminator_scheduler'):
+            self.discriminator_scheduler.step()
 
         self.discriminator.eval()
 
@@ -1370,7 +1409,6 @@ class A2CTrainer:
         self.logger.info(f"🎯 Curriculum adversarial: {self.config.use_curriculum_adversarial}")
 
         start_time = time.time()
-        update_count = 0
 
         # 🚀 NEW: Enhanced tracking
         plateau_detections = 0
@@ -1399,40 +1437,12 @@ class A2CTrainer:
             update_info = {}
             if episode_idx % self.config.update_every == 0:
                 update_info.update(self._update_actor_critic())
-                update_count += 1
-
-                # Step per CyclicLR schedulers
-                if self.config.use_cyclic_lr:
-                    if hasattr(self, 'actor_scheduler') and hasattr(self, 'critic_scheduler'):
-                        self.actor_scheduler.step()
-                        self.critic_scheduler.step()
-
-                        # Log learning rates periodically
-                        if update_count % 50 == 0:
-                            current_lr_actor = self.actor_scheduler.get_last_lr()[0]
-                            current_lr_critic = self.critic_scheduler.get_last_lr()[0]
-
-                            self.logger.info(
-                                f"📊 Update {update_count}: "
-                                f"Actor LR = {current_lr_actor:.2e}, "
-                                f"Critic LR = {current_lr_critic:.2e}"
-                            )
-
-                            self.writer.add_scalar('Learning_Rate/actor', current_lr_actor, update_count)
-                            self.writer.add_scalar('Learning_Rate/critic', current_lr_critic, update_count)
-                else:
-                    # Traditional scheduler
-                    if episode_idx % 100 == 0 and hasattr(self, 'ac_scheduler'):
-                        self.ac_scheduler.step()
 
             # Update discriminator in adversarial phase
             if (episode_idx >= self.config.adversarial_start_episode and
                     episode_idx % self.config.discriminator_update_every == 0):
                 discriminator_info = self._update_discriminator()
                 update_info.update(discriminator_info)
-
-                if hasattr(self, 'discriminator_scheduler'):
-                    self.discriminator_scheduler.step()
 
             # Enhanced logging
             self._log_metrics(episode_idx, episode_info, update_info)
@@ -1524,6 +1534,13 @@ class A2CTrainer:
             self.logger.info("📈 PROGRESS: Improved beyond previous plateau")
         else:
             self.logger.info("⚠️ PLATEAU: Consider further tuning")
+
+        # Learning rate range summary
+        self.logger.info(
+            f"📉 Actor LR range: {self.lr_stats['actor_min']:.2e} - {self.lr_stats['actor_max']:.2e}")
+        self.logger.info(
+            f"📉 Critic LR range: {self.lr_stats['critic_min']:.2e} - {self.lr_stats['critic_max']:.2e}")
+        self.training_stats['lr_stats'] = self.lr_stats
 
         # Save final results with exploration stats
         self._save_final_results_enhanced(final_eval, training_time, {
