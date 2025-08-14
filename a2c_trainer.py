@@ -78,8 +78,8 @@ class TrainingConfig:
     epsilon_decay_episodes: int = 1000  # Episodes to decay from start to end
 
     # 🎯 NEW: Enhanced Entropy Regularization
-    entropy_coef_base: float = 0.05  # Base entropy coefficient
-    entropy_coef_adversarial: float = 0.15  # Higher entropy during adversarial
+    entropy_coef_base: float = 0.8 # Base entropy coefficient
+    entropy_coef_adversarial: float = 1.2  # Higher entropy during adversarial
     entropy_ramp_episodes: int = 200  # Episodes to transition between values
 
     # 📈 NEW: Curriculum Adversarial Weight
@@ -1219,8 +1219,8 @@ class A2CTrainer:
             'eval_action_entropy_std': np.std(eval_action_entropies),
 
             # Success metrics
-            'eval_success_rate': sum(1 for imp in eval_hub_improvements if imp > 0.01) / len(eval_hub_improvements),
-            'eval_significant_improvement_rate': sum(1 for imp in eval_hub_improvements if imp > 0.1) / len(
+            'eval_success_rate': sum(1 for imp in eval_hub_improvements if imp > 0.3) / len(eval_hub_improvements),
+            'eval_significant_improvement_rate': sum(1 for imp in eval_hub_improvements if imp > 0.3) / len(
                 eval_hub_improvements)
         }
 
@@ -1263,9 +1263,6 @@ class A2CTrainer:
         self.writer.add_scalar('Parameters/EntropyCoef', self.current_entropy_coef, episode_idx)
         self.writer.add_scalar('Parameters/AdversarialWeight', self.current_adversarial_weight, episode_idx)
 
-        # Log epsilon_effective to standard logger
-        self.logger.info(f"Episode {episode_idx} | epsilon_effective={epsilon_effective:.3f}")
-
         # Training phase indicators
         is_warmup = episode_idx < self.config.adversarial_start_episode
         is_adversarial = episode_idx >= self.config.adversarial_start_episode
@@ -1283,7 +1280,7 @@ class A2CTrainer:
             recent_improvements = self.training_stats['hub_score_improvements'][-self.config.log_every:]
             recent_lengths = self.training_stats['episode_lengths'][-self.config.log_every:]
 
-            success_rate = sum(1 for imp in recent_improvements if imp > 0.01) / len(recent_improvements)
+            success_rate = sum(1 for imp in recent_improvements if imp > 0.25) / len(recent_improvements)
 
             # Standard telemetry
             early_stop_rate = sum(1 for length in recent_lengths if length <= 2) / len(recent_lengths)
@@ -1555,7 +1552,7 @@ class A2CTrainer:
         self.training_stats['lr_stats'] = self.lr_stats
 
         # Save final results with exploration stats
-        self._save_final_results_enhanced(final_eval, training_time, {
+        self._save_final_results(final_eval, training_time, {
             'plateau_detections': plateau_detections,
             'exploration_boosts': exploration_boosts,
             'best_exploration_score': best_exploration_score,
@@ -1566,7 +1563,7 @@ class A2CTrainer:
 
         return self.training_stats
 
-    def _save_final_results(self, final_eval: Dict, training_time: float):
+    def _save_final_results(self, final_eval: Dict, training_time: float, exploration_stats: Dict = None):
         """Save final training results and plots"""
 
         # Save training statistics
@@ -1578,7 +1575,7 @@ class A2CTrainer:
             'best_reward': self.best_reward,
 
             # 🚀 NEW: Exploration statistics
-            'exploration_summary': exploration_stats,
+            'exploration_summary': exploration_stats or {},
             'parameter_evolution': {
                 'epsilon_values': self.exploration_stats.get('epsilon_values', []),
                 'entropy_coef_values': self.exploration_stats.get('entropy_coef_values', []),
@@ -2019,10 +2016,10 @@ class A2CTrainer:
         # Plateau criteria
         mean_improvement = np.mean(recent_improvements)
         std_improvement = np.std(recent_improvements)
-        success_rate = sum(1 for imp in recent_improvements if imp > 0.01) / len(recent_improvements)
+        success_rate = sum(1 for imp in recent_improvements if imp > 0.25) / len(recent_improvements)
 
         # Detect plateau: low variance and low success rate
-        is_plateau = (std_improvement < 0.05 and success_rate < 0.3 and mean_improvement < 0.3)
+        is_plateau = (std_improvement < 0.05 and success_rate < 0.25 and mean_improvement < 0.3)
 
         if is_plateau and episode_idx % 200 == 0:  # Check every 200 episodes
             self.logger.info(f"🚨 PLATEAU DETECTED at episode {episode_idx}")

@@ -65,7 +65,7 @@ class OptimizationConfig:
     lr_discriminator: float = 5e-4
     gamma: float = 0.95
     value_loss_coef: float = 0.5
-    entropy_coef: float = 0.1
+    entropy_coef: float = 0.3
     max_grad_norm: float = 1.0
     weight_decay: float = 1e-5
 

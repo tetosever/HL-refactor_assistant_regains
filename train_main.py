@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Any
 import json
 import time
+import numpy as np
 
 # Import all necessary modules
 from discriminator import create_discriminator
@@ -628,9 +629,9 @@ def main():
         experiment_name="graph_refactor_a2c_exploration_v4",
 
         # 🚀 EXTENDED training for plateau breakthrough
-        num_episodes=3500,  # Increased from 2200
-        warmup_episodes=600,  # Maintained
-        adversarial_start_episode=600,
+        num_episodes=5000,  # Increased from 2200
+        warmup_episodes=1000,  # Maintained
+        adversarial_start_episode=1000,
 
         # 🎯 Base learning rates (will be enhanced by curriculum)
         lr_actor=3e-4,
@@ -639,39 +640,39 @@ def main():
 
         # 🔥 EXPLORATION PARAMETERS
         use_epsilon_greedy=True,
-        epsilon_start=0.3,  # High initial exploration
-        epsilon_end=0.05,  # Minimum exploration
-        epsilon_decay_episodes=1000,  # Long decay for sustained exploration
+        epsilon_start=0.5,  # High initial exploration
+        epsilon_end=0.2,  # Minimum exploration
+        epsilon_decay_episodes=2500,  # Long decay for sustained exploration
 
         # 📈 ENHANCED ENTROPY REGULARIZATION
-        entropy_coef_base=0.05,  # Warmup phase
-        entropy_coef_adversarial=0.15,  # Higher entropy during adversarial
-        entropy_ramp_episodes=200,  # Smooth transition
+        entropy_coef_base=0.7,  # Warmup phase
+        entropy_coef_adversarial=1.0,  # Higher entropy during adversarial
+        entropy_ramp_episodes=400,  # Smooth transition
 
         # 🎯 CURRICULUM ADVERSARIAL LEARNING
         use_curriculum_adversarial=True,
-        adversarial_weight_start=0.5,  # Start gentle
-        adversarial_weight_end=2.0,  # Ramp to full strength
-        adversarial_ramp_episodes=800,  # Long curriculum
+        adversarial_weight_start=0.3,  # Start gentle
+        adversarial_weight_end=1.5,  # Ramp to full strength
+        adversarial_ramp_episodes=1200,  # Long curriculum
 
         # 🔍 EXPLORATION MONITORING
         track_action_entropy=True,
         track_policy_variance=True,
-        exploration_log_every=25,
+        exploration_log_every=50,
 
         # CyclicLR maintained but with longer cycles
         use_cyclic_lr=True,
         base_lr_actor=3e-4,
-        max_lr_actor=1e-3,
+        max_lr_actor=6e-4,
         step_size_up_actor=200,  # Longer cycles for stability
         base_lr_critic=1e-4,
-        max_lr_critic=3e-4,
+        max_lr_critic=2e-4,
         step_size_up_critic=250,  # Longer cycles
 
         # Training parameters optimized for exploration
-        batch_size=32,
-        update_every=15,  # More frequent updates
-        discriminator_update_every=40,  # More frequent discriminator updates
+        batch_size=64,
+        update_every=20,  # More frequent updates
+        discriminator_update_every=75,  # More frequent discriminator updates
 
         # Enhanced regularization
         entropy_coef=0.1,  # Will be overridden by dynamic scheduling
@@ -684,10 +685,10 @@ def main():
         min_improvement=0.005,  # More sensitive improvement detection
 
         # Enhanced logging
-        log_every=25,
-        eval_every=150,  # More frequent evaluation
-        save_every=250,
-        num_eval_episodes=30,  # More evaluation episodes
+        log_every=100,
+        eval_every=500,  # More frequent evaluation
+        save_every=500,
+        num_eval_episodes=50,  # More evaluation episodes
     )
 
     print("🚀 Starting Enhanced Graph Refactoring RL Training")
@@ -763,7 +764,7 @@ def main():
             best_improvement = max(training_stats['hub_score_improvements']) if training_stats[
                 'hub_score_improvements'] else 0
             mean_recent = np.mean(recent_improvements) if recent_improvements else 0
-            success_rate = sum(1 for imp in recent_improvements if imp > 0.01) / len(
+            success_rate = sum(1 for imp in recent_improvements if imp > 0.25) / len(
                 recent_improvements) if recent_improvements else 0
 
             print("🎯 PERFORMANCE SUMMARY:")
