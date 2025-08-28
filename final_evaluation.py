@@ -55,7 +55,7 @@ class EvaluationConfig:
 
     def __init__(self):
         # Paths
-        self.model_path = "results/rl_training/best_model.pt"
+        self.model_path = "results/ppo_training/best_model.pt"
         self.discriminator_path = "results/discriminator_pretraining/pretrained_discriminator.pt"
         self.data_path = "data_builder/dataset/graph_features"
         self.results_dir = "results/evaluation"

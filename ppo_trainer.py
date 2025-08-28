@@ -4,27 +4,28 @@ PPO Trainer for Graph Refactoring
 Corrected implementation maintaining environment characteristics
 """
 
-import os
 import json
 import logging
+import os
 import random
+import time
+from collections import deque
+from dataclasses import asdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional, Dict, List
+
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
+import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import Data, Batch
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
-from collections import deque
-import time
-from dataclasses import dataclass, asdict
 
 
 @dataclass
 class PPOConfig:
-    """PPO Configuration maintaining original environment features"""
+    """Config compatibile con tutti i campi usati nel progetto (curriculum/CLR inclusi)."""
 
     # General
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -36,54 +37,74 @@ class PPOConfig:
     discriminator_path: str = "results/discriminator_pretraining/pretrained_discriminator.pt"
     results_dir: str = "results/ppo_training"
 
-    # Environment - mantiene caratteristiche originali
+    # Env
     max_episode_steps: int = 20
     num_actions: int = 7
     reward_weights: Optional[Dict[str, float]] = None
 
-    # Training phases - mantiene logica originale
+    # (Spesso usati altrove)
+    node_dim: int = 7
+    global_features_dim: int = 4
+    shared_encoder: bool = True
+
+    # Training phases
     num_episodes: int = 3000
     warmup_episodes: int = 600
     adversarial_start_episode: int = 600
 
-    # PPO hyperparameters corretti
+    # PPO hyperparameters
     gamma: float = 0.95
     gae_lambda: float = 0.95
     lr: float = 3e-4
     clip_eps: float = 0.2
     ppo_epochs: int = 4
-    target_kl: float = 0.01
+    target_kl: float = 0.02        # meno restrittivo rispetto a 0.01–0.015
     max_grad_norm: float = 0.5
 
     # Loss coefficients
     value_loss_coef: float = 0.5
     entropy_coef: float = 0.05
 
-    # PPO specific
-    rollout_episodes: int = 16  # Collect this many episodes before update
-    minibatch_size: int = 8
+    # PPO batching
+    rollout_episodes: int = 16
+    minibatch_size: int = 16
 
-    # Model architecture - mantiene configurazione originale
+    # Model architecture
     hidden_dim: int = 128
     num_layers: int = 3
     dropout: float = 0.2
 
-    # Reward normalization - mantiene caratteristiche originali
+    # Reward normalization
     normalize_rewards: bool = True
     reward_clip: float = 5.0
 
-    # Logging and evaluation - mantiene frequenze originali
+    # Logging / eval
     log_every: int = 50
     eval_every: int = 200
     save_every: int = 500
     num_eval_episodes: int = 50
 
-    # Early stopping - mantiene logica originale
+    # Early stopping (macro)
     early_stopping_patience: int = 300
     min_improvement: float = 0.01
 
+    # Cyclic Learning Rate (puoi tenerlo spento/attivo via flag)
+    use_cyclic_lr: bool = True
+    base_lr: float = 1e-4
+    max_lr: float = 2e-4
+    clr_step_size_up: int = 120
+    clr_step_size_down: int = 120
+    clr_mode: str = "triangular2"
+
+    # Curriculum learning + coverage
+    use_curriculum: bool = True
+    curriculum_bins: List[int] = field(default_factory=lambda: [20, 30, 45, 66])
+    curriculum_episodes_per_stage: int = 600
+    curriculum_mix_back_ratio: float = 0.10
+    sampling_without_replacement: bool = True
+    coverage_log_every: int = 100
+
     def __post_init__(self):
-        """Initialize reward weights maintaining original structure"""
         if self.reward_weights is None:
             self.reward_weights = {
                 'hub_weight': 10.0,
@@ -93,10 +114,68 @@ class PPOConfig:
                 'early_stop_penalty': -0.5,
                 'cycle_penalty': -0.2,
                 'duplicate_penalty': -0.1,
-                'adversarial_weight': 2.0,
+                'adversarial_weight': 1.0,
                 'patience': 15
             }
 
+class CurriculumSampler:
+    """Sampler senza reinserimento con curriculum per num_nodes."""
+    def __init__(self, num_nodes_list: List[int], bins: List[int], episodes_per_stage: int, mix_back_ratio: float = 0.0, seed: int = 42):
+        self.num_nodes_list = num_nodes_list
+        self.N = len(num_nodes_list)
+        self.bins = sorted(bins)
+        self.stage = 0
+        self.episodes_per_stage = max(1, episodes_per_stage)
+        self.mix_back_ratio = max(0.0, min(0.3, mix_back_ratio))
+        self.rng = random.Random(seed)
+        # bucketizza
+        self.bucket_indices: Dict[int, List[int]] = {b: [] for b in self.bins}
+        for idx, n in enumerate(num_nodes_list):
+            for b in self.bins:
+                if n <= b:
+                    self.bucket_indices[b].append(idx)
+                    break
+        self._rebuild_pool()
+        self.current_queue = deque(self.pool)
+        self.seen = set()
+        self.episodes_seen_in_stage = 0
+
+    def _rebuild_pool(self):
+        max_allowed = self.bins[self.stage]
+        pool = []
+        for b in self.bins:
+            if b <= max_allowed:
+                pool.extend(self.bucket_indices[b])
+        if self.mix_back_ratio > 0.0 and self.stage > 0:
+            prev_pool = []
+            for b in self.bins:
+                if b < self.bins[self.stage]:
+                    prev_pool.extend(self.bucket_indices[b])
+            k = int(len(pool) * self.mix_back_ratio)
+            self.rng.shuffle(prev_pool)
+            pool.extend(prev_pool[:k])
+        pool = list(set(pool))
+        self.rng.shuffle(pool)
+        self.pool = pool
+
+    def next_index(self) -> int:
+        if not self.current_queue:
+            self.rng.shuffle(self.pool)
+            self.current_queue = deque(self.pool)
+        idx = self.current_queue.popleft()
+        self.seen.add(idx)
+        return idx
+
+    def maybe_advance_stage(self):
+        self.episodes_seen_in_stage += 1
+        if self.episodes_seen_in_stage >= self.episodes_per_stage and self.stage < len(self.bins) - 1:
+            self.stage += 1
+            self.episodes_seen_in_stage = 0
+            self._rebuild_pool()
+            self.current_queue = deque(self.pool)
+
+    def coverage(self) -> float:
+        return len(self.seen) / self.N if self.N > 0 else 0.0
 
 class PPOBuffer:
     """PPO Buffer that maintains compatibility with original reward structure"""
@@ -236,6 +315,21 @@ class PPOTrainer:
             reward_weights=config.reward_weights
         )
 
+          # ---- Costruisci lista num_nodes per curriculum ----
+        try:
+            num_nodes_list = [d.num_nodes for d in self.env.original_data_list]
+        except Exception:
+            num_nodes_list = [d.x.size(0) for d in self.env.original_data_list]
+
+        bins = getattr(self.config, "curriculum_bins", [20, 30, 45, 66])  # adatta alle tue dimensioni
+        self.sampler = CurriculumSampler(
+            num_nodes_list=num_nodes_list,
+            bins=bins,
+            episodes_per_stage=getattr(self.config, "curriculum_episodes_per_stage", 600),
+            mix_back_ratio=getattr(self.config, "curriculum_mix_back_ratio", 0.0),
+            seed=getattr(self.config, "random_seed", 42),
+        )
+
         # Load discriminator maintaining original functionality
         self.discriminator = load_discriminator(config.discriminator_path, config.device)
         if self.discriminator is not None:
@@ -246,6 +340,25 @@ class PPOTrainer:
 
         # Single optimizer (PPO correction)
         self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr, eps=1e-5)
+
+        # --- Cyclic Learning Rate (opzionale) ---
+        self.scheduler = None
+        if getattr(self.config, "use_cyclic_lr", False):
+            base_lr = getattr(self.config, "base_lr", self.config.lr * 0.3)
+            max_lr = getattr(self.config, "max_lr", self.config.lr)
+            step_up = getattr(self.config, "clr_step_size_up", 200)  # in numero di optimizer steps
+            step_dn = getattr(self.config, "clr_step_size_down", None)  # se None, simmetrico
+            self.scheduler = torch.optim.lr_scheduler.CyclicLR(
+                self.optimizer,
+                base_lr = base_lr,
+                max_lr = max_lr,
+                step_size_up = step_up,
+                step_size_down = step_dn,
+                mode = getattr(self.config, "clr_mode", "triangular2"),
+                cycle_momentum = False,  # Adam: niente momentum cycling
+            )
+            self.logger.info(
+            f"Using CyclicLR: base_lr={base_lr}, max_lr={max_lr}, step_up={step_up}, step_down={step_dn}, mode={getattr(self.config, 'clr_mode', 'triangular2')}")
 
         # PPO buffer
         self.buffer = PPOBuffer()
@@ -308,83 +421,87 @@ class PPOTrainer:
         return global_features
 
     def collect_rollouts(self, num_episodes: int, is_adversarial: bool = False) -> Dict:
-        """Collect rollouts maintaining original environment behavior"""
+        """Collect rollouts: store COMPLETE transitions (state, action, logp, value, reward, done)."""
         episode_infos = []
 
-        for episode in range(num_episodes):
-            # Reset environment - maintains original reset logic
-            self.env.reset()
+        for episode_idx in range(num_episodes):
+            _ = self.env.reset()  # mantiene la tua logica
             current_data = self.env.current_data.clone()
 
             episode_reward = 0.0
             episode_length = 0
             initial_hub_score = self.env.initial_metrics['hub_score']
 
-            # Track discriminator score if available
+            # Discriminatore (opzionale)
             initial_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
-                    disc_output = self.discriminator(current_data)
-                    if isinstance(disc_output, dict):
-                        initial_disc_score = torch.softmax(disc_output['logits'], dim=1)[0, 1].item()
+                    disc_out = self.discriminator(current_data)
+                    if isinstance(disc_out, dict):
+                        initial_disc_score = torch.softmax(disc_out['logits'], dim=1)[0, 1].item()
                     else:
-                        initial_disc_score = torch.softmax(disc_output, dim=1)[0, 1].item()
+                        initial_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
 
             while True:
                 global_features = self._extract_global_features(current_data)
 
-                # Get action and value from policy (PPO sampling)
+                # Valutazione policy sullo stato corrente
                 with torch.no_grad():
-                    output = self.model(current_data, global_features)
-                    action_dist = torch.distributions.Categorical(output['action_probs'])
-                    action = action_dist.sample()
-                    log_prob = action_dist.log_prob(action)
-                    value = output['state_value']
+                    out = self.model(current_data, global_features)
+                    if isinstance(out, dict):
+                        action_probs = out['action_probs']
+                        state_value = out['state_value']
+                    else:
+                        action_probs, state_value = out
 
-                # Store in buffer
-                self.buffer.store(
-                    state=current_data,
-                    global_feat=global_features,
-                    action=action.item(),
-                    reward=0.0,  # Will be filled after step
-                    value=value.item(),
-                    log_prob=log_prob.item(),
-                    done=False  # Will be filled after step
-                )
+                    dist = torch.distributions.Categorical(action_probs)
+                    action = dist.sample()
+                    log_prob = dist.log_prob(action)
 
-                # Take environment step - maintains original step logic
-                _, reward, done, info = self.env.step(action.item())
+                    if isinstance(state_value, torch.Tensor):
+                        state_value = state_value.squeeze().item()
 
-                # Apply reward normalization if configured
-                if self.config.normalize_rewards:
+                # Esegui lo step AMBIENTE
+                _, reward, done, info = self.env.step(int(action.item()))
+
+                # Normalizzazione reward (robusta)
+                if getattr(self.config, "normalize_rewards", True):
                     reward = self._normalize_reward(reward)
 
-                # Update stored reward and done flag
-                self.buffer.rewards[-1] = reward
-                self.buffer.dones[-1] = done
+                # *** STORE COMPLETO ***
+                self.buffer.store(
+                    state=current_data,  # stato prima dello step
+                    global_feat=global_features,
+                    action=int(action.item()),
+                    reward=float(reward),
+                    value=float(state_value),  # old value usato per value clipping
+                    log_prob=float(log_prob.item()),
+                    done=bool(done)
+                )
 
-                episode_reward += reward
+                episode_reward += float(reward)
                 episode_length += 1
 
-                if done:
+                if done or (
+                        hasattr(self.config, "max_episode_steps") and episode_length >= self.config.max_episode_steps):
                     break
 
+                # Aggiorna stato corrente per il prossimo passo
                 current_data = self.env.current_data.clone()
 
-            # Calculate final metrics maintaining original structure
+            # Metriche finali episodio
             final_hub_score = self.env._calculate_metrics(current_data)['hub_score']
             hub_improvement = initial_hub_score - final_hub_score
             best_hub_improvement = initial_hub_score - self.env.best_hub_score
 
-            # Track final discriminator score
             final_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
-                    disc_output = self.discriminator(current_data)
-                    if isinstance(disc_output, dict):
-                        final_disc_score = torch.softmax(disc_output['logits'], dim=1)[0, 1].item()
+                    disc_out = self.discriminator(current_data)
+                    if isinstance(disc_out, dict):
+                        final_disc_score = torch.softmax(disc_out['logits'], dim=1)[0, 1].item()
                     else:
-                        final_disc_score = torch.softmax(disc_output, dim=1)[0, 1].item()
+                        final_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
 
             episode_infos.append({
                 'episode_reward': episode_reward,
@@ -394,7 +511,7 @@ class PPOTrainer:
                 'initial_hub_score': initial_hub_score,
                 'final_hub_score': final_hub_score,
                 'best_hub_score': self.env.best_hub_score,
-                'no_improve_steps': self.env.no_improve_steps,
+                'no_improve_steps': getattr(self.env, 'no_improve_steps', None),
                 'initial_disc_score': initial_disc_score,
                 'final_disc_score': final_disc_score
             })
@@ -402,127 +519,166 @@ class PPOTrainer:
         return {'episodes': episode_infos}
 
     def _normalize_reward(self, reward: float) -> float:
-        """Normalize reward maintaining original scaling"""
-        self.reward_running_stats.append(reward)
+        """
+        Normalizzazione reward robusta:
+        - running mean (EWMA) e running MAD (EWMA della deviazione assoluta)
+        - niente std su finestre corte, niente normalizzazioni aggressive
+        """
+        if not hasattr(self, "_rwd_mean"):
+            # stato iniziale
+            self._rwd_mean = float(reward)
+            self._rwd_mad = 1.0
+            self._rwd_beta = 0.95  # smorzamento (0.9-0.99; più alto = più stabile)
 
-        if len(self.reward_running_stats) < 10:
-            return reward
+        beta = self._rwd_beta
+        # aggiorna media
+        self._rwd_mean = beta * self._rwd_mean + (1.0 - beta) * float(reward)
+        # aggiorna MAD rispetto alla NUOVA media
+        abs_dev = abs(float(reward) - self._rwd_mean)
+        self._rwd_mad = beta * self._rwd_mad + (1.0 - beta) * abs_dev
+        denom = max(self._rwd_mad, 1e-8)
 
-        mean_reward = np.mean(self.reward_running_stats)
-        std_reward = np.std(self.reward_running_stats) + 1e-8
-
-        normalized_reward = (reward - mean_reward) / std_reward
-        return np.clip(normalized_reward, -self.config.reward_clip, self.config.reward_clip)
+        normed = (float(reward) - self._rwd_mean) / denom
+        # clipping morbido
+        if hasattr(self.config, "reward_clip") and self.config.reward_clip is not None:
+            cap = float(self.config.reward_clip)
+            normed = float(max(-cap, min(cap, normed)))
+        return normed
 
     def update_ppo(self) -> Dict:
-        """PPO update with proper algorithm implementation"""
+        """PPO update: advantages norm, returns RAW (no norm), value clipping, robust KL stop."""
         if len(self.buffer) == 0:
             return {}
 
-        # Compute GAE
+        # --- Bootstrap per GAE (value sullo stato finale del rollout) ---
         with torch.no_grad():
             if len(self.buffer.states) > 0:
                 last_state = self.buffer.states[-1]
-                last_global = self.buffer.global_features[-1:]
-                last_output = self.model(last_state, last_global)
-                next_value = last_output['state_value'].item()
+                last_global = self.buffer.global_features[-1]
+                if isinstance(last_global, torch.Tensor) and last_global.dim() == 1:
+                    last_global = last_global.unsqueeze(0)
+                last_batch = Batch.from_data_list([last_state]).to(self.device)
+                out_last = self.model(last_batch, last_global)
+                if isinstance(out_last, dict):
+                    next_value = float(out_last['state_value'].item())
+                else:
+                    _, vtmp = out_last
+                    next_value = float(vtmp.squeeze().item())
             else:
                 next_value = 0.0
 
+        # GAE (riempie advantages e returns nel buffer)
         self.buffer.compute_gae_advantages(self.config.gamma, self.config.gae_lambda, next_value)
 
-        # Get batch data
+        # Costruzione batch
         batch = self.buffer.get_batch_data()
 
-        # Normalize advantages
-        advantages = batch['advantages']
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        batch['advantages'] = advantages.to(self.device)
+        # Normalizza SOLO le advantages
+        adv = batch['advantages']
+        adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+        batch['advantages'] = adv.to(self.device)
 
-        # Move tensors to device
+        # Tensors su device
         batch['actions'] = batch['actions'].to(self.device)
         batch['old_log_probs'] = batch['old_log_probs'].to(self.device)
-        batch['returns'] = batch['returns'].to(self.device)
+        batch['returns'] = batch['returns'].to(self.device)  # *** RAW ***
         batch['global_features'] = batch['global_features'].to(self.device)
+        batch['old_values'] = batch['old_values'].to(self.device)  # per value clipping
 
         dataset_size = len(batch['actions'])
 
-        # PPO epochs
-        total_policy_loss = 0
-        total_value_loss = 0
-        total_entropy = 0
+        total_policy_loss = 0.0
+        total_value_loss = 0.0
+        total_entropy = 0.0
         num_updates = 0
+        stop_early = False
 
         for epoch in range(self.config.ppo_epochs):
-            # Create mini-batches
-            indices = torch.randperm(dataset_size)
-
+            indices = torch.randperm(dataset_size, device=self.device)
             for start in range(0, dataset_size, self.config.minibatch_size):
                 end = min(start + self.config.minibatch_size, dataset_size)
-                mb_indices = indices[start:end]
-
-                if len(mb_indices) == 0:
+                mb_ix = indices[start:end]
+                if mb_ix.numel() == 0:
                     continue
 
-                # Create mini-batch
-                mb_states = [batch['states'][i] for i in mb_indices]
-                mb_batch_states = Batch.from_data_list(mb_states).to(self.device)
-                mb_global_features = batch['global_features'][mb_indices]
-                mb_actions = batch['actions'][mb_indices]
-                mb_old_log_probs = batch['old_log_probs'][mb_indices]
-                mb_advantages = batch['advantages'][mb_indices]
-                mb_returns = batch['returns'][mb_indices]
+                # Mini-batch: batcha i grafi in un Batch PYG
+                states_mb = [batch['states'][int(i)] for i in mb_ix.tolist()]
+                globals_mb = batch['global_features'][mb_ix]
+                actions_mb = batch['actions'][mb_ix]
+                oldlogp_mb = batch['old_log_probs'][mb_ix]
+                adv_mb = batch['advantages'][mb_ix]
+                rets_mb = batch['returns'][mb_ix]  # *** NON normalizzati ***
+                oldv_mb = batch['old_values'][mb_ix]
 
-                # Forward pass
-                log_probs, values, entropy = self.model.evaluate_actions(
-                    mb_batch_states, mb_global_features, mb_actions
-                )
+                mb_batch_states = Batch.from_data_list(states_mb).to(self.device)
 
-                # PPO policy loss with clipping
-                ratio = torch.exp(log_probs - mb_old_log_probs)
-                surr1 = ratio * mb_advantages
-                surr2 = torch.clamp(ratio, 1.0 - self.config.clip_eps, 1.0 + self.config.clip_eps) * mb_advantages
-                policy_loss = -torch.min(surr1, surr2).mean()
+                # Forward
+                out = self.model(mb_batch_states, globals_mb)
+                if isinstance(out, dict):
+                    action_probs = out['action_probs']
+                    values = out['state_value']
+                else:
+                    action_probs, values = out
 
-                # Value loss
-                value_loss = F.mse_loss(values, mb_returns)
+                dist = torch.distributions.Categorical(action_probs)
+                logp = dist.log_prob(actions_mb)
+                ent = dist.entropy().mean()
 
-                # Entropy loss
-                entropy_loss = -self.config.entropy_coef * entropy.mean()
+                if isinstance(values, torch.Tensor) and values.dim() == 2 and values.size(-1) == 1:
+                    values = values.squeeze(-1)
 
-                # Total loss
-                total_loss = policy_loss + self.config.value_loss_coef * value_loss + entropy_loss
+                # Policy (clipped)
+                ratio = torch.exp(logp - oldlogp_mb)
+                surr1 = ratio * adv_mb
+                surr2 = torch.clamp(ratio, 1.0 - self.config.clip_eps, 1.0 + self.config.clip_eps) * adv_mb
+                pol_loss = -torch.min(surr1, surr2).mean()
 
-                # Optimization step
-                self.optimizer.zero_grad()
-                total_loss.backward()
+                # Value clipping (su returns GREZZI)
+                v_clip = oldv_mb + (values - oldv_mb).clamp(-self.config.clip_eps, self.config.clip_eps)
+                v_uncl = F.mse_loss(values, rets_mb)
+                v_clp = F.mse_loss(v_clip, rets_mb)
+                val_loss = torch.max(v_uncl, v_clp)
+
+                # Totale loss
+                loss = pol_loss + self.config.value_loss_coef * val_loss - self.config.entropy_coef * ent
+
+                # Backprop
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
-                # Accumulate losses
-                total_policy_loss += policy_loss.item()
-                total_value_loss += value_loss.item()
-                total_entropy += entropy.mean().item()
+                # Statistiche
+                total_policy_loss += pol_loss.item()
+                total_value_loss += val_loss.item()
+                total_entropy += ent.item()
                 num_updates += 1
 
-                # Early stopping for KL divergence
+                # KL early stop
                 with torch.no_grad():
-                    kl_div = (mb_old_log_probs - log_probs).mean()
-                    if kl_div > self.config.target_kl:
-                        break
+                    approx_kl = (oldlogp_mb - logp).mean().clamp_min(0).item()
+                    clip_fraction = ((ratio - 1.0).abs() > self.config.clip_eps).float().mean().item()
+                if approx_kl > self.config.target_kl:
+                    self.logger.info(
+                        f"Early stop (KL). approx_kl={approx_kl:.5f}, clip_frac={clip_fraction:.3f}, "
+                        f"p_loss={pol_loss.item():.4f}, v_loss={val_loss.item():.4f}"
+                    )
+                    stop_early = True
+                    break
 
-        # Clear buffer (PPO is on-policy)
+            if stop_early:
+                break
+
+        # On-policy: pulisci buffer
         self.buffer.clear()
 
-        if num_updates > 0:
-            return {
-                'policy_loss': total_policy_loss / num_updates,
-                'value_loss': total_value_loss / num_updates,
-                'entropy': total_entropy / num_updates,
-                'num_updates': num_updates
-            }
-        else:
-            return {}
+        return {
+            'policy_loss': total_policy_loss / max(1, num_updates),
+            'value_loss': total_value_loss / max(1, num_updates),
+            'entropy': total_entropy / max(1, num_updates)
+        }
 
     def update_discriminator(self, episode_infos: List[Dict]) -> Dict:
         """Update discriminator maintaining original functionality"""

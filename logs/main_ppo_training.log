@@ -11,3 +11,966 @@
 2025-08-28 18:02:59,280 [INFO] ppo_trainer: Warmup phase: episodes 1-600
 2025-08-28 18:02:59,280 [INFO] ppo_trainer: Adversarial phase: episodes 600+
 2025-08-28 18:03:01,008 [ERROR] __main__: Training pipeline failed: expected Tensor as element 1 in argument 0, but got list
+2025-08-28 18:09:34,681 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:09:34,682 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:09:34,682 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:09:34,682 [INFO] __main__: Starting PPO training...
+2025-08-28 18:09:36,837 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:09:36,851 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:09:36,851 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:09:36,853 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:09:36,853 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:09:36,853 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:09:36,853 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:09:36,853 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:10:08,340 [INFO] ppo_trainer: Episode  400 | Reward:  0.290±1.590 | Hub Δ:  0.387±0.250 | Success: 75.0% | Buffer: 0
+2025-08-28 18:10:18,994 [INFO] ppo_trainer: Evaluation at episode 400: Reward: -0.181±2.797 | Hub Δ: 0.425±0.284 | Success: 62.0%
+2025-08-28 18:10:19,047 [INFO] ppo_trainer: Saved new best model at episode 400
+2025-08-28 18:10:41,909 [INFO] ppo_trainer: Episode  800 | Reward: -0.491±0.915 | Hub Δ:  0.135±0.176 | Success: 37.5% | Buffer: 0
+2025-08-28 18:10:42,635 [INFO] ppo_trainer: Evaluation at episode 800: Reward: -0.378±1.459 | Hub Δ: 0.050±0.161 | Success: 6.0%
+2025-08-28 18:11:13,694 [INFO] ppo_trainer: Episode 1200 | Reward: -0.795±2.028 | Hub Δ:  0.387±0.285 | Success: 62.5% | Buffer: 0
+2025-08-28 18:11:27,594 [INFO] ppo_trainer: Evaluation at episode 1200: Reward: -0.271±2.381 | Hub Δ: 0.485±0.241 | Success: 76.0%
+2025-08-28 18:11:57,616 [INFO] ppo_trainer: Episode 1600 | Reward: -0.110±1.361 | Hub Δ:  0.307±0.333 | Success: 50.0% | Buffer: 0
+2025-08-28 18:11:58,668 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: -0.020±2.394 | Hub Δ: 0.099±0.249 | Success: 10.0%
+2025-08-28 18:12:23,224 [INFO] ppo_trainer: Episode 2000 | Reward:  0.113±1.479 | Hub Δ:  0.426±0.178 | Success: 75.0% | Buffer: 0
+2025-08-28 18:12:41,910 [INFO] ppo_trainer: Evaluation at episode 2000: Reward: 0.015±2.437 | Hub Δ: 0.539±0.270 | Success: 78.0%
+2025-08-28 18:12:42,043 [INFO] ppo_trainer: Saved new best model at episode 2000
+2025-08-28 18:13:10,722 [INFO] ppo_trainer: Episode 2400 | Reward:  0.143±1.065 | Hub Δ:  0.324±0.280 | Success: 62.5% | Buffer: 0
+2025-08-28 18:13:19,500 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: -0.263±2.374 | Hub Δ: 0.374±0.250 | Success: 62.0%
+2025-08-28 18:13:40,466 [INFO] ppo_trainer: Episode 2800 | Reward: -0.733±2.116 | Hub Δ:  0.393±0.297 | Success: 62.5% | Buffer: 0
+2025-08-28 18:13:55,810 [INFO] ppo_trainer: Evaluation at episode 2800: Reward: 0.240±2.762 | Hub Δ: 0.544±0.281 | Success: 78.0%
+2025-08-28 18:13:55,905 [INFO] ppo_trainer: Saved new best model at episode 2800
+2025-08-28 18:14:07,182 [INFO] ppo_trainer: Episode 3000 | Reward:  0.400±0.585 | Hub Δ:  0.528±0.296 | Success: 87.5% | Buffer: 0
+2025-08-28 18:14:08,047 [INFO] ppo_trainer: Evaluation at episode 3000: Reward: 0.935±2.613 | Hub Δ: 0.188±0.274 | Success: 30.0%
+2025-08-28 18:14:09,131 [INFO] ppo_trainer: PPO training completed in 0.08 hours
+2025-08-28 18:14:09,131 [INFO] ppo_trainer: Best reward: 0.240
+2025-08-28 18:14:09,132 [INFO] ppo_trainer: Final hub improvement: 0.1556
+2025-08-28 18:14:09,132 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-28 18:14:09,145 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-28 18:14:09,145 [INFO] __main__: PPO training completed
+2025-08-28 18:14:09,153 [INFO] __main__: PPO training phase completed successfully
+2025-08-28 18:14:09,153 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-28 18:14:09,153 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-28 18:14:09,170 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 128, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.2, 'shared_encoder': True}
+2025-08-28 18:14:40,523 [INFO] __main__: Evaluation Results:
+2025-08-28 18:14:40,524 [INFO] __main__:   Success Rate: 1.000
+2025-08-28 18:14:40,524 [INFO] __main__:   Avg Reward: -0.229 ± 2.649
+2025-08-28 18:14:40,524 [INFO] __main__:   Avg Hub Improvement: 0.505 ± 0.271
+2025-08-28 18:14:40,524 [INFO] __main__:   Avg Episode Length: 16.4
+2025-08-28 18:14:40,524 [INFO] __main__:   Discriminator Improvement: -0.128
+2025-08-28 18:14:40,526 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-28 18:14:40,535 [INFO] __main__: Evaluation completed successfully
+2025-08-28 18:14:40,535 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-28 18:29:19,011 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:29:19,012 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:29:19,012 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:29:19,012 [INFO] __main__: Starting PPO training...
+2025-08-28 18:29:21,327 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:29:21,344 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:29:21,344 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:29:21,345 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:29:21,345 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:29:21,345 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:29:21,345 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:29:21,345 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:29:23,720 [ERROR] __main__: Training pipeline failed: name 'values' is not defined
+2025-08-28 18:30:01,646 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:30:01,647 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:30:01,647 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:30:01,647 [INFO] __main__: Starting PPO training...
+2025-08-28 18:30:03,211 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:30:03,219 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:30:03,222 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:30:03,223 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:30:03,223 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:30:03,224 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:30:03,224 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:30:03,224 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:30:05,451 [ERROR] __main__: Training pipeline failed: index is out of bounds for dimension with size 0
+2025-08-28 18:30:45,177 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:30:45,177 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:30:45,178 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:30:45,178 [INFO] __main__: Starting PPO training...
+2025-08-28 18:30:46,688 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:30:46,696 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:30:46,708 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:30:46,717 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:30:46,717 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:30:46,717 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:30:46,717 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:30:46,717 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:30:48,623 [ERROR] __main__: Training pipeline failed: index is out of bounds for dimension with size 0
+2025-08-28 18:43:28,224 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:43:28,224 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:43:28,224 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:43:28,224 [INFO] __main__: Starting PPO training...
+2025-08-28 18:43:30,431 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:43:30,443 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:43:30,444 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:43:30,445 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:43:30,445 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:43:30,446 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:43:30,446 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:43:30,446 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:43:32,639 [ERROR] __main__: Training pipeline failed: 'values'
+2025-08-28 18:46:25,620 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:46:25,621 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:46:25,621 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:46:25,621 [INFO] __main__: Starting PPO training...
+2025-08-28 18:46:27,699 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:46:27,708 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:46:27,708 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:46:27,709 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:46:27,709 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:46:27,710 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:46:27,710 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:46:27,710 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:46:39,917 [ERROR] __main__: Training pipeline failed: cannot access local variable 'stop_early' where it is not associated with a value
+2025-08-28 18:47:52,926 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:47:52,926 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:47:52,927 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:47:52,927 [INFO] __main__: Starting PPO training...
+2025-08-28 18:47:55,044 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:47:55,053 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:47:55,053 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:47:55,054 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:47:55,054 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:47:55,054 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:47:55,054 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:47:55,055 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:48:59,923 [INFO] ppo_trainer: Episode  400 | Reward: -0.452±1.177 | Hub Δ:  0.255±0.276 | Success: 43.8% | Buffer: 0
+2025-08-28 18:49:15,894 [INFO] ppo_trainer: Evaluation at episode 400: Reward: -2.846±4.360 | Hub Δ: 0.154±0.400 | Success: 22.0%
+2025-08-28 18:49:16,004 [INFO] ppo_trainer: Saved new best model at episode 400
+2025-08-28 18:50:27,756 [INFO] ppo_trainer: Episode  800 | Reward: -0.001±1.657 | Hub Δ:  0.280±0.194 | Success: 56.2% | Buffer: 0
+2025-08-28 18:50:40,041 [INFO] ppo_trainer: Evaluation at episode 800: Reward: -0.317±3.174 | Hub Δ: 0.480±0.298 | Success: 72.0%
+2025-08-28 18:50:40,112 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-28 18:51:56,267 [INFO] ppo_trainer: Episode 1200 | Reward:  0.678±2.004 | Hub Δ:  0.424±0.266 | Success: 75.0% | Buffer: 0
+2025-08-28 18:52:14,473 [INFO] ppo_trainer: Evaluation at episode 1200: Reward: -0.532±2.256 | Hub Δ: 0.508±0.234 | Success: 74.0%
+2025-08-28 18:53:30,635 [INFO] ppo_trainer: Episode 1600 | Reward: -0.509±2.461 | Hub Δ:  0.275±0.192 | Success: 56.2% | Buffer: 0
+2025-08-28 18:53:42,137 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: -0.664±2.626 | Hub Δ: 0.381±0.198 | Success: 70.0%
+2025-08-28 18:54:52,616 [INFO] ppo_trainer: Episode 2000 | Reward:  0.164±2.563 | Hub Δ:  0.346±0.278 | Success: 62.5% | Buffer: 0
+2025-08-28 18:55:09,409 [INFO] ppo_trainer: Evaluation at episode 2000: Reward: -1.402±2.296 | Hub Δ: 0.366±0.179 | Success: 64.0%
+2025-08-28 18:56:12,687 [INFO] ppo_trainer: Episode 2400 | Reward:  0.628±2.770 | Hub Δ:  0.309±0.278 | Success: 50.0% | Buffer: 0
+2025-08-28 18:56:25,133 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: -0.782±2.897 | Hub Δ: 0.406±0.213 | Success: 74.0%
+2025-08-28 18:57:10,513 [INFO] ppo_trainer: Episode 2800 | Reward: -0.327±1.527 | Hub Δ:  0.254±0.216 | Success: 43.8% | Buffer: 0
+2025-08-28 18:57:26,062 [INFO] ppo_trainer: Evaluation at episode 2800: Reward: 0.504±3.166 | Hub Δ: 0.551±0.324 | Success: 70.0%
+2025-08-28 18:57:26,172 [INFO] ppo_trainer: Saved new best model at episode 2800
+2025-08-28 18:57:47,181 [INFO] ppo_trainer: Episode 3000 | Reward:  0.716±1.960 | Hub Δ:  0.331±0.332 | Success: 50.0% | Buffer: 0
+2025-08-28 18:58:02,867 [INFO] ppo_trainer: Evaluation at episode 3000: Reward: 0.293±2.496 | Hub Δ: 0.546±0.270 | Success: 80.0%
+2025-08-28 18:58:02,989 [INFO] ppo_trainer: Saved new best model at episode 3000
+2025-08-28 18:58:17,707 [INFO] ppo_trainer: PPO training completed in 0.17 hours
+2025-08-28 18:58:17,707 [INFO] ppo_trainer: Best reward: 0.293
+2025-08-28 18:58:17,707 [INFO] ppo_trainer: Final hub improvement: 0.4718
+2025-08-28 18:58:17,707 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-28 18:58:17,725 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-28 18:58:17,725 [INFO] __main__: PPO training completed
+2025-08-28 18:58:17,734 [INFO] __main__: PPO training phase completed successfully
+2025-08-28 18:58:17,735 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-28 18:58:17,735 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-28 18:58:17,753 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 128, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.2, 'shared_encoder': True}
+2025-08-28 18:58:53,646 [INFO] __main__: Evaluation Results:
+2025-08-28 18:58:53,647 [INFO] __main__:   Success Rate: 1.000
+2025-08-28 18:58:53,647 [INFO] __main__:   Avg Reward: -0.113 ± 2.413
+2025-08-28 18:58:53,647 [INFO] __main__:   Avg Hub Improvement: 0.507 ± 0.252
+2025-08-28 18:58:53,647 [INFO] __main__:   Avg Episode Length: 16.5
+2025-08-28 18:58:53,647 [INFO] __main__:   Discriminator Improvement: -0.123
+2025-08-28 18:58:53,649 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-28 18:58:53,661 [INFO] __main__: Evaluation completed successfully
+2025-08-28 18:58:53,662 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-28 19:11:17,882 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 19:11:17,883 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 19:11:17,883 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 19:11:17,883 [INFO] __main__: Starting PPO training...
+2025-08-28 19:11:20,110 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 19:11:20,123 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 19:11:20,124 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 19:11:20,124 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0003, step_up=200, step_down=None, mode=triangular2
+2025-08-28 19:11:20,125 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 19:11:20,125 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 19:11:20,125 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 19:11:20,125 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 19:11:20,125 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 19:12:11,996 [INFO] ppo_trainer: Episode  400 | Reward: -0.404±1.680 | Hub Δ:  0.416±0.255 | Success: 75.0% | Buffer: 0
+2025-08-28 19:12:25,810 [INFO] ppo_trainer: Evaluation at episode 400: Reward: -1.156±3.283 | Hub Δ: 0.385±0.344 | Success: 60.0%
+2025-08-28 19:12:25,895 [INFO] ppo_trainer: Saved new best model at episode 400
+2025-08-28 19:13:12,900 [INFO] ppo_trainer: Episode  800 | Reward: -0.484±1.666 | Hub Δ:  0.324±0.267 | Success: 56.2% | Buffer: 0
+2025-08-28 19:13:35,990 [INFO] ppo_trainer: Evaluation at episode 800: Reward: -0.364±2.327 | Hub Δ: 0.491±0.258 | Success: 72.0%
+2025-08-28 19:13:36,079 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-28 19:14:34,128 [INFO] ppo_trainer: Episode 1200 | Reward: -0.241±2.102 | Hub Δ:  0.274±0.235 | Success: 50.0% | Buffer: 0
+2025-08-28 19:14:50,437 [INFO] ppo_trainer: Evaluation at episode 1200: Reward: 0.288±2.294 | Hub Δ: 0.531±0.230 | Success: 88.0%
+2025-08-28 19:14:50,513 [INFO] ppo_trainer: Saved new best model at episode 1200
+2025-08-28 19:16:10,449 [INFO] ppo_trainer: Episode 1600 | Reward: -0.610±1.579 | Hub Δ:  0.468±0.260 | Success: 87.5% | Buffer: 0
+2025-08-28 19:16:26,230 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 0.082±2.592 | Hub Δ: 0.550±0.274 | Success: 78.0%
+2025-08-28 19:16:26,317 [INFO] ppo_trainer: Saved new best model at episode 1600
+2025-08-28 19:17:31,308 [INFO] ppo_trainer: Episode 2000 | Reward:  0.120±2.178 | Hub Δ:  0.450±0.204 | Success: 68.8% | Buffer: 0
+2025-08-28 19:17:48,571 [INFO] ppo_trainer: Evaluation at episode 2000: Reward: -0.005±2.533 | Hub Δ: 0.529±0.277 | Success: 80.0%
+2025-08-28 19:17:48,686 [INFO] ppo_trainer: Saved new best model at episode 2000
+2025-08-28 19:19:09,856 [INFO] ppo_trainer: Episode 2400 | Reward: -0.318±1.998 | Hub Δ:  0.348±0.201 | Success: 62.5% | Buffer: 0
+2025-08-28 19:19:25,346 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: -0.291±2.552 | Hub Δ: 0.488±0.257 | Success: 76.0%
+2025-08-28 19:20:26,264 [INFO] ppo_trainer: Episode 2800 | Reward:  0.142±1.989 | Hub Δ:  0.375±0.272 | Success: 62.5% | Buffer: 0
+2025-08-28 19:20:44,173 [INFO] ppo_trainer: Evaluation at episode 2800: Reward: 0.663±2.484 | Hub Δ: 0.607±0.260 | Success: 88.0%
+2025-08-28 19:20:44,274 [INFO] ppo_trainer: Saved new best model at episode 2800
+2025-08-28 19:21:03,323 [INFO] ppo_trainer: Episode 3000 | Reward:  0.440±1.538 | Hub Δ:  0.387±0.345 | Success: 62.5% | Buffer: 0
+2025-08-28 19:21:18,246 [INFO] ppo_trainer: Evaluation at episode 3000: Reward: 0.143±2.374 | Hub Δ: 0.536±0.247 | Success: 80.0%
+2025-08-28 19:21:31,202 [INFO] ppo_trainer: PPO training completed in 0.17 hours
+2025-08-28 19:21:31,202 [INFO] ppo_trainer: Best reward: 0.663
+2025-08-28 19:21:31,202 [INFO] ppo_trainer: Final hub improvement: 0.4733
+2025-08-28 19:21:31,203 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-28 19:21:31,220 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-28 19:21:31,220 [INFO] __main__: PPO training completed
+2025-08-28 19:21:31,228 [INFO] __main__: PPO training phase completed successfully
+2025-08-28 19:21:31,229 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-28 19:21:31,229 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-28 19:21:31,243 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 128, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.2, 'shared_encoder': True}
+2025-08-28 19:22:11,153 [INFO] __main__: Evaluation Results:
+2025-08-28 19:22:11,153 [INFO] __main__:   Success Rate: 1.000
+2025-08-28 19:22:11,154 [INFO] __main__:   Avg Reward: -0.318 ± 2.563
+2025-08-28 19:22:11,154 [INFO] __main__:   Avg Hub Improvement: 0.490 ± 0.266
+2025-08-28 19:22:11,154 [INFO] __main__:   Avg Episode Length: 16.5
+2025-08-28 19:22:11,154 [INFO] __main__:   Discriminator Improvement: -0.122
+2025-08-28 19:22:11,156 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-28 19:22:11,168 [INFO] __main__: Evaluation completed successfully
+2025-08-28 19:22:11,168 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-28 21:10:15,137 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 21:10:15,137 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 21:10:15,138 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 21:10:15,138 [INFO] __main__: Starting PPO training...
+2025-08-28 21:10:17,280 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 21:10:17,294 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 21:10:17,295 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 21:10:17,295 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0003, step_up=200, step_down=None, mode=triangular2
+2025-08-28 21:10:17,296 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 21:10:17,296 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 21:10:17,296 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 21:10:17,296 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 21:10:17,296 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 21:10:19,366 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08287, clip_frac=0.125, p_loss=-0.0475, v_loss=130.2970, lr=1.01e-04
+2025-08-28 21:10:20,774 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01961, clip_frac=0.000, p_loss=0.1503, v_loss=15.0532, lr=1.02e-04
+2025-08-28 21:10:22,846 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01553, clip_frac=0.000, p_loss=-0.1881, v_loss=44.9260, lr=1.04e-04
+2025-08-28 21:10:23,693 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02459, clip_frac=0.000, p_loss=0.2498, v_loss=26.8640, lr=1.06e-04
+2025-08-28 21:10:25,385 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02707, clip_frac=0.125, p_loss=0.1545, v_loss=214.0581, lr=1.10e-04
+2025-08-28 21:10:27,824 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05051, clip_frac=0.125, p_loss=-0.1589, v_loss=25.5370, lr=1.11e-04
+2025-08-28 21:10:29,791 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01314, clip_frac=0.000, p_loss=0.4090, v_loss=21.6341, lr=1.15e-04
+2025-08-28 21:10:31,191 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01019, clip_frac=0.000, p_loss=0.1342, v_loss=7.7562, lr=1.17e-04
+2025-08-28 21:10:32,804 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04323, clip_frac=0.000, p_loss=0.3480, v_loss=24.9788, lr=1.20e-04
+2025-08-28 21:10:34,417 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03662, clip_frac=0.125, p_loss=0.1436, v_loss=22.7624, lr=1.23e-04
+2025-08-28 21:10:36,834 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02163, clip_frac=0.000, p_loss=0.3423, v_loss=474.4560, lr=1.25e-04
+2025-08-28 21:10:38,363 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03885, clip_frac=0.000, p_loss=0.4160, v_loss=23.4973, lr=1.27e-04
+2025-08-28 21:10:40,037 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10100, clip_frac=0.125, p_loss=-0.3523, v_loss=204.2314, lr=1.30e-04
+2025-08-28 21:10:41,671 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02535, clip_frac=0.000, p_loss=0.6670, v_loss=491.2490, lr=1.31e-04
+2025-08-28 21:10:43,411 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02524, clip_frac=0.000, p_loss=0.0787, v_loss=48.0429, lr=1.38e-04
+2025-08-28 21:10:45,271 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01227, clip_frac=0.125, p_loss=-0.2525, v_loss=143.0504, lr=1.42e-04
+2025-08-28 21:10:47,479 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02631, clip_frac=0.000, p_loss=0.0479, v_loss=14.7783, lr=1.46e-04
+2025-08-28 21:10:49,239 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09115, clip_frac=0.125, p_loss=0.1170, v_loss=67.9509, lr=1.47e-04
+2025-08-28 21:10:50,545 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02196, clip_frac=0.000, p_loss=0.0639, v_loss=6.5233, lr=1.51e-04
+2025-08-28 21:10:52,773 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03833, clip_frac=0.125, p_loss=0.2428, v_loss=49.4485, lr=1.53e-04
+2025-08-28 21:10:54,919 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04062, clip_frac=0.125, p_loss=-0.0086, v_loss=124.0976, lr=1.57e-04
+2025-08-28 21:10:56,588 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01710, clip_frac=0.000, p_loss=-0.2021, v_loss=10.3678, lr=1.58e-04
+2025-08-28 21:10:57,934 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05335, clip_frac=0.000, p_loss=0.2657, v_loss=47.7115, lr=1.64e-04
+2025-08-28 21:10:59,871 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04289, clip_frac=0.125, p_loss=-0.0162, v_loss=25.5190, lr=1.65e-04
+2025-08-28 21:11:01,982 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04261, clip_frac=0.125, p_loss=0.1356, v_loss=7.0140, lr=1.67e-04
+2025-08-28 21:11:01,983 [INFO] ppo_trainer: Episode  400 | Reward: -0.890±1.595 | Hub Δ:  0.262±0.214 | Success: 50.0% | Buffer: 0
+2025-08-28 21:11:18,390 [INFO] ppo_trainer: Evaluation at episode 400: Reward: -0.284±2.400 | Hub Δ: 0.505±0.268 | Success: 72.0%
+2025-08-28 21:11:18,533 [INFO] ppo_trainer: Saved new best model at episode 400
+2025-08-28 21:11:21,189 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.15022, clip_frac=0.125, p_loss=0.4487, v_loss=250.7111, lr=1.68e-04
+2025-08-28 21:11:23,403 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06011, clip_frac=0.125, p_loss=-0.2474, v_loss=166.9556, lr=1.69e-04
+2025-08-28 21:11:24,652 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01387, clip_frac=0.000, p_loss=0.1550, v_loss=24.0558, lr=1.72e-04
+2025-08-28 21:11:26,438 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07830, clip_frac=0.125, p_loss=0.0898, v_loss=3.6525, lr=1.77e-04
+2025-08-28 21:11:28,562 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06160, clip_frac=0.125, p_loss=-0.0294, v_loss=288.0739, lr=1.78e-04
+2025-08-28 21:11:31,586 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02076, clip_frac=0.000, p_loss=0.2778, v_loss=9.8369, lr=1.80e-04
+2025-08-28 21:11:38,141 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04360, clip_frac=0.000, p_loss=-0.0056, v_loss=94.2789, lr=1.81e-04
+2025-08-28 21:11:40,639 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.15177, clip_frac=0.250, p_loss=0.0199, v_loss=106.3288, lr=1.82e-04
+2025-08-28 21:11:44,086 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06969, clip_frac=0.000, p_loss=-0.1085, v_loss=31.4617, lr=1.84e-04
+2025-08-28 21:11:47,176 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01145, clip_frac=0.000, p_loss=0.4811, v_loss=11.9761, lr=1.85e-04
+2025-08-28 21:11:50,716 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.17016, clip_frac=0.250, p_loss=-0.3341, v_loss=188.7903, lr=1.86e-04
+2025-08-28 21:11:52,863 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04988, clip_frac=0.000, p_loss=0.6599, v_loss=16.2811, lr=1.89e-04
+2025-08-28 21:11:55,202 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05297, clip_frac=0.125, p_loss=0.2837, v_loss=98.3710, lr=1.90e-04
+2025-08-28 21:11:57,155 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04204, clip_frac=0.250, p_loss=0.1753, v_loss=104.7451, lr=1.92e-04
+2025-08-28 21:12:00,418 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13254, clip_frac=0.250, p_loss=0.1668, v_loss=159.8495, lr=1.96e-04
+2025-08-28 21:12:04,502 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04541, clip_frac=0.000, p_loss=0.3403, v_loss=106.0093, lr=1.97e-04
+2025-08-28 21:12:06,503 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06953, clip_frac=0.000, p_loss=0.1427, v_loss=32.0771, lr=1.98e-04
+2025-08-28 21:12:08,940 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10077, clip_frac=0.375, p_loss=0.0939, v_loss=37.5432, lr=1.99e-04
+2025-08-28 21:12:10,837 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08759, clip_frac=0.250, p_loss=0.0606, v_loss=193.1470, lr=2.01e-04
+2025-08-28 21:12:14,462 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12517, clip_frac=0.375, p_loss=0.2403, v_loss=57.5551, lr=2.02e-04
+2025-08-28 21:12:17,933 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01631, clip_frac=0.125, p_loss=-0.3385, v_loss=103.2888, lr=2.03e-04
+2025-08-28 21:12:21,165 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03826, clip_frac=0.500, p_loss=-0.3475, v_loss=34.4980, lr=2.04e-04
+2025-08-28 21:12:24,648 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06353, clip_frac=0.250, p_loss=-0.0150, v_loss=11.5570, lr=2.12e-04
+2025-08-28 21:12:26,046 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05825, clip_frac=0.125, p_loss=-0.6169, v_loss=124.6444, lr=2.13e-04
+2025-08-28 21:12:28,268 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04381, clip_frac=0.000, p_loss=-0.4903, v_loss=115.3787, lr=2.14e-04
+2025-08-28 21:12:28,269 [INFO] ppo_trainer: Episode  800 | Reward: -0.073±1.813 | Hub Δ:  0.312±0.247 | Success: 62.5% | Buffer: 0
+2025-08-28 21:12:41,714 [INFO] ppo_trainer: Evaluation at episode 800: Reward: -0.896±2.713 | Hub Δ: 0.416±0.241 | Success: 66.0%
+2025-08-28 21:12:43,625 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06239, clip_frac=0.125, p_loss=-0.3233, v_loss=16.4494, lr=2.16e-04
+2025-08-28 21:12:45,820 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05585, clip_frac=0.250, p_loss=0.0201, v_loss=92.9232, lr=2.17e-04
+2025-08-28 21:12:48,112 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04894, clip_frac=0.000, p_loss=0.1887, v_loss=11.0580, lr=2.18e-04
+2025-08-28 21:12:49,751 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05220, clip_frac=0.000, p_loss=-0.1767, v_loss=71.8337, lr=2.19e-04
+2025-08-28 21:12:51,597 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01616, clip_frac=0.125, p_loss=-0.1494, v_loss=61.1901, lr=2.21e-04
+2025-08-28 21:12:52,988 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03846, clip_frac=0.125, p_loss=-0.2251, v_loss=75.0732, lr=2.22e-04
+2025-08-28 21:12:55,351 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04748, clip_frac=0.125, p_loss=0.2443, v_loss=26.8885, lr=2.23e-04
+2025-08-28 21:12:57,654 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01022, clip_frac=0.500, p_loss=-0.3297, v_loss=40.1995, lr=2.28e-04
+2025-08-28 21:13:00,585 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11658, clip_frac=0.250, p_loss=-0.1425, v_loss=259.7522, lr=2.30e-04
+2025-08-28 21:13:02,842 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.15530, clip_frac=0.250, p_loss=0.7226, v_loss=130.6475, lr=2.31e-04
+2025-08-28 21:13:04,537 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06244, clip_frac=0.125, p_loss=0.1759, v_loss=8.7104, lr=2.36e-04
+2025-08-28 21:13:06,874 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05492, clip_frac=0.000, p_loss=-0.1035, v_loss=3.8010, lr=2.38e-04
+2025-08-28 21:13:08,385 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08867, clip_frac=0.250, p_loss=0.0788, v_loss=11.6935, lr=2.47e-04
+2025-08-28 21:13:10,178 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05136, clip_frac=0.125, p_loss=0.4855, v_loss=61.4302, lr=2.50e-04
+2025-08-28 21:13:12,162 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07179, clip_frac=0.000, p_loss=0.2002, v_loss=22.2198, lr=2.52e-04
+2025-08-28 21:13:14,041 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06034, clip_frac=0.125, p_loss=-0.2042, v_loss=95.5463, lr=2.53e-04
+2025-08-28 21:13:16,036 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05370, clip_frac=0.000, p_loss=-0.1137, v_loss=54.3359, lr=2.55e-04
+2025-08-28 21:13:17,652 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05155, clip_frac=0.000, p_loss=-0.1079, v_loss=4.4110, lr=2.57e-04
+2025-08-28 21:13:19,089 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04303, clip_frac=0.125, p_loss=0.3858, v_loss=45.8038, lr=2.59e-04
+2025-08-28 21:13:20,962 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01952, clip_frac=0.000, p_loss=-0.1561, v_loss=54.8456, lr=2.60e-04
+2025-08-28 21:13:22,466 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05601, clip_frac=0.125, p_loss=-1.0608, v_loss=58.3926, lr=2.63e-04
+2025-08-28 21:13:24,253 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05385, clip_frac=0.000, p_loss=-0.0081, v_loss=22.9922, lr=2.64e-04
+2025-08-28 21:13:25,539 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09913, clip_frac=0.125, p_loss=0.0433, v_loss=2.5971, lr=2.65e-04
+2025-08-28 21:13:26,306 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09198, clip_frac=0.125, p_loss=0.1808, v_loss=5.5135, lr=2.67e-04
+2025-08-28 21:13:27,133 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02069, clip_frac=0.000, p_loss=-0.0856, v_loss=9.8613, lr=2.70e-04
+2025-08-28 21:13:27,134 [INFO] ppo_trainer: Episode 1200 | Reward: -0.931±0.804 | Hub Δ:  0.065±0.147 | Success: 12.5% | Buffer: 0
+2025-08-28 21:13:37,060 [INFO] ppo_trainer: Evaluation at episode 1200: Reward: -1.973±1.823 | Hub Δ: 0.163±0.183 | Success: 32.0%
+2025-08-28 21:13:38,194 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03939, clip_frac=0.125, p_loss=0.0716, v_loss=2.9620, lr=2.71e-04
+2025-08-28 21:13:39,270 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04659, clip_frac=0.000, p_loss=0.3352, v_loss=2.2348, lr=2.72e-04
+2025-08-28 21:13:40,622 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09814, clip_frac=0.125, p_loss=0.3393, v_loss=6.1174, lr=2.73e-04
+2025-08-28 21:13:42,189 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13901, clip_frac=0.250, p_loss=-0.2140, v_loss=6.0367, lr=2.76e-04
+2025-08-28 21:13:43,394 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02312, clip_frac=0.125, p_loss=0.0070, v_loss=3.5416, lr=2.78e-04
+2025-08-28 21:13:44,318 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01894, clip_frac=0.125, p_loss=-0.1086, v_loss=6.2882, lr=2.79e-04
+2025-08-28 21:13:45,395 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.22252, clip_frac=0.375, p_loss=0.2088, v_loss=20.8070, lr=2.81e-04
+2025-08-28 21:13:46,289 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04141, clip_frac=0.250, p_loss=-0.2242, v_loss=12.8613, lr=2.82e-04
+2025-08-28 21:13:47,678 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.26895, clip_frac=0.500, p_loss=-0.1140, v_loss=58.9645, lr=2.84e-04
+2025-08-28 21:13:48,727 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13476, clip_frac=0.375, p_loss=0.1172, v_loss=10.4943, lr=2.85e-04
+2025-08-28 21:13:50,821 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05753, clip_frac=0.125, p_loss=-0.2260, v_loss=20.2058, lr=2.86e-04
+2025-08-28 21:13:51,908 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02504, clip_frac=0.000, p_loss=0.0454, v_loss=9.0374, lr=2.88e-04
+2025-08-28 21:13:52,947 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06437, clip_frac=0.375, p_loss=0.6359, v_loss=42.2087, lr=2.89e-04
+2025-08-28 21:13:53,826 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08843, clip_frac=0.250, p_loss=0.1393, v_loss=5.4366, lr=2.90e-04
+2025-08-28 21:13:55,072 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10686, clip_frac=0.375, p_loss=0.2186, v_loss=5.6803, lr=2.91e-04
+2025-08-28 21:13:55,984 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03587, clip_frac=0.000, p_loss=0.4332, v_loss=6.1599, lr=2.94e-04
+2025-08-28 21:13:57,282 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04628, clip_frac=0.125, p_loss=-0.2312, v_loss=42.5067, lr=2.98e-04
+2025-08-28 21:13:59,273 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01630, clip_frac=0.250, p_loss=0.2256, v_loss=28.4998, lr=2.99e-04
+2025-08-28 21:14:01,269 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01383, clip_frac=0.000, p_loss=0.1941, v_loss=0.9922, lr=3.00e-04
+2025-08-28 21:14:04,003 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04723, clip_frac=0.000, p_loss=-0.6534, v_loss=127.0476, lr=2.99e-04
+2025-08-28 21:14:05,802 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10681, clip_frac=0.250, p_loss=-0.2213, v_loss=93.9305, lr=2.98e-04
+2025-08-28 21:14:07,336 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04093, clip_frac=0.000, p_loss=0.1436, v_loss=10.4247, lr=2.97e-04
+2025-08-28 21:14:09,640 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01497, clip_frac=0.000, p_loss=0.6348, v_loss=29.3426, lr=2.96e-04
+2025-08-28 21:14:11,623 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01447, clip_frac=0.500, p_loss=-0.4479, v_loss=20.5916, lr=2.94e-04
+2025-08-28 21:14:13,845 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07462, clip_frac=0.125, p_loss=0.2099, v_loss=37.4883, lr=2.93e-04
+2025-08-28 21:14:13,846 [INFO] ppo_trainer: Episode 1600 | Reward: -0.289±2.739 | Hub Δ:  0.299±0.278 | Success: 43.8% | Buffer: 0
+2025-08-28 21:14:26,275 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: -0.880±2.852 | Hub Δ: 0.381±0.229 | Success: 66.0%
+2025-08-28 21:14:28,025 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03074, clip_frac=0.375, p_loss=-0.0402, v_loss=3.2666, lr=2.92e-04
+2025-08-28 21:14:31,408 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01053, clip_frac=0.250, p_loss=-0.1181, v_loss=28.9664, lr=2.91e-04
+2025-08-28 21:14:33,894 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04582, clip_frac=0.125, p_loss=0.1341, v_loss=8.2972, lr=2.84e-04
+2025-08-28 21:14:36,813 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11875, clip_frac=0.375, p_loss=-0.2308, v_loss=10.6246, lr=2.83e-04
+2025-08-28 21:14:39,469 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02486, clip_frac=0.250, p_loss=0.3717, v_loss=29.1799, lr=2.82e-04
+2025-08-28 21:14:41,545 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04890, clip_frac=0.000, p_loss=-0.0501, v_loss=7.1862, lr=2.81e-04
+2025-08-28 21:14:43,933 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02052, clip_frac=0.250, p_loss=0.1681, v_loss=22.4014, lr=2.78e-04
+2025-08-28 21:14:46,248 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10103, clip_frac=0.125, p_loss=0.4357, v_loss=91.2384, lr=2.77e-04
+2025-08-28 21:14:49,424 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02347, clip_frac=0.000, p_loss=0.2525, v_loss=19.2247, lr=2.75e-04
+2025-08-28 21:14:50,911 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06443, clip_frac=0.375, p_loss=0.4576, v_loss=2.8225, lr=2.72e-04
+2025-08-28 21:14:53,758 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06587, clip_frac=0.250, p_loss=-0.0173, v_loss=15.6128, lr=2.71e-04
+2025-08-28 21:14:56,914 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02483, clip_frac=0.250, p_loss=-0.0890, v_loss=67.5348, lr=2.69e-04
+2025-08-28 21:14:58,704 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06963, clip_frac=0.375, p_loss=-0.4755, v_loss=7.5175, lr=2.68e-04
+2025-08-28 21:15:01,248 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07130, clip_frac=0.125, p_loss=-0.2723, v_loss=16.4264, lr=2.66e-04
+2025-08-28 21:15:04,619 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01271, clip_frac=0.125, p_loss=-0.7536, v_loss=85.8713, lr=2.65e-04
+2025-08-28 21:15:06,170 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.37398, clip_frac=0.250, p_loss=0.0172, v_loss=17.5145, lr=2.63e-04
+2025-08-28 21:15:08,554 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05795, clip_frac=0.125, p_loss=-0.0870, v_loss=19.4966, lr=2.62e-04
+2025-08-28 21:15:11,241 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01701, clip_frac=0.000, p_loss=-0.7314, v_loss=55.6593, lr=2.60e-04
+2025-08-28 21:15:12,734 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02296, clip_frac=0.125, p_loss=-0.4131, v_loss=10.1593, lr=2.59e-04
+2025-08-28 21:15:15,473 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05653, clip_frac=0.125, p_loss=-0.1273, v_loss=11.0044, lr=2.54e-04
+2025-08-28 21:15:18,658 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01084, clip_frac=0.000, p_loss=0.0691, v_loss=55.4872, lr=2.53e-04
+2025-08-28 21:15:20,373 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09335, clip_frac=0.375, p_loss=0.1003, v_loss=40.0676, lr=2.52e-04
+2025-08-28 21:15:24,077 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09559, clip_frac=0.250, p_loss=0.0902, v_loss=8.0042, lr=2.50e-04
+2025-08-28 21:15:26,720 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01427, clip_frac=0.250, p_loss=-0.8834, v_loss=69.2869, lr=2.49e-04
+2025-08-28 21:15:27,769 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03486, clip_frac=0.250, p_loss=-0.5133, v_loss=8.0818, lr=2.48e-04
+2025-08-28 21:15:27,770 [INFO] ppo_trainer: Episode 2000 | Reward:  0.296±1.687 | Hub Δ:  0.223±0.253 | Success: 37.5% | Buffer: 0
+2025-08-28 21:15:39,834 [INFO] ppo_trainer: Evaluation at episode 2000: Reward: -0.213±3.171 | Hub Δ: 0.403±0.241 | Success: 70.0%
+2025-08-28 21:15:42,414 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02024, clip_frac=0.125, p_loss=0.4959, v_loss=112.7098, lr=2.47e-04
+2025-08-28 21:15:44,720 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06082, clip_frac=0.250, p_loss=-0.1069, v_loss=43.6596, lr=2.40e-04
+2025-08-28 21:15:48,259 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03783, clip_frac=0.125, p_loss=-0.2356, v_loss=8.4982, lr=2.39e-04
+2025-08-28 21:15:51,401 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09842, clip_frac=0.125, p_loss=0.2732, v_loss=106.1712, lr=2.38e-04
+2025-08-28 21:15:53,174 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02914, clip_frac=0.125, p_loss=0.4157, v_loss=27.4237, lr=2.37e-04
+2025-08-28 21:15:55,338 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.22266, clip_frac=0.500, p_loss=-0.4958, v_loss=27.9793, lr=2.35e-04
+2025-08-28 21:15:57,603 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03476, clip_frac=0.375, p_loss=-0.2997, v_loss=14.3338, lr=2.34e-04
+2025-08-28 21:16:00,843 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.53866, clip_frac=0.250, p_loss=-0.2007, v_loss=25.7082, lr=2.33e-04
+2025-08-28 21:16:04,234 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03804, clip_frac=0.125, p_loss=-0.2494, v_loss=82.9837, lr=2.32e-04
+2025-08-28 21:16:08,314 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05854, clip_frac=0.125, p_loss=-0.4200, v_loss=38.2971, lr=2.31e-04
+2025-08-28 21:16:11,776 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02342, clip_frac=0.250, p_loss=-0.1289, v_loss=4.2421, lr=2.30e-04
+2025-08-28 21:16:14,418 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05357, clip_frac=0.250, p_loss=0.0195, v_loss=9.6013, lr=2.23e-04
+2025-08-28 21:16:17,168 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01487, clip_frac=0.250, p_loss=-0.4995, v_loss=8.8612, lr=2.21e-04
+2025-08-28 21:16:24,597 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02346, clip_frac=0.125, p_loss=-0.5070, v_loss=33.1212, lr=2.19e-04
+2025-08-28 21:16:28,563 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04036, clip_frac=0.125, p_loss=-0.1585, v_loss=9.4689, lr=2.16e-04
+2025-08-28 21:16:30,943 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07803, clip_frac=0.375, p_loss=0.3722, v_loss=14.8075, lr=2.13e-04
+2025-08-28 21:16:34,590 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01210, clip_frac=0.250, p_loss=-0.8871, v_loss=24.8835, lr=2.09e-04
+2025-08-28 21:16:38,291 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01615, clip_frac=0.250, p_loss=0.2649, v_loss=130.6180, lr=2.07e-04
+2025-08-28 21:16:40,998 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06404, clip_frac=0.125, p_loss=0.1134, v_loss=26.0855, lr=2.06e-04
+2025-08-28 21:16:42,946 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07401, clip_frac=0.125, p_loss=-0.1938, v_loss=4.4133, lr=2.04e-04
+2025-08-28 21:16:44,594 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08547, clip_frac=0.250, p_loss=0.0554, v_loss=4.0336, lr=2.03e-04
+2025-08-28 21:16:46,823 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05264, clip_frac=0.000, p_loss=0.0610, v_loss=23.1751, lr=2.02e-04
+2025-08-28 21:16:48,851 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02581, clip_frac=0.375, p_loss=-0.1245, v_loss=1.4998, lr=1.97e-04
+2025-08-28 21:16:50,327 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05754, clip_frac=0.125, p_loss=0.0599, v_loss=5.2991, lr=1.96e-04
+2025-08-28 21:16:52,643 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05990, clip_frac=0.375, p_loss=-0.0573, v_loss=19.9270, lr=1.95e-04
+2025-08-28 21:16:52,645 [INFO] ppo_trainer: Episode 2400 | Reward: -0.447±2.027 | Hub Δ:  0.264±0.225 | Success: 56.2% | Buffer: 0
+2025-08-28 21:17:05,655 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: -0.484±3.306 | Hub Δ: 0.411±0.260 | Success: 62.0%
+2025-08-28 21:17:08,115 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05497, clip_frac=0.000, p_loss=-0.3970, v_loss=15.0377, lr=1.91e-04
+2025-08-28 21:17:10,975 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05460, clip_frac=0.250, p_loss=-0.0176, v_loss=4.0034, lr=1.90e-04
+2025-08-28 21:17:12,669 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12308, clip_frac=0.375, p_loss=0.1993, v_loss=1.0068, lr=1.88e-04
+2025-08-28 21:17:16,291 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05887, clip_frac=0.250, p_loss=-0.1786, v_loss=5.7228, lr=1.85e-04
+2025-08-28 21:17:19,165 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05876, clip_frac=0.125, p_loss=-0.3183, v_loss=14.2516, lr=1.84e-04
+2025-08-28 21:17:21,625 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08287, clip_frac=0.125, p_loss=-0.2399, v_loss=14.6224, lr=1.80e-04
+2025-08-28 21:17:23,712 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04784, clip_frac=0.125, p_loss=-0.1524, v_loss=39.5193, lr=1.79e-04
+2025-08-28 21:17:25,832 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12938, clip_frac=0.250, p_loss=0.1461, v_loss=16.6946, lr=1.78e-04
+2025-08-28 21:17:28,570 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.27784, clip_frac=0.125, p_loss=0.0719, v_loss=62.6657, lr=1.75e-04
+2025-08-28 21:17:31,291 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02361, clip_frac=0.125, p_loss=0.1271, v_loss=47.1679, lr=1.72e-04
+2025-08-28 21:17:34,280 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01715, clip_frac=0.000, p_loss=-0.2570, v_loss=20.1960, lr=1.70e-04
+2025-08-28 21:17:36,770 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12025, clip_frac=0.125, p_loss=0.0761, v_loss=8.5329, lr=1.67e-04
+2025-08-28 21:17:40,250 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03445, clip_frac=0.125, p_loss=-0.6761, v_loss=24.7476, lr=1.66e-04
+2025-08-28 21:17:42,747 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08194, clip_frac=0.750, p_loss=-0.1002, v_loss=4.3693, lr=1.64e-04
+2025-08-28 21:17:45,259 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03264, clip_frac=0.125, p_loss=-0.1377, v_loss=1.1689, lr=1.63e-04
+2025-08-28 21:17:46,666 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04742, clip_frac=0.000, p_loss=-0.1897, v_loss=3.1422, lr=1.61e-04
+2025-08-28 21:17:49,372 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04174, clip_frac=0.250, p_loss=-0.0489, v_loss=33.5089, lr=1.59e-04
+2025-08-28 21:17:52,419 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02637, clip_frac=0.000, p_loss=-0.0065, v_loss=38.2012, lr=1.58e-04
+2025-08-28 21:17:54,727 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03841, clip_frac=0.000, p_loss=0.4567, v_loss=13.8689, lr=1.57e-04
+2025-08-28 21:17:56,352 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13299, clip_frac=0.375, p_loss=0.0135, v_loss=1.4314, lr=1.56e-04
+2025-08-28 21:17:59,370 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03499, clip_frac=0.250, p_loss=0.3310, v_loss=10.1857, lr=1.50e-04
+2025-08-28 21:18:01,279 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08589, clip_frac=0.250, p_loss=-0.1870, v_loss=4.8156, lr=1.49e-04
+2025-08-28 21:18:03,042 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10487, clip_frac=0.500, p_loss=-0.0471, v_loss=3.4418, lr=1.48e-04
+2025-08-28 21:18:05,508 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11663, clip_frac=0.375, p_loss=0.0502, v_loss=1.3673, lr=1.47e-04
+2025-08-28 21:18:07,314 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08953, clip_frac=0.250, p_loss=0.2175, v_loss=1.7882, lr=1.46e-04
+2025-08-28 21:18:07,315 [INFO] ppo_trainer: Episode 2800 | Reward:  0.055±1.970 | Hub Δ:  0.339±0.224 | Success: 68.8% | Buffer: 0
+2025-08-28 21:18:20,709 [INFO] ppo_trainer: Evaluation at episode 2800: Reward: -0.612±2.987 | Hub Δ: 0.478±0.264 | Success: 78.0%
+2025-08-28 21:18:22,787 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12442, clip_frac=0.375, p_loss=0.0770, v_loss=5.2640, lr=1.45e-04
+2025-08-28 21:18:25,326 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06848, clip_frac=0.375, p_loss=0.0120, v_loss=7.5729, lr=1.44e-04
+2025-08-28 21:18:26,762 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11998, clip_frac=0.375, p_loss=-0.3339, v_loss=16.5015, lr=1.43e-04
+2025-08-28 21:18:28,583 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02767, clip_frac=0.125, p_loss=0.2820, v_loss=8.3059, lr=1.41e-04
+2025-08-28 21:18:30,806 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05409, clip_frac=0.125, p_loss=0.2436, v_loss=15.0367, lr=1.40e-04
+2025-08-28 21:18:32,825 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09655, clip_frac=0.250, p_loss=-0.4535, v_loss=51.5761, lr=1.39e-04
+2025-08-28 21:18:35,392 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.17569, clip_frac=0.500, p_loss=-0.1586, v_loss=13.5629, lr=1.38e-04
+2025-08-28 21:18:36,448 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.14000, clip_frac=0.375, p_loss=-0.1835, v_loss=1.3206, lr=1.37e-04
+2025-08-28 21:18:38,838 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.28127, clip_frac=0.250, p_loss=-0.0032, v_loss=43.2052, lr=1.36e-04
+2025-08-28 21:18:40,071 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10282, clip_frac=0.500, p_loss=0.0531, v_loss=3.5428, lr=1.32e-04
+2025-08-28 21:18:41,719 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01141, clip_frac=0.375, p_loss=0.5373, v_loss=5.7201, lr=1.31e-04
+2025-08-28 21:18:43,094 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01019, clip_frac=0.375, p_loss=-0.0624, v_loss=1.6746, lr=1.28e-04
+2025-08-28 21:18:44,549 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.01190, clip_frac=0.125, p_loss=-0.4753, v_loss=92.4498, lr=1.25e-04
+2025-08-28 21:18:44,550 [INFO] ppo_trainer: Episode 3000 | Reward:  0.941±2.078 | Hub Δ:  0.576±0.244 | Success: 100.0% | Buffer: 0
+2025-08-28 21:19:00,122 [INFO] ppo_trainer: Evaluation at episode 3000: Reward: -0.833±2.693 | Hub Δ: 0.423±0.255 | Success: 70.0%
+2025-08-28 21:19:13,963 [INFO] ppo_trainer: PPO training completed in 0.15 hours
+2025-08-28 21:19:13,963 [INFO] ppo_trainer: Best reward: -0.284
+2025-08-28 21:19:13,963 [INFO] ppo_trainer: Final hub improvement: 0.4580
+2025-08-28 21:19:13,963 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-28 21:19:13,985 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-28 21:19:13,985 [INFO] __main__: PPO training completed
+2025-08-28 21:19:13,994 [INFO] __main__: PPO training phase completed successfully
+2025-08-28 21:19:13,994 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-28 21:19:13,994 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-28 21:19:14,017 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 128, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.2, 'shared_encoder': True}
+2025-08-28 21:19:48,918 [INFO] __main__: Evaluation Results:
+2025-08-28 21:19:48,919 [INFO] __main__:   Success Rate: 1.000
+2025-08-28 21:19:48,919 [INFO] __main__:   Avg Reward: -0.682 ± 2.190
+2025-08-28 21:19:48,919 [INFO] __main__:   Avg Hub Improvement: 0.452 ± 0.219
+2025-08-28 21:19:48,919 [INFO] __main__:   Avg Episode Length: 16.2
+2025-08-28 21:19:48,919 [INFO] __main__:   Discriminator Improvement: -0.130
+2025-08-28 21:19:48,921 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-28 21:19:48,930 [INFO] __main__: Evaluation completed successfully
+2025-08-28 21:19:48,930 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-28 21:44:44,469 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 21:44:44,469 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 21:44:44,469 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 21:44:44,470 [INFO] __main__: Starting PPO training...
+2025-08-28 21:44:46,758 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 21:44:46,772 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 21:44:46,773 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 21:44:46,773 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=120, step_down=120, mode=triangular2
+2025-08-28 21:44:46,774 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 21:44:46,774 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 21:44:46,774 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 21:44:46,774 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 21:44:46,775 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 21:44:48,214 [ERROR] __main__: Training pipeline failed: 'list' object has no attribute 'x'
+2025-08-28 21:52:46,774 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 21:52:46,775 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 21:52:46,775 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 21:52:46,775 [INFO] __main__: Starting PPO training...
+2025-08-28 21:52:48,989 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 21:52:49,003 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 21:52:49,003 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 21:52:49,003 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=120, step_down=120, mode=triangular2
+2025-08-28 21:52:49,004 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 21:52:49,004 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 21:52:49,005 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 21:52:49,005 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 21:52:49,005 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 21:52:50,596 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09567, clip_frac=0.125, p_loss=-0.3242, v_loss=14.1645, lr=1.09e-04
+2025-08-28 21:52:52,252 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05368, clip_frac=0.125, p_loss=-0.1056, v_loss=10.6615, lr=1.30e-04
+2025-08-28 21:52:53,877 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05965, clip_frac=0.125, p_loss=1.1374, v_loss=9.0888, lr=1.47e-04
+2025-08-28 21:52:55,088 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07658, clip_frac=0.000, p_loss=-0.5984, v_loss=16.0307, lr=1.54e-04
+2025-08-28 21:52:56,457 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06093, clip_frac=0.125, p_loss=0.1461, v_loss=5.7508, lr=1.60e-04
+2025-08-28 21:52:57,819 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03646, clip_frac=0.125, p_loss=0.2926, v_loss=4.8365, lr=1.66e-04
+2025-08-28 21:52:59,285 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03656, clip_frac=0.125, p_loss=-0.0242, v_loss=1.7748, lr=1.83e-04
+2025-08-28 21:53:00,202 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06642, clip_frac=0.125, p_loss=-0.0680, v_loss=4.5408, lr=1.83e-04
+2025-08-28 21:53:01,767 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05620, clip_frac=0.125, p_loss=-0.1743, v_loss=3.3907, lr=1.86e-04
+2025-08-28 21:53:02,598 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09367, clip_frac=0.000, p_loss=-0.1342, v_loss=13.7170, lr=1.93e-04
+2025-08-28 21:53:04,691 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05376, clip_frac=0.375, p_loss=0.4060, v_loss=4.1635, lr=1.94e-04
+2025-08-28 21:53:05,996 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05467, clip_frac=0.250, p_loss=-0.0314, v_loss=0.7996, lr=1.91e-04
+2025-08-28 21:53:07,619 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07536, clip_frac=0.125, p_loss=0.0330, v_loss=3.9061, lr=1.79e-04
+2025-08-28 21:53:09,425 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05676, clip_frac=0.125, p_loss=-0.0032, v_loss=3.3611, lr=1.78e-04
+2025-08-28 21:53:10,907 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05406, clip_frac=0.125, p_loss=-0.2186, v_loss=2.1786, lr=1.75e-04
+2025-08-28 21:53:12,692 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05609, clip_frac=0.375, p_loss=0.3369, v_loss=2.2828, lr=1.73e-04
+2025-08-28 21:53:14,699 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07823, clip_frac=0.250, p_loss=0.0779, v_loss=15.9476, lr=1.72e-04
+2025-08-28 21:53:16,425 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04135, clip_frac=0.000, p_loss=-0.1167, v_loss=3.4678, lr=1.68e-04
+2025-08-28 21:53:18,311 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08094, clip_frac=0.125, p_loss=-0.5158, v_loss=2.9092, lr=1.64e-04
+2025-08-28 21:53:19,874 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.18681, clip_frac=0.250, p_loss=0.1234, v_loss=5.8954, lr=1.62e-04
+2025-08-28 21:53:20,990 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03700, clip_frac=0.000, p_loss=0.3437, v_loss=1.2237, lr=1.57e-04
+2025-08-28 21:53:22,274 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05683, clip_frac=0.000, p_loss=0.0926, v_loss=1.7414, lr=1.56e-04
+2025-08-28 21:53:23,976 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03930, clip_frac=0.000, p_loss=0.2589, v_loss=1.6533, lr=1.55e-04
+2025-08-28 21:53:25,560 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06007, clip_frac=0.125, p_loss=-0.0626, v_loss=1.6450, lr=1.53e-04
+2025-08-28 21:53:26,403 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03652, clip_frac=0.000, p_loss=-0.3586, v_loss=2.7044, lr=1.52e-04
+2025-08-28 21:53:26,404 [INFO] ppo_trainer: Episode  400 | Reward:  0.218±2.009 | Hub Δ:  0.216±0.248 | Success: 31.2% | Buffer: 0
+2025-08-28 21:53:44,054 [INFO] ppo_trainer: Evaluation at episode 400: Reward: -1.835±2.551 | Hub Δ: 0.418±0.233 | Success: 68.0%
+2025-08-28 21:53:44,127 [INFO] ppo_trainer: Saved new best model at episode 400
+2025-08-28 21:53:46,686 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03785, clip_frac=0.250, p_loss=-0.1101, v_loss=8.3948, lr=1.49e-04
+2025-08-28 21:53:48,474 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03867, clip_frac=0.000, p_loss=-0.0422, v_loss=2.4443, lr=1.45e-04
+2025-08-28 21:53:49,458 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07465, clip_frac=0.125, p_loss=-0.5606, v_loss=1.7734, lr=1.44e-04
+2025-08-28 21:53:50,544 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06026, clip_frac=0.000, p_loss=-0.1154, v_loss=3.0878, lr=1.43e-04
+2025-08-28 21:53:51,710 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06141, clip_frac=0.000, p_loss=0.3721, v_loss=2.2082, lr=1.42e-04
+2025-08-28 21:53:52,861 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09432, clip_frac=0.250, p_loss=0.1652, v_loss=6.3622, lr=1.32e-04
+2025-08-28 21:53:54,142 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06129, clip_frac=0.250, p_loss=0.4148, v_loss=1.8727, lr=1.30e-04
+2025-08-28 21:53:55,341 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07242, clip_frac=0.125, p_loss=0.3969, v_loss=2.7634, lr=1.28e-04
+2025-08-28 21:53:57,006 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04382, clip_frac=0.250, p_loss=-0.1111, v_loss=6.6360, lr=1.21e-04
+2025-08-28 21:53:58,225 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07374, clip_frac=0.125, p_loss=0.2383, v_loss=6.4799, lr=1.19e-04
+2025-08-28 21:53:59,739 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08517, clip_frac=0.125, p_loss=0.3512, v_loss=5.8822, lr=1.15e-04
+2025-08-28 21:54:00,545 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08893, clip_frac=0.125, p_loss=0.0027, v_loss=4.6616, lr=1.14e-04
+2025-08-28 21:54:03,357 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04822, clip_frac=0.250, p_loss=-0.5273, v_loss=10.2750, lr=1.07e-04
+2025-08-28 21:54:05,040 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04510, clip_frac=0.125, p_loss=0.3534, v_loss=1.2088, lr=1.03e-04
+2025-08-28 21:54:06,496 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05703, clip_frac=0.250, p_loss=-0.1107, v_loss=3.4378, lr=1.02e-04
+2025-08-28 21:54:08,837 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07415, clip_frac=0.000, p_loss=0.1614, v_loss=3.3754, lr=1.01e-04
+2025-08-28 21:54:10,430 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03851, clip_frac=0.125, p_loss=-0.4806, v_loss=14.2659, lr=1.02e-04
+2025-08-28 21:54:11,739 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07334, clip_frac=0.125, p_loss=0.2372, v_loss=3.4785, lr=1.02e-04
+2025-08-28 21:54:13,044 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05118, clip_frac=0.125, p_loss=-0.1533, v_loss=2.3149, lr=1.05e-04
+2025-08-28 21:54:14,675 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03727, clip_frac=0.000, p_loss=0.1551, v_loss=1.9763, lr=1.06e-04
+2025-08-28 21:54:20,047 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05524, clip_frac=0.000, p_loss=-0.0883, v_loss=2.3288, lr=1.09e-04
+2025-08-28 21:54:24,839 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.20104, clip_frac=0.125, p_loss=0.0506, v_loss=1.0897, lr=1.10e-04
+2025-08-28 21:54:27,262 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12884, clip_frac=0.250, p_loss=-0.1450, v_loss=13.8757, lr=1.10e-04
+2025-08-28 21:54:29,172 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05529, clip_frac=0.125, p_loss=-0.2607, v_loss=2.4484, lr=1.10e-04
+2025-08-28 21:54:30,397 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08508, clip_frac=0.000, p_loss=-0.3664, v_loss=1.6543, lr=1.11e-04
+2025-08-28 21:54:30,399 [INFO] ppo_trainer: Episode  800 | Reward:  0.102±1.164 | Hub Δ:  0.271±0.211 | Success: 62.5% | Buffer: 0
+2025-08-28 21:54:44,722 [INFO] ppo_trainer: Evaluation at episode 800: Reward: -0.128±2.576 | Hub Δ: 0.494±0.265 | Success: 70.0%
+2025-08-28 21:54:44,812 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-28 21:54:46,407 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13341, clip_frac=0.250, p_loss=-0.4128, v_loss=17.3972, lr=1.12e-04
+2025-08-28 21:54:49,969 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07254, clip_frac=0.250, p_loss=-0.3660, v_loss=2.5591, lr=1.13e-04
+2025-08-28 21:54:53,268 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06423, clip_frac=0.125, p_loss=0.2438, v_loss=9.6244, lr=1.16e-04
+2025-08-28 21:54:55,456 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04160, clip_frac=0.125, p_loss=0.5112, v_loss=1.3957, lr=1.17e-04
+2025-08-28 21:54:57,333 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07387, clip_frac=0.250, p_loss=0.2256, v_loss=11.7309, lr=1.18e-04
+2025-08-28 21:55:00,069 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06313, clip_frac=0.125, p_loss=0.6480, v_loss=0.9998, lr=1.19e-04
+2025-08-28 21:55:01,805 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11545, clip_frac=0.375, p_loss=-0.1964, v_loss=3.9705, lr=1.20e-04
+2025-08-28 21:55:04,560 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03772, clip_frac=0.000, p_loss=-0.1610, v_loss=2.8896, lr=1.20e-04
+2025-08-28 21:55:07,082 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05130, clip_frac=0.125, p_loss=0.3562, v_loss=1.6867, lr=1.21e-04
+2025-08-28 21:55:09,413 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12201, clip_frac=0.125, p_loss=0.2754, v_loss=3.5200, lr=1.22e-04
+2025-08-28 21:55:10,957 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08635, clip_frac=0.125, p_loss=0.2740, v_loss=1.0400, lr=1.25e-04
+2025-08-28 21:55:12,838 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06374, clip_frac=0.125, p_loss=0.4947, v_loss=12.9844, lr=1.26e-04
+2025-08-28 21:55:15,006 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05569, clip_frac=0.125, p_loss=0.4917, v_loss=3.1787, lr=1.28e-04
+2025-08-28 21:55:16,936 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04189, clip_frac=0.000, p_loss=0.1607, v_loss=0.8909, lr=1.30e-04
+2025-08-28 21:55:19,709 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03918, clip_frac=0.125, p_loss=0.6667, v_loss=13.4601, lr=1.32e-04
+2025-08-28 21:55:23,137 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03549, clip_frac=0.375, p_loss=0.0408, v_loss=12.5735, lr=1.33e-04
+2025-08-28 21:55:25,612 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08622, clip_frac=0.125, p_loss=-0.6560, v_loss=6.4456, lr=1.34e-04
+2025-08-28 21:55:27,887 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05652, clip_frac=0.125, p_loss=-0.2987, v_loss=7.5478, lr=1.35e-04
+2025-08-28 21:55:30,630 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07743, clip_frac=0.250, p_loss=-0.1894, v_loss=4.7496, lr=1.36e-04
+2025-08-28 21:55:32,971 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11318, clip_frac=0.000, p_loss=0.3060, v_loss=4.3250, lr=1.38e-04
+2025-08-28 21:55:35,087 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06940, clip_frac=0.125, p_loss=-0.3372, v_loss=3.9844, lr=1.39e-04
+2025-08-28 21:55:37,286 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09821, clip_frac=0.375, p_loss=-0.0800, v_loss=3.2444, lr=1.40e-04
+2025-08-28 21:55:39,131 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05526, clip_frac=0.125, p_loss=0.0563, v_loss=3.3327, lr=1.41e-04
+2025-08-28 21:55:41,004 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03668, clip_frac=0.250, p_loss=-0.2985, v_loss=3.3978, lr=1.42e-04
+2025-08-28 21:55:43,187 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07083, clip_frac=0.125, p_loss=0.0386, v_loss=3.0180, lr=1.42e-04
+2025-08-28 21:55:43,189 [INFO] ppo_trainer: Episode 1200 | Reward: -0.027±2.422 | Hub Δ:  0.292±0.197 | Success: 43.8% | Buffer: 0
+2025-08-28 21:56:00,539 [INFO] ppo_trainer: Evaluation at episode 1200: Reward: -0.045±2.153 | Hub Δ: 0.535±0.238 | Success: 88.0%
+2025-08-28 21:56:00,625 [INFO] ppo_trainer: Saved new best model at episode 1200
+2025-08-28 21:56:02,629 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04602, clip_frac=0.000, p_loss=-0.0346, v_loss=3.7944, lr=1.42e-04
+2025-08-28 21:56:04,601 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04099, clip_frac=0.125, p_loss=-0.2927, v_loss=16.9471, lr=1.43e-04
+2025-08-28 21:56:05,335 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07224, clip_frac=0.000, p_loss=0.3551, v_loss=1.0410, lr=1.43e-04
+2025-08-28 21:56:06,164 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04800, clip_frac=0.000, p_loss=0.2482, v_loss=2.0842, lr=1.45e-04
+2025-08-28 21:56:07,953 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10518, clip_frac=0.125, p_loss=-0.3142, v_loss=1.8744, lr=1.49e-04
+2025-08-28 21:56:09,264 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06459, clip_frac=0.125, p_loss=0.6399, v_loss=27.4936, lr=1.50e-04
+2025-08-28 21:56:10,485 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07849, clip_frac=0.250, p_loss=-0.0957, v_loss=1.4988, lr=1.46e-04
+2025-08-28 21:56:11,874 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08156, clip_frac=0.250, p_loss=-0.1362, v_loss=2.1005, lr=1.43e-04
+2025-08-28 21:56:13,329 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11604, clip_frac=0.250, p_loss=0.1352, v_loss=1.7871, lr=1.39e-04
+2025-08-28 21:56:14,706 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04245, clip_frac=0.125, p_loss=-0.1936, v_loss=1.3065, lr=1.39e-04
+2025-08-28 21:56:17,499 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04678, clip_frac=0.125, p_loss=-0.3393, v_loss=2.3907, lr=1.38e-04
+2025-08-28 21:56:19,082 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04336, clip_frac=0.125, p_loss=0.6085, v_loss=27.3980, lr=1.38e-04
+2025-08-28 21:56:20,244 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09126, clip_frac=0.375, p_loss=0.1131, v_loss=10.9647, lr=1.37e-04
+2025-08-28 21:56:23,501 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05797, clip_frac=0.125, p_loss=0.0399, v_loss=57.2344, lr=1.36e-04
+2025-08-28 21:56:24,525 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04267, clip_frac=0.250, p_loss=0.4936, v_loss=1.8750, lr=1.34e-04
+2025-08-28 21:56:25,650 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04220, clip_frac=0.000, p_loss=0.2522, v_loss=1.9392, lr=1.33e-04
+2025-08-28 21:56:26,696 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06004, clip_frac=0.000, p_loss=0.1591, v_loss=1.5455, lr=1.30e-04
+2025-08-28 21:56:27,725 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03570, clip_frac=0.250, p_loss=-0.6457, v_loss=1.0474, lr=1.30e-04
+2025-08-28 21:56:28,543 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.14013, clip_frac=0.600, p_loss=-0.2540, v_loss=3.5614, lr=1.27e-04
+2025-08-28 21:56:29,378 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09719, clip_frac=0.125, p_loss=-0.3377, v_loss=1.6042, lr=1.27e-04
+2025-08-28 21:56:30,509 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11484, clip_frac=0.250, p_loss=-0.1346, v_loss=5.1993, lr=1.26e-04
+2025-08-28 21:56:31,394 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06861, clip_frac=0.250, p_loss=0.0219, v_loss=0.8527, lr=1.25e-04
+2025-08-28 21:56:33,081 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05976, clip_frac=0.125, p_loss=-0.0222, v_loss=38.8256, lr=1.24e-04
+2025-08-28 21:56:35,097 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04026, clip_frac=0.125, p_loss=0.0188, v_loss=20.1179, lr=1.24e-04
+2025-08-28 21:56:36,534 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05353, clip_frac=0.375, p_loss=0.0757, v_loss=17.9326, lr=1.23e-04
+2025-08-28 21:56:36,535 [INFO] ppo_trainer: Episode 1600 | Reward:  0.406±1.975 | Hub Δ:  0.348±0.310 | Success: 56.2% | Buffer: 0
+2025-08-28 21:56:52,716 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: -0.491±2.192 | Hub Δ: 0.481±0.234 | Success: 74.0%
+2025-08-28 21:56:53,643 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07508, clip_frac=0.125, p_loss=0.0975, v_loss=5.6050, lr=1.23e-04
+2025-08-28 21:56:55,100 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11532, clip_frac=0.125, p_loss=-0.1411, v_loss=1.9696, lr=1.23e-04
+2025-08-28 21:56:56,952 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.19932, clip_frac=0.125, p_loss=0.2201, v_loss=10.4701, lr=1.22e-04
+2025-08-28 21:56:59,450 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08985, clip_frac=0.500, p_loss=-0.0384, v_loss=6.1904, lr=1.21e-04
+2025-08-28 21:57:01,724 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10924, clip_frac=0.250, p_loss=-0.2586, v_loss=11.0200, lr=1.21e-04
+2025-08-28 21:57:04,147 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04177, clip_frac=0.125, p_loss=-0.6221, v_loss=6.6306, lr=1.20e-04
+2025-08-28 21:57:07,263 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04601, clip_frac=0.000, p_loss=-0.6018, v_loss=40.2670, lr=1.20e-04
+2025-08-28 21:57:09,669 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04452, clip_frac=0.000, p_loss=-0.3492, v_loss=3.9051, lr=1.18e-04
+2025-08-28 21:57:11,565 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.14046, clip_frac=0.375, p_loss=-0.4294, v_loss=46.1947, lr=1.17e-04
+2025-08-28 21:57:12,722 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11228, clip_frac=0.250, p_loss=0.5563, v_loss=1.6753, lr=1.16e-04
+2025-08-28 21:57:13,855 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04237, clip_frac=0.125, p_loss=0.1061, v_loss=2.8680, lr=1.15e-04
+2025-08-28 21:57:16,224 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08142, clip_frac=0.125, p_loss=-0.3032, v_loss=27.3721, lr=1.14e-04
+2025-08-28 21:57:17,953 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10386, clip_frac=0.250, p_loss=-0.2444, v_loss=24.8711, lr=1.13e-04
+2025-08-28 21:57:23,016 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06954, clip_frac=0.250, p_loss=0.1408, v_loss=45.2582, lr=1.13e-04
+2025-08-28 21:57:25,798 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09269, clip_frac=0.375, p_loss=0.0628, v_loss=2.5021, lr=1.12e-04
+2025-08-28 21:57:27,836 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07891, clip_frac=0.375, p_loss=-0.1425, v_loss=1.9982, lr=1.11e-04
+2025-08-28 21:57:29,543 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05937, clip_frac=0.625, p_loss=0.3584, v_loss=6.5198, lr=1.10e-04
+2025-08-28 21:57:31,965 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06815, clip_frac=0.375, p_loss=0.0241, v_loss=12.9383, lr=1.10e-04
+2025-08-28 21:57:34,411 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08910, clip_frac=0.250, p_loss=-0.1448, v_loss=20.1640, lr=1.09e-04
+2025-08-28 21:57:38,179 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05207, clip_frac=0.125, p_loss=0.0884, v_loss=24.9837, lr=1.08e-04
+2025-08-28 21:57:40,364 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05680, clip_frac=0.250, p_loss=0.3594, v_loss=15.9923, lr=1.08e-04
+2025-08-28 21:57:43,143 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09814, clip_frac=0.500, p_loss=0.1489, v_loss=1.7894, lr=1.07e-04
+2025-08-28 21:57:44,985 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.17811, clip_frac=0.250, p_loss=-0.1079, v_loss=3.3473, lr=1.05e-04
+2025-08-28 21:57:46,200 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07900, clip_frac=0.250, p_loss=-0.0355, v_loss=4.1950, lr=1.05e-04
+2025-08-28 21:57:47,200 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11863, clip_frac=0.250, p_loss=-0.2943, v_loss=1.7085, lr=1.04e-04
+2025-08-28 21:57:47,202 [INFO] ppo_trainer: Episode 2000 | Reward:  0.131±1.282 | Hub Δ:  0.257±0.251 | Success: 56.2% | Buffer: 0
+2025-08-28 21:58:04,900 [INFO] ppo_trainer: Evaluation at episode 2000: Reward: -0.481±2.223 | Hub Δ: 0.476±0.236 | Success: 76.0%
+2025-08-28 21:58:05,956 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13659, clip_frac=0.375, p_loss=0.1690, v_loss=5.4072, lr=1.02e-04
+2025-08-28 21:58:07,457 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04209, clip_frac=0.000, p_loss=-0.6663, v_loss=8.4379, lr=1.00e-04
+2025-08-28 21:58:08,318 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08561, clip_frac=0.125, p_loss=-0.5972, v_loss=14.5179, lr=1.01e-04
+2025-08-28 21:58:09,007 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04419, clip_frac=0.125, p_loss=0.0964, v_loss=1.4443, lr=1.01e-04
+2025-08-28 21:58:09,962 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09545, clip_frac=0.250, p_loss=-0.0264, v_loss=1.5761, lr=1.02e-04
+2025-08-28 21:58:10,605 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10264, clip_frac=0.250, p_loss=-0.1965, v_loss=10.5121, lr=1.02e-04
+2025-08-28 21:58:11,957 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08156, clip_frac=0.375, p_loss=-0.0369, v_loss=0.9155, lr=1.03e-04
+2025-08-28 21:58:12,595 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09297, clip_frac=0.375, p_loss=0.1928, v_loss=4.3874, lr=1.03e-04
+2025-08-28 21:58:13,719 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11428, clip_frac=0.375, p_loss=0.5772, v_loss=0.7481, lr=1.05e-04
+2025-08-28 21:58:14,661 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09796, clip_frac=0.125, p_loss=0.0848, v_loss=0.8070, lr=1.06e-04
+2025-08-28 21:58:15,875 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08825, clip_frac=0.250, p_loss=-0.3234, v_loss=17.1188, lr=1.06e-04
+2025-08-28 21:58:16,734 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08197, clip_frac=0.250, p_loss=0.0179, v_loss=11.3123, lr=1.07e-04
+2025-08-28 21:58:17,792 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09352, clip_frac=0.125, p_loss=0.4999, v_loss=1.2120, lr=1.07e-04
+2025-08-28 21:58:19,140 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13310, clip_frac=0.375, p_loss=-0.1176, v_loss=12.9806, lr=1.07e-04
+2025-08-28 21:58:20,534 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.14126, clip_frac=0.250, p_loss=-0.1149, v_loss=0.7786, lr=1.08e-04
+2025-08-28 21:58:21,274 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07186, clip_frac=0.375, p_loss=0.0914, v_loss=0.7855, lr=1.09e-04
+2025-08-28 21:58:22,136 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08281, clip_frac=0.125, p_loss=0.2388, v_loss=0.6676, lr=1.10e-04
+2025-08-28 21:58:23,020 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03517, clip_frac=0.250, p_loss=-0.4174, v_loss=19.7441, lr=1.10e-04
+2025-08-28 21:58:23,829 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10882, clip_frac=0.125, p_loss=-0.4397, v_loss=10.6278, lr=1.11e-04
+2025-08-28 21:58:24,416 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16194, clip_frac=0.500, p_loss=-0.0279, v_loss=1.1564, lr=1.11e-04
+2025-08-28 21:58:24,971 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12543, clip_frac=0.500, p_loss=0.2588, v_loss=0.5737, lr=1.12e-04
+2025-08-28 21:58:25,830 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06483, clip_frac=0.500, p_loss=0.3608, v_loss=1.1605, lr=1.14e-04
+2025-08-28 21:58:26,535 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13484, clip_frac=0.000, p_loss=-0.0439, v_loss=0.4656, lr=1.15e-04
+2025-08-28 21:58:27,142 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04465, clip_frac=0.250, p_loss=-0.1646, v_loss=29.3634, lr=1.15e-04
+2025-08-28 21:58:27,646 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05964, clip_frac=0.250, p_loss=-0.1116, v_loss=3.5072, lr=1.15e-04
+2025-08-28 21:58:27,647 [INFO] ppo_trainer: Episode 2400 | Reward: -0.043±1.008 | Hub Δ:  0.168±0.223 | Success: 37.5% | Buffer: 0
+2025-08-28 21:58:28,379 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: -0.800±0.049 | Hub Δ: 0.000±0.000 | Success: 0.0%
+2025-08-28 21:58:28,888 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11409, clip_frac=0.375, p_loss=0.0358, v_loss=1.2277, lr=1.16e-04
+2025-08-28 21:58:29,455 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04366, clip_frac=0.000, p_loss=-0.4407, v_loss=42.3015, lr=1.16e-04
+2025-08-28 21:58:29,986 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11479, clip_frac=0.250, p_loss=0.3589, v_loss=1.6999, lr=1.17e-04
+2025-08-28 21:58:30,585 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07608, clip_frac=0.125, p_loss=-0.4201, v_loss=5.8777, lr=1.17e-04
+2025-08-28 21:58:31,100 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06736, clip_frac=0.000, p_loss=0.5849, v_loss=3.6911, lr=1.18e-04
+2025-08-28 21:58:31,624 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05517, clip_frac=0.250, p_loss=-0.3884, v_loss=1.0580, lr=1.18e-04
+2025-08-28 21:58:32,947 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16001, clip_frac=0.250, p_loss=0.2584, v_loss=3.0262, lr=1.18e-04
+2025-08-28 21:58:33,643 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09646, clip_frac=0.000, p_loss=-0.3002, v_loss=2.7443, lr=1.19e-04
+2025-08-28 21:58:34,407 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08694, clip_frac=0.500, p_loss=-0.2758, v_loss=1.4562, lr=1.19e-04
+2025-08-28 21:58:34,990 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07977, clip_frac=0.250, p_loss=-0.0141, v_loss=1.4708, lr=1.19e-04
+2025-08-28 21:58:35,682 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07450, clip_frac=0.125, p_loss=0.0743, v_loss=1.8193, lr=1.20e-04
+2025-08-28 21:58:36,427 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04781, clip_frac=0.125, p_loss=-0.2757, v_loss=1.5121, lr=1.20e-04
+2025-08-28 21:58:36,979 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.19071, clip_frac=0.667, p_loss=0.1911, v_loss=1.8262, lr=1.21e-04
+2025-08-28 21:58:37,576 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.17662, clip_frac=0.625, p_loss=0.4338, v_loss=3.6224, lr=1.21e-04
+2025-08-28 21:58:38,258 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03729, clip_frac=0.375, p_loss=0.4227, v_loss=1.0868, lr=1.22e-04
+2025-08-28 21:58:39,598 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07079, clip_frac=0.125, p_loss=0.5910, v_loss=4.4313, lr=1.23e-04
+2025-08-28 21:58:40,405 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07337, clip_frac=0.750, p_loss=0.4251, v_loss=0.6900, lr=1.23e-04
+2025-08-28 21:58:41,540 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11844, clip_frac=0.250, p_loss=0.1254, v_loss=1.4122, lr=1.24e-04
+2025-08-28 21:58:42,769 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04606, clip_frac=0.375, p_loss=-0.1346, v_loss=2.8758, lr=1.24e-04
+2025-08-28 21:58:43,867 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12849, clip_frac=0.375, p_loss=0.2044, v_loss=2.0571, lr=1.25e-04
+2025-08-28 21:58:45,405 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07886, clip_frac=0.250, p_loss=-0.1162, v_loss=50.7999, lr=1.25e-04
+2025-08-28 21:58:46,351 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08815, clip_frac=0.625, p_loss=0.2272, v_loss=1.5864, lr=1.25e-04
+2025-08-28 21:58:48,520 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08280, clip_frac=0.500, p_loss=-0.0790, v_loss=1.6582, lr=1.24e-04
+2025-08-28 21:58:50,680 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04159, clip_frac=0.125, p_loss=0.1207, v_loss=1.2976, lr=1.24e-04
+2025-08-28 21:58:53,647 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10806, clip_frac=0.250, p_loss=-0.0455, v_loss=8.2862, lr=1.24e-04
+2025-08-28 21:58:53,648 [INFO] ppo_trainer: Episode 2800 | Reward:  0.360±1.824 | Hub Δ:  0.438±0.234 | Success: 75.0% | Buffer: 0
+2025-08-28 21:59:15,819 [INFO] ppo_trainer: Evaluation at episode 2800: Reward: 0.432±2.469 | Hub Δ: 0.566±0.263 | Success: 88.0%
+2025-08-28 21:59:15,962 [INFO] ppo_trainer: Saved new best model at episode 2800
+2025-08-28 21:59:17,687 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09770, clip_frac=0.500, p_loss=0.3876, v_loss=21.7546, lr=1.23e-04
+2025-08-28 21:59:18,993 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.17471, clip_frac=0.375, p_loss=0.0657, v_loss=2.0835, lr=1.23e-04
+2025-08-28 21:59:20,966 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04673, clip_frac=0.375, p_loss=0.3973, v_loss=6.7924, lr=1.23e-04
+2025-08-28 21:59:21,860 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16886, clip_frac=0.500, p_loss=0.0837, v_loss=1.4128, lr=1.22e-04
+2025-08-28 21:59:22,986 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12009, clip_frac=0.500, p_loss=-0.1291, v_loss=13.8497, lr=1.22e-04
+2025-08-28 21:59:23,909 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05284, clip_frac=0.000, p_loss=0.1479, v_loss=2.8141, lr=1.21e-04
+2025-08-28 21:59:24,949 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04909, clip_frac=0.000, p_loss=-0.2833, v_loss=12.4266, lr=1.21e-04
+2025-08-28 21:59:25,628 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07709, clip_frac=0.250, p_loss=0.1562, v_loss=0.7471, lr=1.20e-04
+2025-08-28 21:59:26,607 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.30855, clip_frac=0.250, p_loss=0.1441, v_loss=1.0791, lr=1.20e-04
+2025-08-28 21:59:27,408 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.18257, clip_frac=0.375, p_loss=0.1220, v_loss=1.7417, lr=1.20e-04
+2025-08-28 21:59:29,318 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07745, clip_frac=0.375, p_loss=0.8362, v_loss=52.4786, lr=1.18e-04
+2025-08-28 21:59:30,916 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.21102, clip_frac=0.500, p_loss=0.3091, v_loss=4.9705, lr=1.18e-04
+2025-08-28 21:59:31,998 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06363, clip_frac=0.250, p_loss=-0.0771, v_loss=6.1353, lr=1.18e-04
+2025-08-28 21:59:31,999 [INFO] ppo_trainer: Episode 3000 | Reward: -0.218±1.986 | Hub Δ:  0.425±0.333 | Success: 62.5% | Buffer: 0
+2025-08-28 21:59:47,437 [INFO] ppo_trainer: Evaluation at episode 3000: Reward: -0.276±2.414 | Hub Δ: 0.507±0.253 | Success: 80.0%
+2025-08-28 22:00:04,387 [INFO] ppo_trainer: PPO training completed in 0.12 hours
+2025-08-28 22:00:04,388 [INFO] ppo_trainer: Best reward: 0.432
+2025-08-28 22:00:04,388 [INFO] ppo_trainer: Final hub improvement: 0.4264
+2025-08-28 22:00:04,388 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-28 22:00:04,412 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-28 22:00:04,412 [INFO] __main__: PPO training completed
+2025-08-28 22:00:04,422 [INFO] __main__: PPO training phase completed successfully
+2025-08-28 22:00:04,422 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-28 22:00:04,422 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-28 22:00:04,448 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 128, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.2, 'shared_encoder': True}
+2025-08-28 22:00:54,586 [INFO] __main__: Evaluation Results:
+2025-08-28 22:00:54,586 [INFO] __main__:   Success Rate: 1.000
+2025-08-28 22:00:54,586 [INFO] __main__:   Avg Reward: -0.064 ± 2.290
+2025-08-28 22:00:54,587 [INFO] __main__:   Avg Hub Improvement: 0.508 ± 0.240
+2025-08-28 22:00:54,587 [INFO] __main__:   Avg Episode Length: 16.3
+2025-08-28 22:00:54,587 [INFO] __main__:   Discriminator Improvement: -0.130
+2025-08-28 22:00:54,589 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-28 22:00:54,599 [INFO] __main__: Evaluation completed successfully
+2025-08-28 22:00:54,599 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-28 22:07:35,577 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 22:07:35,577 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 22:07:35,577 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 22:07:35,577 [INFO] __main__: Starting PPO training...
+2025-08-28 22:07:37,753 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 22:07:37,766 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 22:07:37,766 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 22:07:37,767 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=120, step_down=120, mode=triangular2
+2025-08-28 22:07:37,768 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 22:07:37,768 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 22:07:37,768 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 22:07:37,768 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 22:07:37,768 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 22:07:39,757 [ERROR] __main__: Training pipeline failed: name 'F' is not defined
+2025-08-28 22:09:00,966 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 22:09:00,970 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 22:09:00,970 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 22:09:00,970 [INFO] __main__: Starting PPO training...
+2025-08-28 22:09:02,999 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 22:09:03,007 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 22:09:03,007 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 22:09:03,008 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=120, step_down=120, mode=triangular2
+2025-08-28 22:09:03,009 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 22:09:03,009 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 22:09:03,009 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 22:09:03,009 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 22:09:03,009 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 22:09:04,939 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08287, clip_frac=0.125, p_loss=-0.0113, v_loss=130.8899
+2025-08-28 22:09:06,241 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02026, clip_frac=0.000, p_loss=0.1245, v_loss=8.3060
+2025-08-28 22:09:07,809 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03143, clip_frac=0.000, p_loss=0.1309, v_loss=14.1871
+2025-08-28 22:09:09,323 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03379, clip_frac=0.000, p_loss=-0.2948, v_loss=38.6461
+2025-08-28 22:09:11,542 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02719, clip_frac=0.125, p_loss=0.2611, v_loss=74.8549
+2025-08-28 22:09:14,881 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02319, clip_frac=0.000, p_loss=0.2715, v_loss=11.0341
+2025-08-28 22:09:16,621 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03552, clip_frac=0.000, p_loss=-0.0921, v_loss=52.0132
+2025-08-28 22:09:18,425 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03576, clip_frac=0.000, p_loss=-0.4210, v_loss=27.1639
+2025-08-28 22:09:20,769 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02945, clip_frac=0.000, p_loss=-0.1971, v_loss=198.2129
+2025-08-28 22:09:22,433 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02294, clip_frac=0.000, p_loss=0.2162, v_loss=49.9771
+2025-08-28 22:09:24,105 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02450, clip_frac=0.000, p_loss=-0.0925, v_loss=21.4085
+2025-08-28 22:09:26,168 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03502, clip_frac=0.125, p_loss=0.1821, v_loss=124.4604
+2025-08-28 22:09:28,543 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02692, clip_frac=0.000, p_loss=-0.1307, v_loss=8.5322
+2025-08-28 22:09:32,747 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.14543, clip_frac=0.250, p_loss=0.6031, v_loss=149.2867
+2025-08-28 22:09:36,358 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13525, clip_frac=0.250, p_loss=0.3814, v_loss=145.8047
+2025-08-28 22:09:39,637 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04617, clip_frac=0.125, p_loss=-0.1261, v_loss=13.3899
+2025-08-28 22:09:41,677 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03560, clip_frac=0.125, p_loss=-0.1772, v_loss=20.3967
+2025-08-28 22:09:46,841 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05461, clip_frac=0.000, p_loss=-0.0127, v_loss=29.3268
+2025-08-28 22:09:48,905 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02547, clip_frac=0.000, p_loss=-0.0420, v_loss=18.5435
+2025-08-28 22:09:51,368 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02386, clip_frac=0.000, p_loss=0.4412, v_loss=10.5405
+2025-08-28 22:09:53,304 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07502, clip_frac=0.125, p_loss=0.3887, v_loss=79.5603
+2025-08-28 22:09:55,284 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04892, clip_frac=0.000, p_loss=-0.2025, v_loss=5.3308
+2025-08-28 22:09:57,962 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04149, clip_frac=0.125, p_loss=-0.4887, v_loss=63.9639
+2025-08-28 22:10:01,261 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13957, clip_frac=0.375, p_loss=-0.4636, v_loss=95.2799
+2025-08-28 22:10:02,995 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03319, clip_frac=0.000, p_loss=0.3005, v_loss=8.4748
+2025-08-28 22:10:02,996 [INFO] ppo_trainer: Episode  400 | Reward: -0.523±2.104 | Hub Δ:  0.268±0.300 | Success: 43.8% | Buffer: 0
+2025-08-28 22:10:15,532 [INFO] ppo_trainer: Evaluation at episode 400: Reward: 0.089±1.744 | Hub Δ: 0.432±0.145 | Success: 78.0%
+2025-08-28 22:10:15,618 [INFO] ppo_trainer: Saved new best model at episode 400
+2025-08-28 22:10:16,918 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05292, clip_frac=0.125, p_loss=0.3031, v_loss=123.9005
+2025-08-28 22:10:18,819 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06628, clip_frac=0.125, p_loss=0.1636, v_loss=34.4997
+2025-08-28 22:10:20,816 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05093, clip_frac=0.000, p_loss=-0.3437, v_loss=48.6294
+2025-08-28 22:10:22,571 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02040, clip_frac=0.000, p_loss=-0.1180, v_loss=6.6415
+2025-08-28 22:10:24,264 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02126, clip_frac=0.125, p_loss=0.1581, v_loss=11.5592
+2025-08-28 22:10:26,637 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02556, clip_frac=0.000, p_loss=0.0522, v_loss=5.5482
+2025-08-28 22:10:28,825 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03941, clip_frac=0.000, p_loss=0.3057, v_loss=178.1973
+2025-08-28 22:10:31,543 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13609, clip_frac=0.250, p_loss=-0.3586, v_loss=132.1020
+2025-08-28 22:10:33,361 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04040, clip_frac=0.000, p_loss=-0.2107, v_loss=9.6964
+2025-08-28 22:10:35,283 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03671, clip_frac=0.000, p_loss=-0.1681, v_loss=4.6559
+2025-08-28 22:10:37,023 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06273, clip_frac=0.125, p_loss=0.0415, v_loss=232.3781
+2025-08-28 22:10:39,064 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02478, clip_frac=0.000, p_loss=-0.4975, v_loss=68.5962
+2025-08-28 22:10:41,519 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03909, clip_frac=0.125, p_loss=0.1723, v_loss=244.4745
+2025-08-28 22:10:43,695 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03869, clip_frac=0.000, p_loss=0.1617, v_loss=9.8619
+2025-08-28 22:10:45,983 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09095, clip_frac=0.125, p_loss=-0.0876, v_loss=19.3287
+2025-08-28 22:10:48,456 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.15532, clip_frac=0.250, p_loss=-0.5964, v_loss=246.8498
+2025-08-28 22:10:50,427 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02228, clip_frac=0.000, p_loss=-0.2352, v_loss=11.6508
+2025-08-28 22:10:55,670 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02667, clip_frac=0.000, p_loss=-0.1157, v_loss=30.6082
+2025-08-28 22:10:59,580 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04306, clip_frac=0.000, p_loss=-0.0688, v_loss=14.0797
+2025-08-28 22:11:02,564 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03869, clip_frac=0.000, p_loss=0.6115, v_loss=44.0187
+2025-08-28 22:11:06,876 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.17437, clip_frac=0.375, p_loss=-0.2268, v_loss=196.9866
+2025-08-28 22:11:12,409 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04192, clip_frac=0.250, p_loss=-0.0874, v_loss=89.9939
+2025-08-28 22:11:19,379 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04070, clip_frac=0.125, p_loss=-0.1590, v_loss=212.4535
+2025-08-28 22:11:22,628 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04182, clip_frac=0.000, p_loss=0.7089, v_loss=30.0850
+2025-08-28 22:11:26,721 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03621, clip_frac=0.000, p_loss=0.1682, v_loss=5.6372
+2025-08-28 22:11:26,722 [INFO] ppo_trainer: Episode  800 | Reward: -1.015±2.515 | Hub Δ:  0.416±0.310 | Success: 68.8% | Buffer: 0
+2025-08-28 22:11:46,881 [INFO] ppo_trainer: Evaluation at episode 800: Reward: -1.472±2.854 | Hub Δ: 0.438±0.237 | Success: 72.0%
+2025-08-28 22:11:48,607 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03110, clip_frac=0.000, p_loss=-0.0232, v_loss=35.1122
+2025-08-28 22:11:49,353 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07736, clip_frac=0.125, p_loss=0.1731, v_loss=144.3255
+2025-08-28 22:11:50,326 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03034, clip_frac=0.125, p_loss=-0.4547, v_loss=18.6793
+2025-08-28 22:11:51,568 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02485, clip_frac=0.000, p_loss=0.0241, v_loss=25.1991
+2025-08-28 22:11:53,523 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11031, clip_frac=0.250, p_loss=0.0415, v_loss=103.9485
+2025-08-28 22:11:55,066 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04905, clip_frac=0.125, p_loss=-0.1022, v_loss=12.8913
+2025-08-28 22:11:56,235 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02246, clip_frac=0.000, p_loss=0.2398, v_loss=7.5054
+2025-08-28 22:11:57,730 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02319, clip_frac=0.000, p_loss=0.5786, v_loss=21.6140
+2025-08-28 22:11:59,141 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03313, clip_frac=0.000, p_loss=-0.4714, v_loss=17.4254
+2025-08-28 22:12:00,498 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02357, clip_frac=0.125, p_loss=-0.0455, v_loss=9.9495
+2025-08-28 22:12:02,200 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02516, clip_frac=0.000, p_loss=-0.3233, v_loss=9.1493
+2025-08-28 22:12:03,628 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08338, clip_frac=0.125, p_loss=0.2230, v_loss=12.2257
+2025-08-28 22:12:04,892 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05875, clip_frac=0.125, p_loss=0.1027, v_loss=13.4647
+2025-08-28 22:12:06,369 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03101, clip_frac=0.000, p_loss=0.2509, v_loss=10.5708
+2025-08-28 22:12:07,590 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03622, clip_frac=0.125, p_loss=-0.0883, v_loss=106.7649
+2025-08-28 22:12:09,578 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05529, clip_frac=0.250, p_loss=0.1353, v_loss=53.9599
+2025-08-28 22:12:10,871 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02507, clip_frac=0.125, p_loss=0.0098, v_loss=32.0662
+2025-08-28 22:12:12,594 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04180, clip_frac=0.125, p_loss=0.4482, v_loss=11.1017
+2025-08-28 22:12:14,433 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06898, clip_frac=0.000, p_loss=0.1945, v_loss=3.8939
+2025-08-28 22:12:15,474 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02757, clip_frac=0.000, p_loss=-0.2983, v_loss=7.8402
+2025-08-28 22:12:17,237 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03434, clip_frac=0.000, p_loss=-0.0306, v_loss=9.6568
+2025-08-28 22:12:18,927 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03314, clip_frac=0.000, p_loss=0.6158, v_loss=36.6278
+2025-08-28 22:12:21,765 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02005, clip_frac=0.000, p_loss=0.6452, v_loss=8.3817
+2025-08-28 22:12:23,528 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03648, clip_frac=0.000, p_loss=-0.3198, v_loss=9.8229
+2025-08-28 22:12:25,338 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02770, clip_frac=0.000, p_loss=0.3465, v_loss=15.5972
+2025-08-28 22:12:25,339 [INFO] ppo_trainer: Episode 1200 | Reward: -0.266±2.231 | Hub Δ:  0.245±0.278 | Success: 43.8% | Buffer: 0
+2025-08-28 22:12:28,152 [INFO] ppo_trainer: Evaluation at episode 1200: Reward: 0.529±2.645 | Hub Δ: 0.165±0.324 | Success: 22.0%
+2025-08-28 22:12:29,876 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02390, clip_frac=0.000, p_loss=-0.0837, v_loss=7.1466
+2025-08-28 22:12:31,716 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04576, clip_frac=0.000, p_loss=0.2819, v_loss=13.3385
+2025-08-28 22:12:34,484 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06879, clip_frac=0.125, p_loss=-0.1417, v_loss=45.5708
+2025-08-28 22:12:35,937 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03856, clip_frac=0.125, p_loss=-0.0301, v_loss=94.8302
+2025-08-28 22:12:37,577 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03471, clip_frac=0.000, p_loss=0.0279, v_loss=5.2381
+2025-08-28 22:12:39,492 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03036, clip_frac=0.000, p_loss=-0.2348, v_loss=28.1594
+2025-08-28 22:12:41,610 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02491, clip_frac=0.000, p_loss=-0.5968, v_loss=8.9055
+2025-08-28 22:12:42,842 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04589, clip_frac=0.125, p_loss=-0.4280, v_loss=27.3760
+2025-08-28 22:12:44,175 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04236, clip_frac=0.000, p_loss=-0.0034, v_loss=5.7892
+2025-08-28 22:12:45,532 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04422, clip_frac=0.125, p_loss=0.0490, v_loss=6.3385
+2025-08-28 22:12:46,811 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03187, clip_frac=0.125, p_loss=0.3906, v_loss=6.0138
+2025-08-28 22:12:48,315 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02389, clip_frac=0.000, p_loss=0.1012, v_loss=3.8502
+2025-08-28 22:12:49,438 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03914, clip_frac=0.000, p_loss=0.4379, v_loss=1.8519
+2025-08-28 22:12:50,699 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05835, clip_frac=0.125, p_loss=0.1158, v_loss=15.4954
+2025-08-28 22:12:51,989 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04029, clip_frac=0.000, p_loss=0.5465, v_loss=22.0211
+2025-08-28 22:12:53,256 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03352, clip_frac=0.000, p_loss=-0.1902, v_loss=18.1715
+2025-08-28 22:12:54,476 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04735, clip_frac=0.125, p_loss=-0.2112, v_loss=9.0606
+2025-08-28 22:12:56,006 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05850, clip_frac=0.125, p_loss=0.2998, v_loss=66.2767
+2025-08-28 22:12:57,358 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05032, clip_frac=0.000, p_loss=0.5231, v_loss=2.6650
+2025-08-28 22:12:58,451 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02725, clip_frac=0.000, p_loss=-0.1709, v_loss=9.5089
+2025-08-28 22:12:59,747 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05434, clip_frac=0.000, p_loss=0.1664, v_loss=7.8070
+2025-08-28 22:13:02,092 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06609, clip_frac=0.125, p_loss=0.2314, v_loss=38.1714
+2025-08-28 22:13:03,864 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16908, clip_frac=0.125, p_loss=-0.3858, v_loss=369.6154
+2025-08-28 22:13:05,625 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04159, clip_frac=0.000, p_loss=0.0458, v_loss=3.8100
+2025-08-28 22:13:07,671 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06540, clip_frac=0.125, p_loss=0.1562, v_loss=16.5398
+2025-08-28 22:13:07,672 [INFO] ppo_trainer: Episode 1600 | Reward: -1.079±2.542 | Hub Δ:  0.221±0.283 | Success: 37.5% | Buffer: 0
+2025-08-28 22:13:25,994 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: -0.328±2.569 | Hub Δ: 0.506±0.264 | Success: 76.0%
+2025-08-28 22:13:27,656 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03104, clip_frac=0.125, p_loss=0.5063, v_loss=5.3189
+2025-08-28 22:13:28,696 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05554, clip_frac=0.000, p_loss=-0.3755, v_loss=6.2113
+2025-08-28 22:13:29,614 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04975, clip_frac=0.125, p_loss=0.4335, v_loss=10.4708
+2025-08-28 22:13:31,436 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04296, clip_frac=0.000, p_loss=0.3410, v_loss=18.7114
+2025-08-28 22:13:32,940 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02914, clip_frac=0.125, p_loss=-0.0494, v_loss=12.9108
+2025-08-28 22:13:34,688 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03199, clip_frac=0.000, p_loss=0.2646, v_loss=10.4071
+2025-08-28 22:13:36,844 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03855, clip_frac=0.000, p_loss=0.0587, v_loss=21.4189
+2025-08-28 22:13:37,989 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04203, clip_frac=0.000, p_loss=-0.3643, v_loss=7.8928
+2025-08-28 22:13:39,131 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06990, clip_frac=0.125, p_loss=-0.2902, v_loss=16.9448
+2025-08-28 22:13:40,376 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07622, clip_frac=0.125, p_loss=-0.1572, v_loss=46.6219
+2025-08-28 22:13:41,330 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03254, clip_frac=0.000, p_loss=0.1255, v_loss=3.9145
+2025-08-28 22:13:42,753 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09855, clip_frac=0.125, p_loss=-0.1324, v_loss=5.2086
+2025-08-28 22:13:44,437 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04922, clip_frac=0.000, p_loss=0.3579, v_loss=3.6148
+2025-08-28 22:13:45,483 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07120, clip_frac=0.125, p_loss=-0.6345, v_loss=12.7955
+2025-08-28 22:13:46,529 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02882, clip_frac=0.000, p_loss=0.1326, v_loss=2.3874
+2025-08-28 22:13:48,736 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11446, clip_frac=0.375, p_loss=1.2136, v_loss=24.1500
+2025-08-28 22:13:50,337 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06830, clip_frac=0.125, p_loss=0.0528, v_loss=59.7381
+2025-08-28 22:13:51,700 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02581, clip_frac=0.000, p_loss=0.0586, v_loss=25.9984
+2025-08-28 22:13:52,802 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07702, clip_frac=0.125, p_loss=-0.2197, v_loss=2.8142
+2025-08-28 22:13:53,835 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04010, clip_frac=0.250, p_loss=0.0595, v_loss=10.6594
+2025-08-28 22:13:55,292 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04030, clip_frac=0.000, p_loss=-0.1707, v_loss=6.4021
+2025-08-28 22:13:56,644 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03685, clip_frac=0.000, p_loss=-0.3782, v_loss=3.7664
+2025-08-28 22:13:57,425 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04181, clip_frac=0.125, p_loss=0.1776, v_loss=23.4276
+2025-08-28 22:13:58,794 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03316, clip_frac=0.000, p_loss=-0.3696, v_loss=9.9596
+2025-08-28 22:14:00,576 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03270, clip_frac=0.000, p_loss=0.6496, v_loss=15.5773
+2025-08-28 22:14:00,578 [INFO] ppo_trainer: Episode 2000 | Reward: -0.638±2.373 | Hub Δ:  0.335±0.265 | Success: 62.5% | Buffer: 0
+2025-08-28 22:14:12,215 [INFO] ppo_trainer: Evaluation at episode 2000: Reward: 0.673±2.545 | Hub Δ: 0.495±0.333 | Success: 72.0%
+2025-08-28 22:14:12,344 [INFO] ppo_trainer: Saved new best model at episode 2000
+2025-08-28 22:14:13,325 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05792, clip_frac=0.125, p_loss=-0.7113, v_loss=26.0685
+2025-08-28 22:14:15,814 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04769, clip_frac=0.125, p_loss=-0.1998, v_loss=5.0192
+2025-08-28 22:14:17,148 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08155, clip_frac=0.125, p_loss=-0.0365, v_loss=8.2779
+2025-08-28 22:14:18,324 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.10304, clip_frac=0.250, p_loss=0.4181, v_loss=6.4513
+2025-08-28 22:14:19,577 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04996, clip_frac=0.000, p_loss=0.0963, v_loss=1.6204
+2025-08-28 22:14:20,647 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02646, clip_frac=0.125, p_loss=0.1514, v_loss=7.8091
+2025-08-28 22:14:22,270 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02147, clip_frac=0.125, p_loss=-0.7829, v_loss=15.6382
+2025-08-28 22:14:23,647 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02953, clip_frac=0.250, p_loss=0.1843, v_loss=25.7675
+2025-08-28 22:14:24,952 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04355, clip_frac=0.125, p_loss=-0.5455, v_loss=82.8643
+2025-08-28 22:14:26,602 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02121, clip_frac=0.250, p_loss=0.1629, v_loss=3.5990
+2025-08-28 22:14:28,258 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03269, clip_frac=0.125, p_loss=-0.2733, v_loss=9.4981
+2025-08-28 22:14:29,671 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05956, clip_frac=0.000, p_loss=0.0957, v_loss=7.0525
+2025-08-28 22:14:30,967 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07333, clip_frac=0.250, p_loss=-0.0074, v_loss=2.0381
+2025-08-28 22:14:32,536 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06755, clip_frac=0.250, p_loss=0.1814, v_loss=21.5563
+2025-08-28 22:14:33,251 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04288, clip_frac=0.000, p_loss=0.3295, v_loss=13.7211
+2025-08-28 22:14:34,856 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05096, clip_frac=0.250, p_loss=-0.2249, v_loss=37.0511
+2025-08-28 22:14:36,625 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09043, clip_frac=0.125, p_loss=-0.5747, v_loss=60.7509
+2025-08-28 22:14:37,526 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08270, clip_frac=0.000, p_loss=-0.4994, v_loss=7.1380
+2025-08-28 22:14:39,065 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.11690, clip_frac=0.250, p_loss=0.1125, v_loss=1.9731
+2025-08-28 22:14:41,076 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04849, clip_frac=0.000, p_loss=-0.0309, v_loss=6.3296
+2025-08-28 22:14:42,196 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08393, clip_frac=0.125, p_loss=0.1394, v_loss=5.0828
+2025-08-28 22:14:43,895 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07832, clip_frac=0.000, p_loss=0.1038, v_loss=48.4618
+2025-08-28 22:14:46,347 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06303, clip_frac=0.125, p_loss=-0.1890, v_loss=3.8558
+2025-08-28 22:14:48,283 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03056, clip_frac=0.000, p_loss=-0.2007, v_loss=67.8597
+2025-08-28 22:14:49,701 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07106, clip_frac=0.375, p_loss=0.0987, v_loss=6.1864
+2025-08-28 22:14:49,703 [INFO] ppo_trainer: Episode 2400 | Reward: -0.506±2.029 | Hub Δ:  0.151±0.248 | Success: 31.2% | Buffer: 0
+2025-08-28 22:15:10,139 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 0.106±2.675 | Hub Δ: 0.542±0.285 | Success: 82.0%
+2025-08-28 22:15:12,671 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02462, clip_frac=0.375, p_loss=-0.1706, v_loss=64.1034
+2025-08-28 22:15:13,880 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08072, clip_frac=0.125, p_loss=0.1498, v_loss=5.5489
+2025-08-28 22:15:15,911 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07876, clip_frac=0.375, p_loss=-0.4166, v_loss=9.8006
+2025-08-28 22:15:17,868 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02446, clip_frac=0.000, p_loss=-0.4032, v_loss=4.2057
+2025-08-28 22:15:20,241 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04072, clip_frac=0.000, p_loss=0.3370, v_loss=25.0422
+2025-08-28 22:15:23,646 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16226, clip_frac=0.125, p_loss=0.5757, v_loss=39.6944
+2025-08-28 22:15:26,524 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.09512, clip_frac=0.125, p_loss=0.7276, v_loss=39.5366
+2025-08-28 22:15:28,703 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03720, clip_frac=0.000, p_loss=0.0141, v_loss=3.7921
+2025-08-28 22:15:33,629 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16806, clip_frac=0.250, p_loss=0.0314, v_loss=36.1167
+2025-08-28 22:15:37,812 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06144, clip_frac=0.125, p_loss=0.3068, v_loss=38.2564
+2025-08-28 22:15:39,991 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.16569, clip_frac=0.375, p_loss=0.3108, v_loss=5.0614
+2025-08-28 22:15:42,343 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03360, clip_frac=0.125, p_loss=0.5158, v_loss=57.8869
+2025-08-28 22:15:48,202 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04326, clip_frac=0.000, p_loss=0.1583, v_loss=81.8215
+2025-08-28 22:15:53,722 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06347, clip_frac=0.250, p_loss=0.2557, v_loss=25.8917
+2025-08-28 22:15:57,127 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.23503, clip_frac=0.500, p_loss=0.2031, v_loss=13.1014
+2025-08-28 22:16:01,555 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03888, clip_frac=0.125, p_loss=-0.1307, v_loss=212.2140
+2025-08-28 22:16:03,285 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.15196, clip_frac=0.250, p_loss=-0.3738, v_loss=6.9256
+2025-08-28 22:16:09,044 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.12714, clip_frac=0.375, p_loss=0.0503, v_loss=41.1837
+2025-08-28 22:16:12,230 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03679, clip_frac=0.125, p_loss=-0.0798, v_loss=8.4775
+2025-08-28 22:16:16,057 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06852, clip_frac=0.250, p_loss=-0.1057, v_loss=69.9035
+2025-08-28 22:16:20,114 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06739, clip_frac=0.250, p_loss=0.1560, v_loss=5.7242
+2025-08-28 22:16:23,901 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.19688, clip_frac=0.125, p_loss=0.0497, v_loss=7.9924
+2025-08-28 22:16:28,141 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02532, clip_frac=0.125, p_loss=-0.1393, v_loss=8.0632
+2025-08-28 22:16:30,839 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07986, clip_frac=0.125, p_loss=-0.1032, v_loss=126.2599
+2025-08-28 22:16:34,819 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03464, clip_frac=0.000, p_loss=0.5058, v_loss=31.5144
+2025-08-28 22:16:34,821 [INFO] ppo_trainer: Episode 2800 | Reward: -0.647±3.259 | Hub Δ:  0.390±0.307 | Success: 62.5% | Buffer: 0
+2025-08-28 22:16:55,380 [INFO] ppo_trainer: Evaluation at episode 2800: Reward: -0.352±2.514 | Hub Δ: 0.500±0.262 | Success: 68.0%
+2025-08-28 22:16:56,516 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.04565, clip_frac=0.000, p_loss=0.4839, v_loss=5.3861
+2025-08-28 22:16:58,891 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.08369, clip_frac=0.250, p_loss=0.4867, v_loss=21.6263
+2025-08-28 22:17:01,233 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.06106, clip_frac=0.250, p_loss=0.2441, v_loss=5.2322
+2025-08-28 22:17:03,958 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13905, clip_frac=0.250, p_loss=-0.2260, v_loss=8.2982
+2025-08-28 22:17:06,275 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03647, clip_frac=0.000, p_loss=0.0513, v_loss=3.1293
+2025-08-28 22:17:09,580 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.03408, clip_frac=0.125, p_loss=0.0813, v_loss=49.0590
+2025-08-28 22:17:12,191 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07076, clip_frac=0.125, p_loss=-0.0659, v_loss=56.6591
+2025-08-28 22:17:14,646 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07724, clip_frac=0.250, p_loss=-0.3821, v_loss=61.6817
+2025-08-28 22:17:18,539 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.02733, clip_frac=0.000, p_loss=-0.3911, v_loss=90.9818
+2025-08-28 22:17:21,817 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05372, clip_frac=0.250, p_loss=0.2582, v_loss=102.9227
+2025-08-28 22:17:24,080 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05551, clip_frac=0.250, p_loss=-0.4575, v_loss=19.5286
+2025-08-28 22:17:25,770 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05968, clip_frac=0.000, p_loss=-0.1962, v_loss=9.6667
+2025-08-28 22:17:26,897 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.13126, clip_frac=0.800, p_loss=0.0047, v_loss=3.9937
+2025-08-28 22:17:26,898 [INFO] ppo_trainer: Episode 3000 | Reward:  0.250±3.432 | Hub Δ:  0.319±0.309 | Success: 50.0% | Buffer: 0
+2025-08-28 22:17:49,636 [INFO] ppo_trainer: Evaluation at episode 3000: Reward: -0.022±2.713 | Hub Δ: 0.529±0.296 | Success: 74.0%
+2025-08-28 22:18:11,412 [INFO] ppo_trainer: PPO training completed in 0.15 hours
+2025-08-28 22:18:11,412 [INFO] ppo_trainer: Best reward: 0.673
+2025-08-28 22:18:11,412 [INFO] ppo_trainer: Final hub improvement: 0.5263
+2025-08-28 22:18:11,412 [INFO] ppo_trainer: PROGRESS: Improved beyond previous plateau
+2025-08-28 22:18:11,435 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-28 22:18:11,435 [INFO] __main__: PPO training completed
+2025-08-28 22:18:11,446 [INFO] __main__: PPO training phase completed successfully
+2025-08-28 22:18:11,446 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-28 22:18:11,446 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-28 22:18:11,467 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 128, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.2, 'shared_encoder': True}
+2025-08-28 22:18:40,844 [INFO] __main__: Evaluation Results:
+2025-08-28 22:18:40,844 [INFO] __main__:   Success Rate: 0.790
+2025-08-28 22:18:40,845 [INFO] __main__:   Avg Reward: 0.318 ± 2.542
+2025-08-28 22:18:40,845 [INFO] __main__:   Avg Hub Improvement: 0.404 ± 0.312
+2025-08-28 22:18:40,845 [INFO] __main__:   Avg Episode Length: 11.8
+2025-08-28 22:18:40,845 [INFO] __main__:   Discriminator Improvement: -0.088
+2025-08-28 22:18:40,848 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-28 22:18:40,862 [INFO] __main__: Evaluation completed successfully
+2025-08-28 22:18:40,862 [INFO] __main__: === Training Pipeline Completed Successfully ===
