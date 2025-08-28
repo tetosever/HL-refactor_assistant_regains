@@ -95,7 +95,7 @@ python train_main.py --help
 python pre_training_discriminator.py
 
 # 2. Train RL agent only (requires pre-trained discriminator)
-python a2c_trainer.py
+python ppo_trainer.py
 
 # 3. Test system components
 python utils_and_configs.py

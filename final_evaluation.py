@@ -37,7 +37,6 @@ warnings.filterwarnings('ignore')
 from rl_gym import RefactorEnv
 from actor_critic_models import create_actor_critic
 from discriminator import create_discriminator
-from a2c_trainer import TrainingConfig
 
 # Set style for better plots
 plt.style.use('seaborn-v0_8')

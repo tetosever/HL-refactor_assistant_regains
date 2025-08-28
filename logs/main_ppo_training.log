@@ -1,0 +1,13 @@
+2025-08-28 18:02:56,009 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-28 18:02:56,010 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-28 18:02:56,010 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-28 18:02:56,010 [INFO] __main__: Starting PPO training...
+2025-08-28 18:02:59,263 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-28 18:02:59,278 [INFO] ppo_trainer: Actor-Critic model parameters: 135,560
+2025-08-28 18:02:59,278 [INFO] ppo_trainer: Using shared encoder for proper PPO implementation
+2025-08-28 18:02:59,280 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-28 18:02:59,280 [INFO] ppo_trainer: Starting PPO training
+2025-08-28 18:02:59,280 [INFO] ppo_trainer: Training for 3000 episodes
+2025-08-28 18:02:59,280 [INFO] ppo_trainer: Warmup phase: episodes 1-600
+2025-08-28 18:02:59,280 [INFO] ppo_trainer: Adversarial phase: episodes 600+
+2025-08-28 18:03:01,008 [ERROR] __main__: Training pipeline failed: expected Tensor as element 1 in argument 0, but got list
