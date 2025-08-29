@@ -38,7 +38,7 @@ class PPOConfig:
     results_dir: str = "results/ppo_training"
 
     # Env
-    max_episode_steps: int = 20
+    max_episode_steps: int = 10
     num_actions: int = 7
     reward_weights: Optional[Dict[str, float]] = None
 
@@ -48,26 +48,28 @@ class PPOConfig:
     shared_encoder: bool = True
 
     # Training phases
-    num_episodes: int = 3000
-    warmup_episodes: int = 600
-    adversarial_start_episode: int = 600
+    num_episodes: int = 5000
+    warmup_episodes: int = 1000
+    adversarial_start_episode: int = 1000
 
     # PPO hyperparameters
     gamma: float = 0.95
     gae_lambda: float = 0.95
-    lr: float = 3e-4
+    lr: float = 1e-4
     clip_eps: float = 0.2
     ppo_epochs: int = 4
-    target_kl: float = 0.02        # meno restrittivo rispetto a 0.01–0.015
+    target_kl: float = 0.035        # meno restrittivo rispetto a 0.01–0.015
     max_grad_norm: float = 0.5
 
     # Loss coefficients
-    value_loss_coef: float = 0.5
-    entropy_coef: float = 0.05
+    value_loss_coef: float = 0.3
+    entropy_coef: float = 0.02
 
     # PPO batching
     rollout_episodes: int = 16
-    minibatch_size: int = 16
+    minibatch_size: int = 32
+
+    min_mb_before_kl: int = 2
 
     # Model architecture
     hidden_dim: int = 128
@@ -107,14 +109,14 @@ class PPOConfig:
     def __post_init__(self):
         if self.reward_weights is None:
             self.reward_weights = {
-                'hub_weight': 10.0,
-                'step_valid': 0.0,
+                'hub_weight': 5.0,
+                'step_valid': 0.01,
                 'step_invalid': -0.1,
                 'time_penalty': -0.02,
                 'early_stop_penalty': -0.5,
                 'cycle_penalty': -0.2,
                 'duplicate_penalty': -0.1,
-                'adversarial_weight': 1.0,
+                'adversarial_weight': 0.5,
                 'patience': 15
             }
 
@@ -546,24 +548,31 @@ class PPOTrainer:
         return normed
 
     def update_ppo(self) -> Dict:
-        """PPO update: advantages norm, returns RAW (no norm), value clipping, robust KL stop."""
+        """PPO update: advantages norm, returns RAW (no norm), value clipping (Huber), robust KL stop."""
+        # Import locali per evitare NameError
+        import torch.nn.functional as F
+        from torch_geometric.data import Batch
+
         if len(self.buffer) == 0:
             return {}
 
-        # --- Bootstrap per GAE (value sullo stato finale del rollout) ---
+        device = self.device
+        min_mb_before_kl = getattr(self.config, "min_mb_before_kl", 0)
+
+        # --- Bootstrap per GAE: value dello stato finale del rollout ---
         with torch.no_grad():
             if len(self.buffer.states) > 0:
                 last_state = self.buffer.states[-1]
                 last_global = self.buffer.global_features[-1]
                 if isinstance(last_global, torch.Tensor) and last_global.dim() == 1:
                     last_global = last_global.unsqueeze(0)
-                last_batch = Batch.from_data_list([last_state]).to(self.device)
-                out_last = self.model(last_batch, last_global)
+                last_batch = Batch.from_data_list([last_state]).to(device)
+                out_last = self.model(last_batch, last_global.to(device))
                 if isinstance(out_last, dict):
-                    next_value = float(out_last['state_value'].item())
+                    next_value = float(out_last["state_value"].view(-1)[0].item())
                 else:
                     _, vtmp = out_last
-                    next_value = float(vtmp.squeeze().item())
+                    next_value = float(vtmp.view(-1)[0].item())
             else:
                 next_value = 0.0
 
@@ -574,72 +583,77 @@ class PPOTrainer:
         batch = self.buffer.get_batch_data()
 
         # Normalizza SOLO le advantages
-        adv = batch['advantages']
+        adv = batch["advantages"]
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-        batch['advantages'] = adv.to(self.device)
+        batch["advantages"] = adv.to(device)
 
-        # Tensors su device
-        batch['actions'] = batch['actions'].to(self.device)
-        batch['old_log_probs'] = batch['old_log_probs'].to(self.device)
-        batch['returns'] = batch['returns'].to(self.device)  # *** RAW ***
-        batch['global_features'] = batch['global_features'].to(self.device)
-        batch['old_values'] = batch['old_values'].to(self.device)  # per value clipping
+        # Tensors su device (returns GREZZI!)
+        batch["actions"] = batch["actions"].to(device).long()
+        batch["old_log_probs"] = batch["old_log_probs"].to(device)
+        batch["returns"] = batch["returns"].to(device)  # *** RAW ***
+        batch["global_features"] = batch["global_features"].to(device)
+        batch["old_values"] = batch["old_values"].to(device)  # per value clipping
 
-        dataset_size = len(batch['actions'])
+        dataset_size = len(batch["actions"])
 
         total_policy_loss = 0.0
         total_value_loss = 0.0
         total_entropy = 0.0
         num_updates = 0
         stop_early = False
+        mb_seen = 0
 
         for epoch in range(self.config.ppo_epochs):
-            indices = torch.randperm(dataset_size, device=self.device)
+            indices = torch.randperm(dataset_size, device=device)
             for start in range(0, dataset_size, self.config.minibatch_size):
                 end = min(start + self.config.minibatch_size, dataset_size)
                 mb_ix = indices[start:end]
                 if mb_ix.numel() == 0:
                     continue
+                mb_seen += 1
 
                 # Mini-batch: batcha i grafi in un Batch PYG
-                states_mb = [batch['states'][int(i)] for i in mb_ix.tolist()]
-                globals_mb = batch['global_features'][mb_ix]
-                actions_mb = batch['actions'][mb_ix]
-                oldlogp_mb = batch['old_log_probs'][mb_ix]
-                adv_mb = batch['advantages'][mb_ix]
-                rets_mb = batch['returns'][mb_ix]  # *** NON normalizzati ***
-                oldv_mb = batch['old_values'][mb_ix]
+                states_mb = [batch["states"][int(i)] for i in mb_ix.tolist()]
+                globals_mb = batch["global_features"][mb_ix]
+                actions_mb = batch["actions"][mb_ix]
+                oldlogp_mb = batch["old_log_probs"][mb_ix]
+                adv_mb = batch["advantages"][mb_ix]
+                rets_mb = batch["returns"][mb_ix]  # *** NON normalizzati ***
+                oldv_mb = batch["old_values"][mb_ix]
 
-                mb_batch_states = Batch.from_data_list(states_mb).to(self.device)
+                mb_batch_states = Batch.from_data_list(states_mb).to(device)
 
                 # Forward
                 out = self.model(mb_batch_states, globals_mb)
                 if isinstance(out, dict):
-                    action_probs = out['action_probs']
-                    values = out['state_value']
+                    action_probs = out["action_probs"]
+                    values = out["state_value"]
                 else:
                     action_probs, values = out
 
+                # Distribuzione policy
                 dist = torch.distributions.Categorical(action_probs)
                 logp = dist.log_prob(actions_mb)
                 ent = dist.entropy().mean()
 
-                if isinstance(values, torch.Tensor) and values.dim() == 2 and values.size(-1) == 1:
-                    values = values.squeeze(-1)
+                # Assicura shape [B]
+                values = values.view(-1)
+                rets_mb = rets_mb.view_as(values)
+                oldv_mb = oldv_mb.view_as(values)
 
-                # Policy (clipped)
+                # Policy loss (clipped)
                 ratio = torch.exp(logp - oldlogp_mb)
                 surr1 = ratio * adv_mb
                 surr2 = torch.clamp(ratio, 1.0 - self.config.clip_eps, 1.0 + self.config.clip_eps) * adv_mb
                 pol_loss = -torch.min(surr1, surr2).mean()
 
-                # Value clipping (su returns GREZZI)
+                # Value clipping (Huber/SmoothL1) su returns GREZZI
                 v_clip = oldv_mb + (values - oldv_mb).clamp(-self.config.clip_eps, self.config.clip_eps)
-                v_uncl = F.mse_loss(values, rets_mb)
-                v_clp = F.mse_loss(v_clip, rets_mb)
+                v_uncl = F.smooth_l1_loss(values, rets_mb)
+                v_clp = F.smooth_l1_loss(v_clip, rets_mb)
                 val_loss = torch.max(v_uncl, v_clp)
 
-                # Totale loss
+                # Loss totale
                 loss = pol_loss + self.config.value_loss_coef * val_loss - self.config.entropy_coef * ent
 
                 # Backprop
@@ -647,8 +661,11 @@ class PPOTrainer:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
-                if self.scheduler is not None:
-                    self.scheduler.step()
+                if getattr(self, "scheduler", None) is not None:
+                    try:
+                        self.scheduler.step()
+                    except Exception:
+                        pass
 
                 # Statistiche
                 total_policy_loss += pol_loss.item()
@@ -656,14 +673,19 @@ class PPOTrainer:
                 total_entropy += ent.item()
                 num_updates += 1
 
-                # KL early stop
+                # KL early stop (applica solo dopo un minimo di minibatch se configurato)
                 with torch.no_grad():
                     approx_kl = (oldlogp_mb - logp).mean().clamp_min(0).item()
                     clip_fraction = ((ratio - 1.0).abs() > self.config.clip_eps).float().mean().item()
-                if approx_kl > self.config.target_kl:
+
+                if (min_mb_before_kl == 0 or mb_seen >= min_mb_before_kl) and approx_kl > self.config.target_kl:
+                    try:
+                        cur_lr = float(self.optimizer.param_groups[0]["lr"])
+                    except Exception:
+                        cur_lr = float("nan")
                     self.logger.info(
                         f"Early stop (KL). approx_kl={approx_kl:.5f}, clip_frac={clip_fraction:.3f}, "
-                        f"p_loss={pol_loss.item():.4f}, v_loss={val_loss.item():.4f}"
+                        f"p_loss={pol_loss.item():.4f}, v_loss={val_loss.item():.4f}, lr={cur_lr:.2e}"
                     )
                     stop_early = True
                     break
@@ -671,13 +693,13 @@ class PPOTrainer:
             if stop_early:
                 break
 
-        # On-policy: pulisci buffer
+        # On-policy: svuota buffer dopo l'update
         self.buffer.clear()
 
         return {
-            'policy_loss': total_policy_loss / max(1, num_updates),
-            'value_loss': total_value_loss / max(1, num_updates),
-            'entropy': total_entropy / max(1, num_updates)
+            "policy_loss": total_policy_loss / max(1, num_updates),
+            "value_loss": total_value_loss / max(1, num_updates),
+            "entropy": total_entropy / max(1, num_updates),
         }
 
     def update_discriminator(self, episode_infos: List[Dict]) -> Dict:
@@ -948,21 +970,12 @@ class PPOTrainer:
 
 def main():
     """Main training function"""
-    config = PPOConfig(
-        experiment_name="graph_refactor_ppo_corrected",
-        num_episodes=3000,
-        warmup_episodes=600,
-        adversarial_start_episode=600,
-        lr=3e-4,
-        clip_eps=0.2,
-        ppo_epochs=4,
-        rollout_episodes=16,
-        minibatch_size=8
-    )
+    config = PPOConfig()
 
     print("Starting Graph Refactoring PPO Training (Corrected)")
     print(f"Configuration: {config.experiment_name}")
     print(f"Episodes: {config.num_episodes}")
+    print(f"Max steps: {config.max_episode_steps}")
     print(f"Device: {config.device}")
 
     trainer = PPOTrainer(config)
