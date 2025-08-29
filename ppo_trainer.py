@@ -90,6 +90,16 @@ class PPOConfig:
     early_stopping_patience: int = 300
     min_improvement: float = 0.01
 
+    # Esplorazione
+    epsilon_start: float = 0.30
+    epsilon_end: float = 0.02
+    epsilon_anneal_episodes: int = 2000
+
+    # Entropia
+    entropy_coef_start: float = 0.03
+    entropy_coef_end: float = 0.005
+    entropy_anneal_episodes: int = 2500
+
     # Cyclic Learning Rate (puoi tenerlo spento/attivo via flag)
     use_cyclic_lr: bool = True
     base_lr: float = 1e-4
@@ -204,9 +214,11 @@ class PPOBuffer:
         self.dones = []
         self.advantages = []
         self.returns = []
+        self.action_masks = []
+        self.epsilons = []
 
     def store(self, state: Data, global_feat: torch.Tensor, action: int,
-              reward: float, value: float, log_prob: float, done: bool):
+              reward: float, value: float, log_prob: float, done: bool, action_mask, epsilon):
         self.states.append(state.clone())
         self.global_features.append(global_feat.clone())
         self.actions.append(action)
@@ -214,6 +226,8 @@ class PPOBuffer:
         self.values.append(value)
         self.log_probs.append(log_prob)
         self.dones.append(done)
+        self.action_masks.append(action_mask.astype(bool).tolist())
+        self.epsilons.append(float(epsilon))
 
     def compute_gae_advantages(self, gamma: float, gae_lambda: float,
                                next_value: float = 0.0):
@@ -236,7 +250,9 @@ class PPOBuffer:
             'old_log_probs': torch.tensor(self.log_probs, dtype=torch.float),
             'advantages': torch.tensor(self.advantages, dtype=torch.float),
             'returns': torch.tensor(self.returns, dtype=torch.float),
-            'old_values': torch.tensor(self.values, dtype=torch.float)
+            'old_values': torch.tensor(self.values, dtype=torch.float),
+            'action_masks': torch.tensor(self.action_masks, dtype=torch.bool),
+            'epsilons': torch.tensor(self.epsilons, dtype=torch.float)
         }
 
     def __len__(self):
@@ -392,6 +408,8 @@ class PPOTrainer:
         self.best_reward = float('-inf')
         self.early_stopping_counter = 0
 
+        self.total_episodes_trained = 0
+
         # Running reward statistics for normalization
         self.reward_running_stats = deque(maxlen=1000)
 
@@ -432,18 +450,27 @@ class PPOTrainer:
         return global_features
 
     def collect_rollouts(self, num_episodes: int, is_adversarial: bool = False) -> Dict:
-        """Collect rollouts: store COMPLETE transitions (state, action, logp, value, reward, done)."""
+        """Collect rollouts with epsilon-greedy exploration and action masking"""
         episode_infos = []
 
         for episode_idx in range(num_episodes):
-            _ = self.env.reset()  # mantiene la tua logica
-            current_data = self.env.current_data.clone()
+            # Reset environment
+            if getattr(self.config, "use_curriculum", False):
+                graph_idx = self.sampler.next_index()
+                current_data = self.env.reset(graph_idx)
+                self.sampler.maybe_advance_stage()
+            else:
+                current_data = self.env.reset()
 
             episode_reward = 0.0
             episode_length = 0
             initial_hub_score = self.env.initial_metrics['hub_score']
 
-            # Discriminatore (opzionale)
+            # Get epsilon for this episode
+            current_episode = self.total_episodes_trained + episode_idx
+            epsilon = self._epsilon_at(current_episode)
+
+            # Discriminator initial score
             initial_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
@@ -454,63 +481,72 @@ class PPOTrainer:
                         initial_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
 
             while True:
+                # Get global features
                 global_features = self._extract_global_features(current_data)
 
-                # Valutazione policy sullo stato corrente
+                # Get action mask from environment
+                action_mask = torch.tensor(self.env.get_action_mask(), dtype=torch.bool, device=self.device)
+
+                # Model forward pass
                 with torch.no_grad():
-                    batch_state = Batch.from_data_list([current_data]).to(self.device)
-                    out = self.model(current_data, global_features)
-                    if isinstance(out, dict):
-                        action_probs = out['action_probs']
-                        state_value = out['state_value']
+                    output = self.model(current_data, global_features)
+
+                    # Get action logits (prefer logits over probs for numerical stability)
+                    if 'action_logits' in output:
+                        action_logits = output['action_logits'].squeeze()
                     else:
-                        action_probs, state_value = out
+                        action_logits = torch.log(output['action_probs'].squeeze().clamp(min=1e-8))
 
-                    dist = torch.distributions.Categorical(action_probs)
-                    action = dist.sample()
-                    log_prob = dist.log_prob(action)
-
+                    state_value = output['state_value']
                     if isinstance(state_value, torch.Tensor):
                         state_value = state_value.squeeze().item()
 
-                # Esegui lo step AMBIENTE
+                # Create epsilon-greedy mixed distribution
+                mixed_probs = self._create_epsilon_greedy_distribution(action_logits, action_mask, epsilon)
+
+                # Sample action from mixed distribution
+                dist = torch.distributions.Categorical(mixed_probs)
+                action = dist.sample()
+                log_prob = dist.log_prob(action)
+
+                # Take environment step
+                state_before_action = current_data.clone()
                 next_state, reward, done, info = self.env.step(int(action.item()))
                 current_data = self.env.current_data.clone()
 
-                # Normalizzazione reward (robusta)
+                # Normalize reward if enabled
                 if getattr(self.config, "normalize_rewards", True):
                     reward = self._normalize_reward(reward)
 
-                # *** STORE COMPLETO ***
+                # Store transition with mask and epsilon
                 self.buffer.store(
-                    state=current_data,  # stato prima dello step
+                    state=state_before_action,
                     global_feat=global_features,
                     action=int(action.item()),
                     reward=float(reward),
-                    value=float(state_value),  # old value usato per value clipping
+                    value=float(state_value),
                     log_prob=float(log_prob.item()),
-                    done=bool(done)
+                    done=bool(done),
+                    action_mask=action_mask.cpu().numpy(),
+                    epsilon=epsilon
                 )
 
                 episode_reward += float(reward)
                 episode_length += 1
 
-                if done or (
-                        hasattr(self.config, "max_episode_steps") and episode_length >= self.config.max_episode_steps):
+                if done or episode_length >= self.config.max_episode_steps:
                     break
 
-                # Aggiorna stato corrente per il prossimo passo
-                current_data = self.env.current_data.clone()
-
-            # Metriche finali episodio
+            # Episode metrics
             final_hub_score = self.env._calculate_metrics(current_data)['hub_score']
             hub_improvement = initial_hub_score - final_hub_score
             best_hub_improvement = initial_hub_score - self.env.best_hub_score
 
+            # Final discriminator score
             final_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
-                    disc_out = self.discriminator(batch_state)
+                    disc_out = self.discriminator(current_data)
                     if isinstance(disc_out, dict):
                         final_disc_score = torch.softmax(disc_out['logits'], dim=1)[0, 1].item()
                     else:
@@ -526,9 +562,11 @@ class PPOTrainer:
                 'best_hub_score': self.env.best_hub_score,
                 'no_improve_steps': getattr(self.env, 'no_improve_steps', None),
                 'initial_disc_score': initial_disc_score,
-                'final_disc_score': final_disc_score
+                'final_disc_score': final_disc_score,
+                'epsilon_used': epsilon
             })
 
+        self.total_episodes_trained += num_episodes
         return {'episodes': episode_infos}
 
     def _normalize_reward(self, reward: float) -> float:
@@ -558,27 +596,65 @@ class PPOTrainer:
             normed = float(max(-cap, min(cap, normed)))
         return normed
 
-    def update_ppo(self) -> Dict:
-        """PPO update: advantages norm, returns RAW (no norm), value clipping (Huber), robust KL stop."""
-        # Import locali per evitare NameError
-        import torch.nn.functional as F
-        from torch_geometric.data import Batch
+    def _epsilon_at(self, episode_idx: int) -> float:
+        """Calculate epsilon for given episode"""
+        if episode_idx >= self.config.epsilon_anneal_episodes:
+            return self.config.epsilon_end
 
+        progress = episode_idx / self.config.epsilon_anneal_episodes
+        return self.config.epsilon_start + (self.config.epsilon_end - self.config.epsilon_start) * progress
+
+    def _entropy_coef_at(self, episode_idx: int) -> float:
+        """Calculate entropy coefficient for given episode"""
+        if episode_idx >= self.config.entropy_anneal_episodes:
+            return self.config.entropy_coef_end
+
+        progress = episode_idx / self.config.entropy_anneal_episodes
+        return self.config.entropy_coef_start + (
+                    self.config.entropy_coef_end - self.config.entropy_coef_start) * progress
+
+    def _create_epsilon_greedy_distribution(self, action_logits: torch.Tensor, action_mask: torch.Tensor,
+                                            epsilon: float) -> torch.Tensor:
+        """Create epsilon-greedy mixed distribution with action masking"""
+        # Apply mask to logits (set invalid actions to -inf)
+        masked_logits = action_logits.clone()
+        masked_logits[~action_mask] = float('-inf')
+
+        # Policy distribution (softmax over valid actions)
+        policy_probs = F.softmax(masked_logits, dim=-1)
+
+        # Uniform distribution over valid actions only
+        num_valid = action_mask.sum().float()
+        uniform_probs = torch.zeros_like(policy_probs)
+        uniform_probs[action_mask] = 1.0 / num_valid
+
+        # Mix distributions
+        mixed_probs = (1 - epsilon) * policy_probs + epsilon * uniform_probs
+
+        # Ensure normalization
+        mixed_probs = mixed_probs / (mixed_probs.sum() + 1e-8)
+
+        return mixed_probs
+
+    def update_ppo(self) -> Dict:
+        """PPO update with epsilon-greedy and entropy scheduling"""
         if len(self.buffer) == 0:
             return {}
 
         device = self.device
         min_mb_before_kl = getattr(self.config, "min_mb_before_kl", 0)
 
-        # --- Bootstrap per GAE: value dello stato finale del rollout ---
+        # Get current entropy coefficient
+        entropy_coef = self._entropy_coef_at(self.total_episodes_trained)
+
+        # Bootstrap for GAE
         with torch.no_grad():
             if len(self.buffer.states) > 0:
                 last_state = self.buffer.states[-1]
                 last_global = self.buffer.global_features[-1]
                 if isinstance(last_global, torch.Tensor) and last_global.dim() == 1:
                     last_global = last_global.unsqueeze(0)
-                last_batch = Batch.from_data_list([last_state]).to(device)
-                out_last = self.model(last_batch, last_global.to(device))
+                out_last = self.model(last_state, last_global.to(device))
                 if isinstance(out_last, dict):
                     next_value = float(out_last["state_value"].view(-1)[0].item())
                 else:
@@ -587,23 +663,25 @@ class PPOTrainer:
             else:
                 next_value = 0.0
 
-        # GAE (riempie advantages e returns nel buffer)
+        # Compute GAE
         self.buffer.compute_gae_advantages(self.config.gamma, self.config.gae_lambda, next_value)
 
-        # Costruzione batch
+        # Get batch data
         batch = self.buffer.get_batch_data()
 
-        # Normalizza SOLO le advantages
+        # Normalize advantages
         adv = batch["advantages"]
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         batch["advantages"] = adv.to(device)
 
-        # Tensors su device (returns GREZZI!)
+        # Move tensors to device
         batch["actions"] = batch["actions"].to(device).long()
         batch["old_log_probs"] = batch["old_log_probs"].to(device)
-        batch["returns"] = batch["returns"].to(device)  # *** RAW ***
+        batch["returns"] = batch["returns"].to(device)
         batch["global_features"] = batch["global_features"].to(device)
-        batch["old_values"] = batch["old_values"].to(device)  # per value clipping
+        batch["old_values"] = batch["old_values"].to(device)
+        batch["action_masks"] = batch["action_masks"].to(device)
+        batch["epsilons"] = batch["epsilons"].to(device)
 
         dataset_size = len(batch["actions"])
 
@@ -623,70 +701,90 @@ class PPOTrainer:
                     continue
                 mb_seen += 1
 
-                # Mini-batch: batcha i grafi in un Batch PYG
+                # Minibatch data
                 states_mb = [batch["states"][int(i)] for i in mb_ix.tolist()]
                 globals_mb = batch["global_features"][mb_ix]
                 actions_mb = batch["actions"][mb_ix]
                 oldlogp_mb = batch["old_log_probs"][mb_ix]
                 adv_mb = batch["advantages"][mb_ix]
-                rets_mb = batch["returns"][mb_ix]  # *** NON normalizzati ***
+                rets_mb = batch["returns"][mb_ix]
                 oldv_mb = batch["old_values"][mb_ix]
+                masks_mb = batch["action_masks"][mb_ix]
+                epsilons_mb = batch["epsilons"][mb_ix]
 
                 mb_batch_states = Batch.from_data_list(states_mb).to(device)
 
-                # Forward
+                # Forward pass
                 out = self.model(mb_batch_states, globals_mb)
                 if isinstance(out, dict):
-                    action_probs = out["action_probs"]
-                    values = out["state_value"]
+                    if 'action_logits' in out:
+                        action_logits = out['action_logits']
+                    else:
+                        action_logits = torch.log(out['action_probs'].clamp(min=1e-8))
+                    values = out['state_value']
                 else:
                     action_probs, values = out
+                    action_logits = torch.log(action_probs.clamp(min=1e-8))
 
-                # Distribuzione policy
-                dist = torch.distributions.Categorical(action_probs)
-                logp = dist.log_prob(actions_mb)
-                ent = dist.entropy().mean()
+                # Recreate epsilon-greedy distributions for each sample in minibatch
+                batch_size = action_logits.size(0)
+                new_log_probs = torch.zeros(batch_size, device=device)
+                entropies = torch.zeros(batch_size, device=device)
 
-                # Assicura shape [B]
+                for i in range(batch_size):
+                    # Recreate the same mixed distribution used during rollout
+                    mixed_probs = self._create_epsilon_greedy_distribution(
+                        action_logits[i], masks_mb[i], epsilons_mb[i].item()
+                    )
+
+                    dist = torch.distributions.Categorical(mixed_probs)
+                    new_log_probs[i] = dist.log_prob(actions_mb[i])
+                    entropies[i] = dist.entropy()
+
+                # Average entropy for this minibatch
+                ent = entropies.mean()
+
+                # Ensure proper shapes
                 values = values.view(-1)
                 rets_mb = rets_mb.view_as(values)
                 oldv_mb = oldv_mb.view_as(values)
 
-                # Policy loss (clipped)
-                ratio = torch.exp(logp - oldlogp_mb)
+                # Policy loss (PPO clipped)
+                ratio = torch.exp(new_log_probs - oldlogp_mb)
                 surr1 = ratio * adv_mb
                 surr2 = torch.clamp(ratio, 1.0 - self.config.clip_eps, 1.0 + self.config.clip_eps) * adv_mb
                 pol_loss = -torch.min(surr1, surr2).mean()
 
-                # Value clipping (Huber/SmoothL1) su returns GREZZI
+                # Value loss with clipping
                 v_clip = oldv_mb + (values - oldv_mb).clamp(-self.config.clip_eps, self.config.clip_eps)
                 v_uncl = F.smooth_l1_loss(values, rets_mb)
                 v_clp = F.smooth_l1_loss(v_clip, rets_mb)
                 val_loss = torch.max(v_uncl, v_clp)
 
-                # Loss totale
-                loss = pol_loss + self.config.value_loss_coef * val_loss - self.config.entropy_coef * ent
+                # Total loss with scheduled entropy coefficient
+                loss = pol_loss + self.config.value_loss_coef * val_loss - entropy_coef * ent
 
                 # Backprop
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
+
                 if getattr(self, "scheduler", None) is not None:
                     try:
                         self.scheduler.step()
                     except Exception:
                         pass
 
-                # Statistiche
+                # Statistics
                 total_policy_loss += pol_loss.item()
                 total_value_loss += val_loss.item()
                 total_entropy += ent.item()
                 num_updates += 1
 
-                # KL early stop (applica solo dopo un minimo di minibatch se configurato)
+                # KL early stopping
                 with torch.no_grad():
-                    approx_kl = (oldlogp_mb - logp).mean().clamp_min(0).item()
+                    approx_kl = (oldlogp_mb - new_log_probs).mean().clamp_min(0).item()
                     clip_fraction = ((ratio - 1.0).abs() > self.config.clip_eps).float().mean().item()
 
                 if (min_mb_before_kl == 0 or mb_seen >= min_mb_before_kl) and approx_kl > self.config.target_kl:
@@ -696,7 +794,8 @@ class PPOTrainer:
                         cur_lr = float("nan")
                     self.logger.info(
                         f"Early stop (KL). approx_kl={approx_kl:.5f}, clip_frac={clip_fraction:.3f}, "
-                        f"p_loss={pol_loss.item():.4f}, v_loss={val_loss.item():.4f}, lr={cur_lr:.2e}"
+                        f"p_loss={pol_loss.item():.4f}, v_loss={val_loss.item():.4f}, lr={cur_lr:.2e}, "
+                        f"entropy_coef={entropy_coef:.4f}"
                     )
                     stop_early = True
                     break
@@ -704,13 +803,15 @@ class PPOTrainer:
             if stop_early:
                 break
 
-        # On-policy: svuota buffer dopo l'update
+        # Clear buffer (on-policy)
         self.buffer.clear()
 
         return {
             "policy_loss": total_policy_loss / max(1, num_updates),
             "value_loss": total_value_loss / max(1, num_updates),
             "entropy": total_entropy / max(1, num_updates),
+            "entropy_coef": entropy_coef,
+            "current_epsilon": self._epsilon_at(self.total_episodes_trained)
         }
 
     def update_discriminator(self, episode_infos: List[Dict]) -> Dict:
@@ -757,9 +858,21 @@ class PPOTrainer:
                 global_features = self._extract_global_features(current_data)
 
                 # Use greedy action selection for evaluation
+                action_mask = torch.tensor(self.env.get_action_mask(), dtype=torch.bool, device=self.device)
                 with torch.no_grad():
                     output = self.model(current_data, global_features)
-                    action = torch.argmax(output['action_probs'], dim=1).item()
+
+                    if 'action_logits' in output:
+                        action_logits = output['action_logits'].squeeze()
+                    else:
+                        action_logits = torch.log(output['action_probs'].squeeze().clamp(min=1e-8))
+
+                    # In evaluation, use epsilon=0 (pure policy, no exploration)
+                    masked_logits = action_logits.clone()
+                    masked_logits[~action_mask] = float('-inf')
+
+                    # Greedy action selection from masked policy
+                    action = torch.argmax(masked_logits).item()
 
                 _, reward, done, info = self.env.step(action)
                 episode_reward += reward
@@ -812,6 +925,14 @@ class PPOTrainer:
             if 'value_loss' in update_info:
                 self.training_stats['critic_losses'].append(update_info['value_loss'])
 
+        # Add curriculum logging
+        if hasattr(self, 'sampler') and episode_idx % getattr(self.config, "coverage_log_every", 100) == 0:
+            coverage = self.sampler.coverage()
+            current_stage = self.sampler.stage
+            self.writer.add_scalar('Curriculum/Coverage', coverage, episode_idx)
+            self.writer.add_scalar('Curriculum/Stage', current_stage, episode_idx)
+            self.logger.info(f"Curriculum: Stage {current_stage}, Coverage {coverage:.1%}")
+
         # TensorBoard logging
         recent_rewards = [ep['episode_reward'] for ep in episode_infos]
         recent_improvements = [ep['hub_improvement'] for ep in episode_infos]
@@ -825,6 +946,12 @@ class PPOTrainer:
             for key, value in update_info.items():
                 if isinstance(value, (int, float)):
                     self.writer.add_scalar(f'Training/{key}', value, episode_idx)
+
+            # Log current schedules
+            current_epsilon = self._epsilon_at(episode_idx)
+            current_entropy_coef = self._entropy_coef_at(episode_idx)
+            self.writer.add_scalar('Schedule/Epsilon', current_epsilon, episode_idx)
+            self.writer.add_scalar('Schedule/EntropyCoef', current_entropy_coef, episode_idx)
 
         # Console logging maintaining original format
         if episode_idx % self.config.log_every == 0:
