@@ -50,7 +50,7 @@ class PPOConfig:
     # Training phases
     num_episodes: int = 5000
     warmup_episodes: int = 1000
-    adversarial_start_episode: int = 1000
+    adversarial_start_episode: int = 1001
 
     # PPO hyperparameters
     gamma: float = 0.95
@@ -58,7 +58,7 @@ class PPOConfig:
     lr: float = 1e-4
     clip_eps: float = 0.2
     ppo_epochs: int = 4
-    target_kl: float = 0.035        # meno restrittivo rispetto a 0.01–0.015
+    target_kl: float = 0.05        # meno restrittivo rispetto a 0.01–0.015
     max_grad_norm: float = 0.5
 
     # Loss coefficients
@@ -66,15 +66,15 @@ class PPOConfig:
     entropy_coef: float = 0.02
 
     # PPO batching
-    rollout_episodes: int = 16
-    minibatch_size: int = 32
+    rollout_episodes: int = 32
+    minibatch_size: int = 128
 
     min_mb_before_kl: int = 2
 
     # Model architecture
-    hidden_dim: int = 128
+    hidden_dim: int = 256
     num_layers: int = 3
-    dropout: float = 0.2
+    dropout: float = 0.3
 
     # Reward normalization
     normalize_rewards: bool = True
@@ -94,8 +94,8 @@ class PPOConfig:
     use_cyclic_lr: bool = True
     base_lr: float = 1e-4
     max_lr: float = 2e-4
-    clr_step_size_up: int = 120
-    clr_step_size_down: int = 120
+    clr_step_size_up: int = 96
+    clr_step_size_down: int = 96
     clr_mode: str = "triangular2"
 
     # Curriculum learning + coverage
@@ -107,18 +107,27 @@ class PPOConfig:
     coverage_log_every: int = 100
 
     def __post_init__(self):
-        if self.reward_weights is None:
-            self.reward_weights = {
-                'hub_weight': 5.0,
-                'step_valid': 0.01,
-                'step_invalid': -0.1,
-                'time_penalty': -0.02,
-                'early_stop_penalty': -0.5,
-                'cycle_penalty': -0.2,
-                'duplicate_penalty': -0.1,
-                'adversarial_weight': 0.5,
-                'patience': 15
-            }
+        # Default dei pesi reward (completi)
+        default_rw = {
+            'hub_weight': 5.0,
+            'step_valid': 0.01,
+            'step_invalid': -0.1,
+            'time_penalty': -0.02,
+            'early_stop_penalty': -0.5,
+            'cycle_penalty': -0.2,
+            'duplicate_penalty': -0.1,
+            'adversarial_weight': 0.5,
+            'patience': 15,
+            # crescita (usata terminalmente)
+            'node_penalty': 1.0,
+            'edge_penalty': 0.02,
+            'cap_exceeded_penalty': -0.8,
+            # successo
+            'success_threshold': 0.03,
+            'success_bonus': 2.0,
+        }
+        # Merge robusto con quanto passi da CLI/config file
+        self.reward_weights = {**default_rw, **(self.reward_weights or {})}
 
 class CurriculumSampler:
     """Sampler senza reinserimento con curriculum per num_nodes."""
@@ -449,6 +458,7 @@ class PPOTrainer:
 
                 # Valutazione policy sullo stato corrente
                 with torch.no_grad():
+                    batch_state = Batch.from_data_list([current_data]).to(self.device)
                     out = self.model(current_data, global_features)
                     if isinstance(out, dict):
                         action_probs = out['action_probs']
@@ -464,7 +474,8 @@ class PPOTrainer:
                         state_value = state_value.squeeze().item()
 
                 # Esegui lo step AMBIENTE
-                _, reward, done, info = self.env.step(int(action.item()))
+                next_state, reward, done, info = self.env.step(int(action.item()))
+                current_data = self.env.current_data.clone()
 
                 # Normalizzazione reward (robusta)
                 if getattr(self.config, "normalize_rewards", True):
@@ -499,7 +510,7 @@ class PPOTrainer:
             final_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
-                    disc_out = self.discriminator(current_data)
+                    disc_out = self.discriminator(batch_state)
                     if isinstance(disc_out, dict):
                         final_disc_score = torch.softmax(disc_out['logits'], dim=1)[0, 1].item()
                     else:

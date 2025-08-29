@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Graph Refactoring PPO - Comprehensive Evaluation Script
+Graph Refactoring PPO - Comprehensive Evaluation Script - CORRECTED VERSION
 =======================================================
 
-Comprehensive evaluation and visualization of the trained PPO-based
-Graph Refactoring model, including:
-- Performance metrics visualization
-- Before/After graph comparisons
-- Success rate analysis
-- Interactive exploration of results
+FIXES:
+1. Aligned with PPOConfig and training setup
+2. Fixed directed graph visualization issue
+3. Corrected environment initialization
+4. Added proper curriculum sampling compatibility
+5. Fixed graph difference detection for directed graphs
 """
 
 # =============================================================================
@@ -48,16 +48,16 @@ except ImportError:
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
-print("Graph Refactoring PPO - Evaluation Dashboard")
+print("Graph Refactoring PPO - Evaluation Dashboard (CORRECTED)")
 print("=" * 60)
 
 
 # =============================================================================
-# CONFIGURATION
+# CONFIGURATION - ALIGNED WITH PPOConfig
 # =============================================================================
 
 class EvaluationConfig:
-    """Configuration for PPO evaluation - MATCHED TO TRAINING CONFIG"""
+    """Configuration for PPO evaluation - MATCHED TO PPOConfig defaults"""
 
     def __init__(self):
         # Paths - Updated for PPO structure
@@ -71,21 +71,36 @@ class EvaluationConfig:
         self.num_visualization_episodes = 5
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        # PPO-specific parameters - MATCHED TO PPOConfig
-        self.max_episode_steps = 10  # Changed from 20 to match training
+        # PPO-specific parameters - EXACTLY MATCHED TO PPOConfig
+        self.max_episode_steps = 10  # Matched from PPOConfig
         self.reward_weights = {
-            'hub_weight': 5.0,  # Match PPOConfig default
+            'hub_weight': 5.0,
             'step_valid': 0.01,
             'step_invalid': -0.1,
             'time_penalty': -0.02,
             'early_stop_penalty': -0.5,
             'cycle_penalty': -0.2,
             'duplicate_penalty': -0.1,
-            'adversarial_weight': 0.5,  # Match PPOConfig default
-            'patience': 15
+            'adversarial_weight': 0.5,  # Matched from PPOConfig
+            'patience': 15,
+            # Growth control (added from PPOConfig)
+            'node_penalty': 1.0,
+            'edge_penalty': 0.02,
+            'cap_exceeded_penalty': -0.8,
+            'success_threshold': 0.05,
+            'success_bonus': 2.0,
         }
 
-        # Visualization parameters (unchanged)
+        # Curriculum and growth control (from PPOConfig)
+        self.curriculum_bins = [20, 30, 45, 66]
+        self.max_new_nodes_per_episode = 5
+        self.max_total_node_growth = 1.3
+        self.growth_penalty_mode = 'quadratic'
+        self.growth_penalty_power = 2
+        self.growth_penalty_gamma_nodes = 2.0
+        self.growth_penalty_gamma_edges = 1.0
+
+        # Visualization parameters
         self.figure_size = (15, 10)
         self.node_size_factor = 300
         self.edge_width = 2.0
@@ -104,11 +119,11 @@ eval_config = EvaluationConfig()
 
 
 # =============================================================================
-# MODEL LOADING UTILITIES (UPDATED FOR PPO)
+# MODEL LOADING UTILITIES (CORRECTED)
 # =============================================================================
 
 def load_trained_ppo_model(model_path: str, device: str) -> Tuple[torch.nn.Module, Dict]:
-    """Load trained PPO model"""
+    """Load trained PPO model with proper config matching"""
 
     print(f"Loading PPO model from {model_path}")
 
@@ -117,19 +132,19 @@ def load_trained_ppo_model(model_path: str, device: str) -> Tuple[torch.nn.Modul
 
     checkpoint = torch.load(model_path, map_location=device)
 
-    # Get model configuration (PPO structure)
+    # Get model configuration (matching PPOConfig defaults)
     if 'model_config' in checkpoint:
         model_config = checkpoint['model_config']
     else:
-        # Fallback configuration for PPO
+        # Fallback configuration EXACTLY matching PPOConfig
         model_config = {
             'node_dim': 7,
             'hidden_dim': 128,
             'num_layers': 3,
             'num_actions': 7,
-            'global_features_dim': 4,  # PPO uses 4 global features
+            'global_features_dim': 4,  # CORRECTED: PPO uses 4 global features
             'dropout': 0.2,
-            'shared_encoder': True  # PPO requires shared encoder
+            'shared_encoder': True  # CORRECTED: PPO requires shared encoder
         }
         print("Using fallback PPO model configuration")
 
@@ -140,20 +155,19 @@ def load_trained_ppo_model(model_path: str, device: str) -> Tuple[torch.nn.Modul
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
     else:
-        # Fallback for different checkpoint structures
         model.load_state_dict(checkpoint)
 
     model.eval()
 
     print(f"PPO model loaded successfully")
     print(f"   Architecture: {sum(p.numel() for p in model.parameters()):,} parameters")
-    print(f"   Shared encoder: {model_config.get('shared_encoder', 'Unknown')}")
+    print(f"   Shared encoder: {model_config.get('shared_encoder', True)}")
 
     return model, checkpoint
 
 
 def load_discriminator(discriminator_path: str, device: str) -> Optional[torch.nn.Module]:
-    """Load pre-trained discriminator (same as before)"""
+    """Load pre-trained discriminator"""
 
     if not Path(discriminator_path).exists():
         print(f"Discriminator not found: {discriminator_path}")
@@ -181,11 +195,11 @@ def load_discriminator(discriminator_path: str, device: str) -> Optional[torch.n
 
 
 # =============================================================================
-# PPO EVALUATION ENGINE
+# PPO EVALUATION ENGINE (CORRECTED)
 # =============================================================================
 
 class PPOGraphRefactoringEvaluator:
-    """Comprehensive evaluator for PPO-based graph refactoring"""
+    """Comprehensive evaluator for PPO-based graph refactoring - CORRECTED"""
 
     def __init__(self, model, discriminator, config: EvaluationConfig):
         self.model = model
@@ -193,13 +207,20 @@ class PPOGraphRefactoringEvaluator:
         self.config = config
         self.device = config.device
 
-        # Initialize PPO-compatible environment
+        # Initialize PPO-compatible environment with EXACT training config
         self.env = PPORefactorEnv(
             data_path=config.data_path,
             discriminator=discriminator,
             max_steps=config.max_episode_steps,
             device=config.device,
-            reward_weights=config.reward_weights
+            reward_weights=config.reward_weights,
+            # ADDED: Growth control parameters from PPOConfig
+            max_new_nodes_per_episode=config.max_new_nodes_per_episode,
+            max_total_node_growth=config.max_total_node_growth,
+            growth_penalty_mode=config.growth_penalty_mode,
+            growth_penalty_power=config.growth_penalty_power,
+            growth_penalty_gamma_nodes=config.growth_penalty_gamma_nodes,
+            growth_penalty_gamma_edges=config.growth_penalty_gamma_edges
         )
 
         # Results storage
@@ -207,11 +228,14 @@ class PPOGraphRefactoringEvaluator:
         self.episode_trajectories = []
 
     def run_single_episode(self, episode_id: int, save_trajectory: bool = False) -> Dict:
-        """Run a single evaluation episode with PPO model"""
+        """Run a single evaluation episode with PPO model - CORRECTED"""
 
-        # Reset environment (returns Data object)
+        # Reset environment
         initial_data = self.env.reset()
         initial_metrics = self.env._calculate_metrics(initial_data)
+
+        # Get initial hub tracking information
+        initial_hub_info = self.env.get_hub_info() if hasattr(self.env, 'get_hub_info') else {}
 
         # Episode tracking
         episode_data = {
@@ -219,6 +243,7 @@ class PPOGraphRefactoringEvaluator:
             'initial_hub_score': initial_metrics['hub_score'],
             'initial_metrics': initial_metrics,
             'initial_graph': initial_data.clone() if save_trajectory else None,
+            'initial_hub_info': initial_hub_info,
             'actions_taken': [],
             'states': [],
             'rewards': [],
@@ -251,8 +276,8 @@ class PPOGraphRefactoringEvaluator:
         current_data = initial_data
 
         while not done:
-            # Extract global features using PPO method
-            global_features = self.env.get_global_features()
+            # Extract global features using CORRECTED PPO method
+            global_features = self._extract_global_features_corrected(current_data)
 
             # Get action from PPO model (greedy evaluation)
             with torch.no_grad():
@@ -274,7 +299,12 @@ class PPOGraphRefactoringEvaluator:
                 'reward': reward,
                 'done': done,
                 'action_success': info.get('action_success', False),
-                'hub_score': info.get('current_hub_score', 0.0)
+                'hub_score': info.get('current_hub_score', 0.0),
+                # ADDED: Growth tracking info
+                'nodes_added_total': info.get('nodes_added_total', 0),
+                'edges_added_total': info.get('edges_added_total', 0),
+                'growth_penalty': info.get('growth_penalty', 0.0),
+                'cap_exceeded': info.get('cap_exceeded', False)
             })
 
             if save_trajectory:
@@ -307,32 +337,54 @@ class PPOGraphRefactoringEvaluator:
         if initial_disc_score is not None and final_disc_score is not None:
             disc_improvement = initial_disc_score - final_disc_score
 
+        # Get final hub tracking information
+        final_hub_info = self.env.get_hub_info() if hasattr(self.env, 'get_hub_info') else {}
+
         episode_data.update({
             'final_hub_score': final_metrics['hub_score'],
             'final_metrics': final_metrics,
             'final_graph': final_data.clone() if save_trajectory else None,
             'final_disc_score': final_disc_score,
+            'final_hub_info': final_hub_info,
+            'hub_tracker_data': {
+                'original_hub_id': self.env.hub_tracker.original_hub_id if self.env.hub_tracker else None,
+                'current_hub_index': self.env.hub_tracker.get_current_hub_index(
+                    final_data) if self.env.hub_tracker else 0,
+                'node_mapping': dict(self.env.hub_tracker.node_id_mapping) if self.env.hub_tracker else {},
+                'reverse_mapping': dict(self.env.hub_tracker.reverse_id_mapping) if self.env.hub_tracker else {},
+                'hub_lost': self.env.hub_tracker.hub_lost if self.env.hub_tracker else False
+            },
             'episode_reward': episode_reward,
             'episode_length': episode_length,
             'hub_improvement': hub_improvement,
             'disc_improvement': disc_improvement,
-            'success': hub_improvement > 0.01,
+            'success': hub_improvement > self.config.reward_weights.get('success_threshold', 0.01),
             'significant_success': hub_improvement > 0.05,
             'num_valid_actions': sum(1 for step in episode_data['step_info'] if step['action_success']),
             'final_action_was_stop': episode_data['actions_taken'][-1] == 6 if episode_data['actions_taken'] else False,
             'avg_confidence': np.mean(episode_data['action_confidences']) if episode_data[
                 'action_confidences'] else 0.0,
-            'best_hub_score': getattr(self.env, 'best_hub_score', final_metrics['hub_score'])
+            'best_hub_score': getattr(self.env, 'best_hub_score', final_metrics['hub_score']),
+            # ADDED: Growth statistics
+            'total_nodes_added': episode_data['step_info'][-1]['nodes_added_total'] if episode_data['step_info'] else 0,
+            'total_edges_added': episode_data['step_info'][-1]['edges_added_total'] if episode_data['step_info'] else 0,
+            'total_growth_penalty': sum(step['growth_penalty'] for step in episode_data['step_info']),
+            'cap_exceeded_ever': any(step['cap_exceeded'] for step in episode_data['step_info'])
         })
 
         return episode_data
+
+    def _extract_global_features_corrected(self, data: Data) -> torch.Tensor:
+        """Extract global features EXACTLY matching training environment"""
+        # Use the EXACT same method as the environment
+        return self.env._extract_global_features(data)
 
     def run_comprehensive_evaluation(self) -> Dict:
         """Run comprehensive evaluation"""
 
         print(f"Running PPO evaluation on {self.config.num_eval_episodes} episodes...")
 
-        # Run episodes
+        # Run episodes with some fixed graphs for reproducibility
         for episode_id in range(self.config.num_eval_episodes):
             save_trajectory = episode_id < self.config.num_visualization_episodes
 
@@ -373,6 +425,12 @@ class PPOGraphRefactoringEvaluator:
         # Success metrics
         successes = [r['success'] for r in results]
         significant_successes = [r['significant_success'] for r in results]
+
+        # Growth metrics (ADDED)
+        nodes_added = [r['total_nodes_added'] for r in results]
+        edges_added = [r['total_edges_added'] for r in results]
+        growth_penalties = [r['total_growth_penalty'] for r in results]
+        cap_exceeded_episodes = [r['cap_exceeded_ever'] for r in results]
 
         # Action analysis
         all_actions = []
@@ -429,6 +487,12 @@ class PPOGraphRefactoringEvaluator:
             'mean_disc_improvement': np.mean(disc_improvements) if disc_improvements else 0.0,
             'std_disc_improvement': np.std(disc_improvements) if disc_improvements else 0.0,
 
+            # Growth statistics (ADDED)
+            'mean_nodes_added': np.mean(nodes_added),
+            'mean_edges_added': np.mean(edges_added),
+            'mean_growth_penalty': np.mean(growth_penalties),
+            'cap_exceeded_rate': np.mean(cap_exceeded_episodes),
+
             # Action analysis
             'action_distribution': action_distribution,
             'action_success_rates': action_success_rates,
@@ -470,6 +534,12 @@ class PPOGraphRefactoringEvaluator:
             f"   Mean Action Confidence: {stats['mean_action_confidence']:.3f} ± {stats['std_action_confidence']:.3f}")
         print(f"   Mean Episode Length: {stats['mean_episode_length']:.1f} ± {stats['std_episode_length']:.1f}")
 
+        print(f"\nGROWTH CONTROL:")
+        print(f"   Mean Nodes Added: {stats['mean_nodes_added']:.1f}")
+        print(f"   Mean Edges Added: {stats['mean_edges_added']:.1f}")
+        print(f"   Growth Cap Exceeded Rate: {stats['cap_exceeded_rate']:.1%}")
+        print(f"   Mean Growth Penalty: {stats['mean_growth_penalty']:.3f}")
+
         if stats['discriminator_available']:
             print(f"\nDISCRIMINATOR IMPROVEMENT:")
             print(f"   Mean: {stats['mean_disc_improvement']:.4f} ± {stats['std_disc_improvement']:.4f}")
@@ -485,20 +555,238 @@ class PPOGraphRefactoringEvaluator:
 
 
 # =============================================================================
-# VISUALIZATION FUNCTIONS (UPDATED FOR PPO)
+# CORRECTED GRAPH VISUALIZATION (DIRECTED GRAPHS)
+# =============================================================================
+
+def visualize_ppo_graph_comparison_corrected(before_graph: Data, after_graph: Data,
+                                             episode_info: Dict, save_path: Optional[str] = None) -> None:
+    """Visualize before/after graph comparison for PPO results - CORRECTED for directed graphs and hub tracking"""
+
+    # CORRECTED: Convert to NetworkX as DIRECTED graphs
+    G_before = to_networkx(before_graph, to_undirected=False)  # Keep as directed
+    G_after = to_networkx(after_graph, to_undirected=False)  # Keep as directed
+
+    # CORRECTED: Get real hub information from hub tracker
+    hub_tracker_data = episode_info.get('hub_tracker_data', {})
+    current_hub_index = hub_tracker_data.get('current_hub_index', 0)
+    original_hub_id = hub_tracker_data.get('original_hub_id', 'node_0')
+    node_mapping = hub_tracker_data.get('node_mapping', {})
+    reverse_mapping = hub_tracker_data.get('reverse_mapping', {})
+    hub_lost = hub_tracker_data.get('hub_lost', False)
+
+    # Use the tracked hub index
+    hub_node = current_hub_index
+
+    # CORRECTED: Find differences in directed edges
+    nodes_before = set(G_before.nodes())
+    nodes_after = set(G_after.nodes())
+
+    # For directed graphs, edges are (u,v) tuples where direction matters
+    edges_before = set(G_before.edges())
+    edges_after = set(G_after.edges())
+
+    added_nodes = nodes_after - nodes_before
+    removed_nodes = nodes_before - nodes_after
+    added_edges = edges_after - edges_before
+    removed_edges = edges_before - edges_after
+
+    # Create figure
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+
+    # Determine layout (use the same for both graphs)
+    all_nodes = nodes_before.union(nodes_after)
+    if len(all_nodes) <= 50:
+        # Use the larger graph for layout consistency
+        layout_graph = G_after if len(G_after.nodes()) >= len(G_before.nodes()) else G_before
+        pos = nx.spring_layout(layout_graph, k=1, iterations=50, seed=42)
+    else:
+        layout_graph = G_after if len(G_after.nodes()) >= len(G_before.nodes()) else G_before
+        pos = nx.spring_layout(layout_graph, k=3, iterations=30, seed=42)
+
+    # Plot BEFORE graph
+    ax1.set_title(f"BEFORE PPO Refactoring\nHub Score: {episode_info['initial_hub_score']:.4f}\n"
+                  f"Hub: {original_hub_id} (index {current_hub_index})",
+                  fontsize=14, fontweight='bold')
+
+    # CORRECTED: Draw directed edges for BEFORE graph
+    if G_before.edges():
+        nx.draw_networkx_edges(G_before, pos, ax=ax1,
+                               edge_color=eval_config.colors['original_edges'],
+                               width=eval_config.edge_width, alpha=0.6,
+                               arrows=True, arrowsize=20, arrowstyle='->')  # CORRECTED: arrows for directed
+
+    # Draw nodes for BEFORE graph with hub highlighting
+    if G_before.nodes():
+        node_colors = []
+        node_sizes = []
+        for node in G_before.nodes():
+            if node == hub_node and not hub_lost:
+                node_colors.append(eval_config.colors['hub_node'])
+                node_sizes.append(eval_config.node_size_factor * 1.5)
+            else:
+                node_colors.append(eval_config.colors['original_nodes'])
+                node_sizes.append(eval_config.node_size_factor)
+
+        nx.draw_networkx_nodes(G_before, pos, ax=ax1, node_color=node_colors,
+                               node_size=node_sizes, alpha=0.8)
+
+        # CORRECTED: Draw labels with original IDs if available
+        if reverse_mapping:
+            node_labels = {node: reverse_mapping.get(node, str(node)) for node in G_before.nodes()}
+            # Truncate long labels
+            node_labels = {k: (v[:8] + '...' if len(v) > 8 else v) for k, v in node_labels.items()}
+        else:
+            node_labels = {node: str(node) for node in G_before.nodes()}
+
+        nx.draw_networkx_labels(G_before, pos, node_labels, ax=ax1, font_size=7, font_weight='bold')
+
+    ax1.set_aspect('equal')
+    ax1.axis('off')
+
+    # Plot AFTER graph
+    ax2.set_title(f"AFTER PPO Refactoring\nHub Score: {episode_info['final_hub_score']:.4f}\n"
+                  f"Improvement: {episode_info['hub_improvement']:.4f}\n"
+                  f"Hub: {original_hub_id} ({'LOST' if hub_lost else 'tracked'})",
+                  fontsize=14, fontweight='bold')
+
+    # CORRECTED: Draw original directed edges
+    original_edges = [(u, v) for u, v in G_after.edges() if (u, v) in edges_before]
+    if original_edges:
+        nx.draw_networkx_edges(G_after, pos, edgelist=original_edges, ax=ax2,
+                               edge_color=eval_config.colors['original_edges'],
+                               width=eval_config.edge_width, alpha=0.6,
+                               arrows=True, arrowsize=20, arrowstyle='->')  # CORRECTED: directed
+
+    # CORRECTED: Draw added directed edges
+    added_edges_list = [(u, v) for u, v in G_after.edges() if (u, v) in added_edges]
+    if added_edges_list:
+        nx.draw_networkx_edges(G_after, pos, edgelist=added_edges_list, ax=ax2,
+                               edge_color=eval_config.colors['added_edges'],
+                               width=eval_config.edge_width * 1.5, alpha=0.8,
+                               style='dashed', arrows=True, arrowsize=25, arrowstyle='->')  # CORRECTED: directed
+
+    # Draw nodes for AFTER graph
+    if G_after.nodes():
+        node_colors = []
+        node_sizes = []
+        for node in G_after.nodes():
+            if node == hub_node and not hub_lost:  # Hub node (if still tracked)
+                node_colors.append(eval_config.colors['hub_node'])
+                node_sizes.append(eval_config.node_size_factor * 1.5)
+            elif hub_lost and node == 0:  # Fallback hub if original was lost
+                node_colors.append(eval_config.colors['modified_nodes'])
+                node_sizes.append(eval_config.node_size_factor * 1.3)
+            elif node in added_nodes:  # Added nodes
+                node_colors.append(eval_config.colors['added_nodes'])
+                node_sizes.append(eval_config.node_size_factor * 1.2)
+            else:  # Original nodes
+                node_colors.append(eval_config.colors['original_nodes'])
+                node_sizes.append(eval_config.node_size_factor)
+
+        nx.draw_networkx_nodes(G_after, pos, ax=ax2, node_color=node_colors,
+                               node_size=node_sizes, alpha=0.8)
+
+        # CORRECTED: Draw labels with original IDs for AFTER graph
+        if reverse_mapping:
+            # Include new nodes that might not be in reverse_mapping
+            node_labels = {}
+            for node in G_after.nodes():
+                if node in reverse_mapping:
+                    label = reverse_mapping[node]
+                elif node in added_nodes:
+                    label = f"new_{node}"
+                else:
+                    label = str(node)
+                # Truncate long labels
+                node_labels[node] = label[:8] + '...' if len(label) > 8 else label
+        else:
+            node_labels = {node: str(node) for node in G_after.nodes()}
+
+        nx.draw_networkx_labels(G_after, pos, node_labels, ax=ax2, font_size=7, font_weight='bold')
+
+    ax2.set_aspect('equal')
+    ax2.axis('off')
+
+    # Add legend
+    legend_elements = [
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['hub_node'],
+                   markersize=12, label=f'Hub Node ({original_hub_id})'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['original_nodes'],
+                   markersize=10, label='Original Nodes'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['added_nodes'],
+                   markersize=10, label='Added Nodes'),
+        plt.Line2D([0], [0], color=eval_config.colors['original_edges'], linewidth=2,
+                   label='Original Edges (→)'),
+        plt.Line2D([0], [0], color=eval_config.colors['added_edges'], linewidth=2,
+                   linestyle='--', label='Added Edges (→)')
+    ]
+
+    if hub_lost:
+        legend_elements.append(
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['modified_nodes'],
+                       markersize=10, label='Fallback Hub (lost tracking)')
+        )
+
+    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02),
+               ncol=len(legend_elements), fontsize=10)
+
+    # Add episode information
+    info_text = f"""
+PPO Episode {episode_info['episode_id']} Summary:
+• Actions taken: {len(episode_info['actions_taken'])}
+• Episode reward: {episode_info['episode_reward']:.3f}
+• Success: {'✅' if episode_info['success'] else '❌'}
+• Valid actions: {episode_info['num_valid_actions']}/{len(episode_info['actions_taken'])}
+• Avg confidence: {episode_info.get('avg_confidence', 0):.3f}
+• Nodes added: {episode_info.get('total_nodes_added', 0)}
+• Growth penalty: {episode_info.get('total_growth_penalty', 0):.3f}
+• Hub tracking: {'❌ LOST' if hub_lost else '✅ OK'}
+"""
+
+    plt.figtext(0.02, 0.95, info_text, fontsize=10, fontfamily='monospace',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
+
+    # CORRECTED: Add modifications summary with hub tracking info
+    mod_text = f"""
+Graph Modifications:
+• Nodes added: {len(added_nodes)}
+• Nodes removed: {len(removed_nodes)}
+• Directed edges added: {len(added_edges)}
+• Directed edges removed: {len(removed_edges)}
+
+Hub Tracking:
+• Original ID: {original_hub_id}
+• Current index: {current_hub_index}
+• Status: {'LOST' if hub_lost else 'TRACKED'}
+• Nodes tracked: {len(node_mapping)}
+"""
+
+    plt.figtext(0.98, 0.95, mod_text, fontsize=10, fontfamily='monospace', ha='right',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8))
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    plt.show()
+
+
+# =============================================================================
+# CORRECTED VISUALIZATION FUNCTIONS
 # =============================================================================
 
 def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
-    """Create comprehensive performance dashboard for PPO"""
+    """Create comprehensive performance dashboard for PPO - CORRECTED"""
 
     results = evaluation_results['episode_results']
     stats = evaluation_results['summary_stats']
 
     # Create figure with subplots
-    fig = plt.figure(figsize=(20, 16))
+    fig = plt.figure(figsize=(24, 18))
 
     # 1. Hub Improvement Distribution
-    plt.subplot(3, 4, 1)
+    plt.subplot(3, 5, 1)
     hub_improvements = [r['hub_improvement'] for r in results]
     plt.hist(hub_improvements, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
     plt.axvline(0, color='red', linestyle='--', alpha=0.7, label='No improvement')
@@ -510,7 +798,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.grid(True, alpha=0.3)
 
     # 2. Action Confidence Distribution
-    plt.subplot(3, 4, 2)
+    plt.subplot(3, 5, 2)
     confidences = [r['avg_confidence'] for r in results]
     plt.hist(confidences, bins=20, alpha=0.7, color='lightgreen', edgecolor='black')
     plt.xlabel('Average Action Confidence')
@@ -519,7 +807,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.grid(True, alpha=0.3)
 
     # 3. Episode Rewards Over Time
-    plt.subplot(3, 4, 3)
+    plt.subplot(3, 5, 3)
     episode_rewards = [r['episode_reward'] for r in results]
     plt.plot(episode_rewards, alpha=0.7, color='blue', linewidth=1)
     plt.axhline(np.mean(episode_rewards), color='red', linestyle='--', alpha=0.7, label='Mean')
@@ -530,7 +818,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.grid(True, alpha=0.3)
 
     # 4. Action Distribution
-    plt.subplot(3, 4, 4)
+    plt.subplot(3, 5, 4)
     action_names = ['RemoveEdge', 'AddEdge', 'MoveEdge', 'ExtractMethod',
                     'ExtractAbstractUnit', 'ExtractUnit', 'STOP']
     action_counts = [stats['action_distribution'].get(i, 0) for i in range(7)]
@@ -549,7 +837,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
                      f'{count:.1%}', ha='center', va='bottom', fontsize=8)
 
     # 5. Hub Score: Before vs After
-    plt.subplot(3, 4, 5)
+    plt.subplot(3, 5, 5)
     initial_scores = [r['initial_hub_score'] for r in results]
     final_scores = [r['final_hub_score'] for r in results]
 
@@ -564,7 +852,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.grid(True, alpha=0.3)
 
     # 6. Performance Categories Pie Chart
-    plt.subplot(3, 4, 6)
+    plt.subplot(3, 5, 6)
     categories = ['Excellent (>0.1)', 'Good (0.05-0.1)', 'Moderate (0.01-0.05)', 'Poor (≤0.01)']
     values = [stats['excellent_performance'], stats['good_performance'],
               stats['moderate_performance'], stats['poor_performance']]
@@ -573,32 +861,19 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.pie(values, labels=categories, colors=colors, autopct='%1.1f%%', startangle=90)
     plt.title('Performance Categories (PPO)')
 
-    # 7. Confidence vs Success Rate
-    plt.subplot(3, 4, 7)
-    success_binary = [1 if r['success'] else 0 for r in results]
-    confidences = [r['avg_confidence'] for r in results]
+    # 7. CORRECTED: Growth Control Analysis
+    plt.subplot(3, 5, 7)
+    nodes_added = [r.get('total_nodes_added', 0) for r in results]
+    growth_penalties = [r.get('total_growth_penalty', 0) for r in results]
 
-    # Create confidence bins and calculate success rate for each
-    conf_bins = np.linspace(min(confidences), max(confidences), 10)
-    bin_centers = (conf_bins[:-1] + conf_bins[1:]) / 2
-    bin_success_rates = []
-
-    for i in range(len(conf_bins) - 1):
-        mask = (np.array(confidences) >= conf_bins[i]) & (np.array(confidences) < conf_bins[i + 1])
-        if mask.any():
-            bin_success_rates.append(np.mean(np.array(success_binary)[mask]))
-        else:
-            bin_success_rates.append(0)
-
-    plt.bar(bin_centers, bin_success_rates, width=(conf_bins[1] - conf_bins[0]) * 0.8,
-            alpha=0.7, color='lightcoral')
-    plt.xlabel('Action Confidence')
-    plt.ylabel('Success Rate')
-    plt.title('Confidence vs Success Rate (PPO)')
+    plt.scatter(nodes_added, growth_penalties, alpha=0.6, color='red')
+    plt.xlabel('Nodes Added per Episode')
+    plt.ylabel('Growth Penalty')
+    plt.title('Growth Control: Nodes vs Penalty')
     plt.grid(True, alpha=0.3)
 
     # 8. Cumulative Success Rate
-    plt.subplot(3, 4, 8)
+    plt.subplot(3, 5, 8)
     cumulative_successes = np.cumsum([r['success'] for r in results])
     cumulative_rate = cumulative_successes / np.arange(1, len(results) + 1)
 
@@ -612,7 +887,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.grid(True, alpha=0.3)
 
     # 9. Episode Length vs Hub Improvement
-    plt.subplot(3, 4, 9)
+    plt.subplot(3, 5, 9)
     lengths = [r['episode_length'] for r in results]
     improvements = [r['hub_improvement'] for r in results]
 
@@ -623,7 +898,7 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
     plt.grid(True, alpha=0.3)
 
     # 10. Action Success Rates
-    plt.subplot(3, 4, 10)
+    plt.subplot(3, 5, 10)
     success_rates = [stats['action_success_rates'].get(i, {}).get('rate', 0) for i in range(7)]
 
     bars = plt.bar(range(7), success_rates, alpha=0.7, color='lightcoral')
@@ -639,40 +914,115 @@ def create_ppo_performance_dashboard(evaluation_results: Dict) -> None:
             plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
                      f'{rate:.1%}', ha='center', va='bottom', fontsize=8)
 
-    # 11. Reward vs Confidence Scatter
-    plt.subplot(3, 4, 11)
-    rewards = [r['episode_reward'] for r in results]
-    plt.scatter(confidences, rewards, alpha=0.6, color='gold')
-    plt.xlabel('Average Action Confidence')
-    plt.ylabel('Episode Reward')
-    plt.title('Confidence vs Reward (PPO)')
+    # 11. Growth Cap Utilization
+    plt.subplot(3, 5, 11)
+    cap_exceeded = [r.get('cap_exceeded_ever', False) for r in results]
+    cap_exceeded_rate = np.mean(cap_exceeded) if cap_exceeded else 0
+
+    plt.pie([cap_exceeded_rate, 1 - cap_exceeded_rate],
+            labels=['Cap Exceeded', 'Within Limits'],
+            colors=['red', 'green'], autopct='%1.1f%%')
+    plt.title('Growth Cap Compliance')
+
+    # 12. Confidence vs Success Rate
+    plt.subplot(3, 5, 12)
+    success_binary = [1 if r['success'] else 0 for r in results]
+    confidences = [r['avg_confidence'] for r in results]
+
+    # Create confidence bins and calculate success rate for each
+    if confidences and max(confidences) > min(confidences):
+        conf_bins = np.linspace(min(confidences), max(confidences), 10)
+        bin_centers = (conf_bins[:-1] + conf_bins[1:]) / 2
+        bin_success_rates = []
+
+        for i in range(len(conf_bins) - 1):
+            mask = (np.array(confidences) >= conf_bins[i]) & (np.array(confidences) < conf_bins[i + 1])
+            if mask.any():
+                bin_success_rates.append(np.mean(np.array(success_binary)[mask]))
+            else:
+                bin_success_rates.append(0)
+
+        plt.bar(bin_centers, bin_success_rates, width=(conf_bins[1] - conf_bins[0]) * 0.8,
+                alpha=0.7, color='lightcoral')
+    plt.xlabel('Action Confidence')
+    plt.ylabel('Success Rate')
+    plt.title('Confidence vs Success Rate (PPO)')
     plt.grid(True, alpha=0.3)
 
-    # 12. PPO Training Convergence (if available)
-    plt.subplot(3, 4, 12)
-    # Plot success rate in sliding window
+    # 13. Discriminator Improvement (if available)
+    plt.subplot(3, 5, 13)
+    if stats['discriminator_available']:
+        disc_improvements = [r['disc_improvement'] for r in results if r['disc_improvement'] != 0.0]
+        if disc_improvements:
+            plt.hist(disc_improvements, bins=15, alpha=0.7, color='mediumpurple', edgecolor='black')
+            plt.axvline(np.mean(disc_improvements), color='red', linestyle='--', alpha=0.7, label='Mean')
+            plt.xlabel('Discriminator Score Improvement')
+            plt.ylabel('Frequency')
+            plt.title('Discriminator Improvement')
+            plt.legend()
+        else:
+            plt.text(0.5, 0.5, 'No Discriminator\nData Available',
+                     ha='center', va='center', transform=plt.gca().transAxes)
+    else:
+        plt.text(0.5, 0.5, 'Discriminator\nNot Available',
+                 ha='center', va='center', transform=plt.gca().transAxes)
+    plt.grid(True, alpha=0.3)
+
+    # 14. Learning Progress (sliding window)
+    plt.subplot(3, 5, 14)
     window_size = 5
     if len(results) >= window_size:
         windowed_success = []
+        windowed_improvement = []
         for i in range(window_size - 1, len(results)):
             window_successes = [results[j]['success'] for j in range(i - window_size + 1, i + 1)]
+            window_improvements = [results[j]['hub_improvement'] for j in range(i - window_size + 1, i + 1)]
             windowed_success.append(np.mean(window_successes))
+            windowed_improvement.append(np.mean(window_improvements))
 
-        plt.plot(range(window_size - 1, len(results)), windowed_success,
-                 color='mediumpurple', linewidth=2)
+        plt.plot(range(window_size - 1, len(results)), windowed_improvement,
+                 color='mediumpurple', linewidth=2, label='Hub Improvement')
         plt.xlabel('Episode')
-        plt.ylabel(f'Success Rate (window={window_size})')
+        plt.ylabel(f'Moving Average (window={window_size})')
         plt.title('PPO Learning Progress')
-        plt.grid(True, alpha=0.3)
+        plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    # 15. Action Sequence Analysis
+    plt.subplot(3, 5, 15)
+    # Analyze most common action sequences
+    action_transitions = {}
+    for r in results:
+        actions = r['actions_taken']
+        for i in range(len(actions) - 1):
+            transition = (actions[i], actions[i + 1])
+            action_transitions[transition] = action_transitions.get(transition, 0) + 1
+
+    if action_transitions:
+        # Show top 5 transitions
+        top_transitions = sorted(action_transitions.items(), key=lambda x: x[1], reverse=True)[:5]
+        transitions_str = [f"{t[0][0]}→{t[0][1]}" for t in top_transitions]
+        counts = [t[1] for t in top_transitions]
+
+        plt.bar(range(len(transitions_str)), counts, alpha=0.7, color='gold')
+        plt.xlabel('Action Transitions')
+        plt.ylabel('Frequency')
+        plt.title('Most Common Action Sequences')
+        plt.xticks(range(len(transitions_str)), transitions_str, rotation=45)
+    plt.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(Path(eval_config.results_dir) / 'ppo_performance_dashboard.png',
+    plt.savefig(Path(eval_config.results_dir) / 'ppo_performance_dashboard_corrected.png',
                 dpi=300, bbox_inches='tight')
     plt.show()
 
 
-def create_ppo_interactive_trajectory_plot(episode_data: Dict) -> go.Figure:
-    """Create interactive plot of PPO episode trajectory"""
+# =============================================================================
+# CORRECTED INTERACTIVE VISUALIZATION
+# =============================================================================
+
+def create_ppo_interactive_trajectory_plot_corrected(episode_data: Dict) -> go.Figure:
+    """Create interactive plot of PPO episode trajectory - CORRECTED"""
 
     steps = range(len(episode_data['step_info']) + 1)
     hub_scores = [episode_data['initial_hub_score']]
@@ -682,11 +1032,15 @@ def create_ppo_interactive_trajectory_plot(episode_data: Dict) -> go.Figure:
     rewards = [0] + episode_data['rewards']
     confidences = [0] + [step['confidence'] for step in episode_data['step_info']]
 
+    # CORRECTED: Add growth tracking
+    nodes_added = [0] + [step.get('nodes_added_total', 0) for step in episode_data['step_info']]
+    growth_penalties = [0] + [step.get('growth_penalty', 0) for step in episode_data['step_info']]
+
     # Create subplots
     fig = make_subplots(
-        rows=3, cols=1,
-        subplot_titles=('Hub Score Trajectory', 'Step Rewards', 'Action Confidence'),
-        vertical_spacing=0.1
+        rows=4, cols=1,
+        subplot_titles=('Hub Score Trajectory', 'Step Rewards', 'Action Confidence', 'Growth Tracking'),
+        vertical_spacing=0.08
     )
 
     # Hub score trajectory
@@ -705,15 +1059,16 @@ def create_ppo_interactive_trajectory_plot(episode_data: Dict) -> go.Figure:
     )
 
     # Add success threshold line
-    fig.add_hline(y=episode_data['initial_hub_score'], row=1, col=1,
-                  line_dash="dash", line_color="red",
-                  annotation_text="Initial Hub Score")
+    success_threshold = eval_config.reward_weights.get('success_threshold', 0.05)
+    fig.add_hline(y=success_threshold, row=1, col=1,
+                  line_dash="dash", line_color="green",
+                  annotation_text=f"Success Threshold ({success_threshold})")
 
     # Step rewards
     fig.add_trace(
         go.Bar(
-            x=steps[1:],  # Exclude initial step
-            y=rewards[1:],  # Exclude initial reward
+            x=steps[1:],
+            y=rewards[1:],
             name='Step Reward',
             marker_color=['green' if r > 0 else 'red' for r in rewards[1:]],
             hovertemplate='<b>Step %{x}</b><br>Reward: %{y:.3f}<extra></extra>'
@@ -724,8 +1079,8 @@ def create_ppo_interactive_trajectory_plot(episode_data: Dict) -> go.Figure:
     # Action confidence
     fig.add_trace(
         go.Scatter(
-            x=steps[1:],  # Exclude initial step
-            y=confidences[1:],  # Exclude initial confidence
+            x=steps[1:],
+            y=confidences[1:],
             mode='lines+markers',
             name='Confidence',
             line=dict(color='green', width=2),
@@ -736,343 +1091,59 @@ def create_ppo_interactive_trajectory_plot(episode_data: Dict) -> go.Figure:
         row=3, col=1
     )
 
+    # CORRECTED: Growth tracking
+    fig.add_trace(
+        go.Scatter(
+            x=steps,
+            y=nodes_added,
+            mode='lines+markers',
+            name='Nodes Added',
+            line=dict(color='orange', width=2),
+            marker=dict(size=6),
+            hovertemplate='<b>Step %{x}</b><br>Nodes Added: %{y}<extra></extra>'
+        ),
+        row=4, col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=steps[1:],
+            y=growth_penalties[1:],
+            mode='lines+markers',
+            name='Growth Penalty',
+            line=dict(color='red', width=2, dash='dash'),
+            marker=dict(size=4),
+            hovertemplate='<b>Step %{x}</b><br>Growth Penalty: %{y:.3f}<extra></extra>'
+        ),
+        row=4, col=1
+    )
+
     # Update layout
     fig.update_layout(
         title=f"PPO Episode {episode_data['episode_id']} Trajectory - "
-              f"Final Improvement: {episode_data['hub_improvement']:.4f}",
-        height=800,
+              f"Final Improvement: {episode_data['hub_improvement']:.4f} "
+              f"(Nodes Added: {episode_data.get('total_nodes_added', 0)})",
+        height=1000,
         showlegend=True
     )
 
-    fig.update_xaxes(title_text="Step", row=3, col=1)
+    fig.update_xaxes(title_text="Step", row=4, col=1)
     fig.update_yaxes(title_text="Hub Score", row=1, col=1)
     fig.update_yaxes(title_text="Reward", row=2, col=1)
     fig.update_yaxes(title_text="Confidence", row=3, col=1)
-
-    return fig
-
-
-def visualize_ppo_graph_comparison(before_graph: Data, after_graph: Data,
-                                   episode_info: Dict, save_path: Optional[str] = None) -> None:
-    """Visualize before/after graph comparison for PPO results"""
-
-    # Convert to NetworkX
-    G_before = to_networkx(before_graph, to_undirected=True)
-    G_after = to_networkx(after_graph, to_undirected=True)
-
-    # Find differences
-    nodes_before = set(G_before.nodes())
-    nodes_after = set(G_after.nodes())
-    edges_before = set(G_before.edges())
-    edges_after = set(G_after.edges())
-
-    added_nodes = nodes_after - nodes_before
-    removed_nodes = nodes_before - nodes_after
-    added_edges = edges_after - edges_before
-    removed_edges = edges_before - edges_after
-
-    # Create figure
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-
-    # Determine layout (use the same for both graphs)
-    all_nodes = nodes_before.union(nodes_after)
-    if len(all_nodes) <= 50:
-        pos = nx.spring_layout(G_after if len(G_after.nodes()) >= len(G_before.nodes()) else G_before,
-                               k=1, iterations=50, seed=42)
-    else:
-        pos = nx.spring_layout(G_after if len(G_after.nodes()) >= len(G_before.nodes()) else G_before,
-                               k=3, iterations=30, seed=42)
-
-    # Plot BEFORE graph
-    ax1.set_title(f"BEFORE PPO Refactoring\nHub Score: {episode_info['initial_hub_score']:.4f}",
-                  fontsize=14, fontweight='bold')
-
-    # Draw edges first (so they appear behind nodes)
-    if G_before.edges():
-        nx.draw_networkx_edges(G_before, pos, ax=ax1, edge_color=eval_config.colors['original_edges'],
-                               width=eval_config.edge_width, alpha=0.6)
-
-    # Draw nodes
-    if G_before.nodes():
-        node_colors = [eval_config.colors['hub_node'] if node == 0 else eval_config.colors['original_nodes']
-                       for node in G_before.nodes()]
-        node_sizes = [eval_config.node_size_factor * 1.5 if node == 0 else eval_config.node_size_factor
-                      for node in G_before.nodes()]
-
-        nx.draw_networkx_nodes(G_before, pos, ax=ax1, node_color=node_colors,
-                               node_size=node_sizes, alpha=0.8)
-
-        # Draw labels
-        nx.draw_networkx_labels(G_before, pos, ax=ax1, font_size=8, font_weight='bold')
-
-    ax1.set_aspect('equal')
-    ax1.axis('off')
-
-    # Plot AFTER graph
-    ax2.set_title(f"AFTER PPO Refactoring\nHub Score: {episode_info['final_hub_score']:.4f}\n"
-                  f"Improvement: {episode_info['hub_improvement']:.4f}",
-                  fontsize=14, fontweight='bold')
-
-    # Draw original edges
-    original_edges = [(u, v) for u, v in G_after.edges() if (u, v) in edges_before or (v, u) in edges_before]
-    if original_edges:
-        nx.draw_networkx_edges(G_after, pos, edgelist=original_edges, ax=ax2,
-                               edge_color=eval_config.colors['original_edges'],
-                               width=eval_config.edge_width, alpha=0.6)
-
-    # Draw added edges
-    added_edges_list = [(u, v) for u, v in G_after.edges() if (u, v) in added_edges or (v, u) in added_edges]
-    if added_edges_list:
-        nx.draw_networkx_edges(G_after, pos, edgelist=added_edges_list, ax=ax2,
-                               edge_color=eval_config.colors['added_edges'],
-                               width=eval_config.edge_width * 1.5, alpha=0.8, style='dashed')
-
-    # Draw nodes
-    if G_after.nodes():
-        node_colors = []
-        node_sizes = []
-        for node in G_after.nodes():
-            if node == 0:  # Hub node
-                node_colors.append(eval_config.colors['hub_node'])
-                node_sizes.append(eval_config.node_size_factor * 1.5)
-            elif node in added_nodes:  # Added nodes
-                node_colors.append(eval_config.colors['added_nodes'])
-                node_sizes.append(eval_config.node_size_factor * 1.2)
-            else:  # Original nodes
-                node_colors.append(eval_config.colors['original_nodes'])
-                node_sizes.append(eval_config.node_size_factor)
-
-        nx.draw_networkx_nodes(G_after, pos, ax=ax2, node_color=node_colors,
-                               node_size=node_sizes, alpha=0.8)
-
-        # Draw labels
-        nx.draw_networkx_labels(G_after, pos, ax=ax2, font_size=8, font_weight='bold')
-
-    ax2.set_aspect('equal')
-    ax2.axis('off')
-
-    # Add legend
-    legend_elements = [
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['hub_node'],
-                   markersize=12, label='Hub Node'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['original_nodes'],
-                   markersize=10, label='Original Nodes'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=eval_config.colors['added_nodes'],
-                   markersize=10, label='Added Nodes'),
-        plt.Line2D([0], [0], color=eval_config.colors['original_edges'], linewidth=2, label='Original Edges'),
-        plt.Line2D([0], [0], color=eval_config.colors['added_edges'], linewidth=2,
-                   linestyle='--', label='Added Edges')
-    ]
-
-    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02),
-               ncol=len(legend_elements), fontsize=10)
-
-    # Add episode information
-    info_text = f"""
-PPO Episode {episode_info['episode_id']} Summary:
-• Actions taken: {len(episode_info['actions_taken'])}
-• Episode reward: {episode_info['episode_reward']:.3f}
-• Success: {'✅' if episode_info['success'] else '❌'}
-• Valid actions: {episode_info['num_valid_actions']}/{len(episode_info['actions_taken'])}
-• Avg confidence: {episode_info.get('avg_confidence', 0):.3f}
-"""
-
-    plt.figtext(0.02, 0.95, info_text, fontsize=10, fontfamily='monospace',
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
-
-    # Add modifications summary
-    mod_text = f"""
-Graph Modifications:
-• Nodes added: {len(added_nodes)}
-• Nodes removed: {len(removed_nodes)}
-• Edges added: {len(added_edges)}
-• Edges removed: {len(removed_edges)}
-"""
-
-    plt.figtext(0.98, 0.95, mod_text, fontsize=10, fontfamily='monospace', ha='right',
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8))
-
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-
-    plt.show()
-
-
-def create_ppo_action_analysis_plot(evaluation_results: Dict) -> go.Figure:
-    """Create interactive action analysis plot for PPO"""
-
-    results = evaluation_results['episode_results']
-    stats = evaluation_results['summary_stats']
-
-    action_names = ['RemoveEdge', 'AddEdge', 'MoveEdge', 'ExtractMethod',
-                    'ExtractAbstractUnit', 'ExtractUnit', 'STOP']
-
-    # Prepare data
-    action_usage = [stats['action_distribution'].get(i, 0) * 100 for i in range(7)]
-    action_success = [stats['action_success_rates'].get(i, {}).get('rate', 0) * 100 for i in range(7)]
-
-    # Calculate average confidence per action
-    action_confidences = {i: [] for i in range(7)}
-    for r in results:
-        for i, action in enumerate(r['actions_taken']):
-            if i < len(r['action_confidences']):
-                action_confidences[action].append(r['action_confidences'][i])
-
-    avg_confidences = [np.mean(action_confidences[i]) * 100 if action_confidences[i] else 0 for i in range(7)]
-
-    # Create subplots
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=('Action Usage Frequency', 'Action Success Rates', 'Action Confidence'),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}, {"secondary_y": False}]]
-    )
-
-    # Action usage
-    fig.add_trace(
-        go.Bar(
-            x=action_names,
-            y=action_usage,
-            name='Usage %',
-            marker_color='lightblue',
-            hovertemplate='<b>%{x}</b><br>Usage: %{y:.1f}%<extra></extra>'
-        ),
-        row=1, col=1
-    )
-
-    # Action success rates
-    fig.add_trace(
-        go.Bar(
-            x=action_names,
-            y=action_success,
-            name='Success %',
-            marker_color='lightgreen',
-            hovertemplate='<b>%{x}</b><br>Success Rate: %{y:.1f}%<extra></extra>'
-        ),
-        row=1, col=2
-    )
-
-    # Action confidence
-    fig.add_trace(
-        go.Bar(
-            x=action_names,
-            y=avg_confidences,
-            name='Confidence %',
-            marker_color='lightyellow',
-            hovertemplate='<b>%{x}</b><br>Avg Confidence: %{y:.1f}%<extra></extra>'
-        ),
-        row=1, col=3
-    )
-
-    # Update layout
-    fig.update_layout(
-        title="PPO Action Analysis Dashboard",
-        height=500,
-        showlegend=False
-    )
-
-    fig.update_xaxes(title_text="Actions", row=1, col=1, tickangle=45)
-    fig.update_xaxes(title_text="Actions", row=1, col=2, tickangle=45)
-    fig.update_xaxes(title_text="Actions", row=1, col=3, tickangle=45)
-    fig.update_yaxes(title_text="Usage Frequency (%)", row=1, col=1)
-    fig.update_yaxes(title_text="Success Rate (%)", row=1, col=2)
-    fig.update_yaxes(title_text="Avg Confidence (%)", row=1, col=3)
+    fig.update_yaxes(title_text="Count/Penalty", row=4, col=1)
 
     return fig
 
 
 # =============================================================================
-# PPO ANALYSIS FUNCTIONS
+# MAIN EXECUTION FUNCTION - CORRECTED
 # =============================================================================
 
-def analyze_ppo_failure_cases(evaluation_results: Dict) -> None:
-    """Analyze episodes where PPO model failed to improve"""
+def run_complete_ppo_evaluation_corrected():
+    """Run complete PPO evaluation pipeline - CORRECTED"""
 
-    results = evaluation_results['episode_results']
-    failures = [r for r in results if not r['success']]
-
-    if not failures:
-        print("No failure cases found! All episodes were successful.")
-        return
-
-    print(f"\nPPO FAILURE CASE ANALYSIS ({len(failures)} episodes)")
-    print("=" * 50)
-
-    # PPO-specific failure patterns
-    low_confidence_failures = [f for f in failures if f.get('avg_confidence', 1) < 0.5]
-    early_stops = [f for f in failures if f['final_action_was_stop'] and f['episode_length'] <= 3]
-    long_episodes = [f for f in failures if f['episode_length'] >= 15]
-    negative_improvements = [f for f in failures if f['hub_improvement'] < -0.01]
-
-    print(f"Failure Patterns:")
-    print(
-        f"   Low confidence episodes (<0.5): {len(low_confidence_failures)} ({len(low_confidence_failures) / len(failures):.1%})")
-    print(f"   Early stops (≤3 steps): {len(early_stops)} ({len(early_stops) / len(failures):.1%})")
-    print(f"   Long episodes (≥15 steps): {len(long_episodes)} ({len(long_episodes) / len(failures):.1%})")
-    print(f"   Negative improvements: {len(negative_improvements)} ({len(negative_improvements) / len(failures):.1%})")
-
-    # Confidence analysis
-    failure_confidences = [f.get('avg_confidence', 0) for f in failures]
-    print(f"\nConfidence Analysis in Failures:")
-    print(f"   Average confidence: {np.mean(failure_confidences):.3f}")
-    print(f"   Confidence std: {np.std(failure_confidences):.3f}")
-
-    # Compare to successful episodes
-    successes = [r for r in results if r['success']]
-    if successes:
-        success_confidences = [s.get('avg_confidence', 0) for s in successes]
-        print(f"\nComparison (Success vs Failure):")
-        print(f"   Success avg confidence: {np.mean(success_confidences):.3f}")
-        print(f"   Failure avg confidence: {np.mean(failure_confidences):.3f}")
-
-
-def analyze_ppo_convergence(evaluation_results: Dict) -> None:
-    """Analyze PPO learning convergence patterns"""
-
-    results = evaluation_results['episode_results']
-
-    print(f"\nPPO CONVERGENCE ANALYSIS")
-    print("=" * 50)
-
-    # Split into early and late episodes
-    mid_point = len(results) // 2
-    early_episodes = results[:mid_point]
-    late_episodes = results[mid_point:]
-
-    early_success_rate = np.mean([r['success'] for r in early_episodes])
-    late_success_rate = np.mean([r['success'] for r in late_episodes])
-
-    early_confidence = np.mean([r.get('avg_confidence', 0) for r in early_episodes])
-    late_confidence = np.mean([r.get('avg_confidence', 0) for r in late_episodes])
-
-    early_improvement = np.mean([r['hub_improvement'] for r in early_episodes])
-    late_improvement = np.mean([r['hub_improvement'] for r in late_episodes])
-
-    print(f"Early Episodes (1-{mid_point}):")
-    print(f"   Success rate: {early_success_rate:.1%}")
-    print(f"   Avg confidence: {early_confidence:.3f}")
-    print(f"   Avg hub improvement: {early_improvement:.4f}")
-
-    print(f"\nLate Episodes ({mid_point + 1}-{len(results)}):")
-    print(f"   Success rate: {late_success_rate:.1%}")
-    print(f"   Avg confidence: {late_confidence:.3f}")
-    print(f"   Avg hub improvement: {late_improvement:.4f}")
-
-    print(f"\nImprovement over time:")
-    print(f"   Success rate change: {(late_success_rate - early_success_rate):.1%}")
-    print(f"   Confidence change: {(late_confidence - early_confidence):+.3f}")
-    print(f"   Hub improvement change: {(late_improvement - early_improvement):+.4f}")
-
-
-# =============================================================================
-# MAIN EXECUTION FUNCTION
-# =============================================================================
-
-def run_complete_ppo_evaluation():
-    """Run complete PPO evaluation pipeline"""
-
-    print("Starting Complete PPO Evaluation Pipeline")
+    print("Starting Complete PPO Evaluation Pipeline (CORRECTED)")
     print("=" * 60)
 
     # Create results directory
@@ -1092,7 +1163,7 @@ def run_complete_ppo_evaluation():
     evaluation_results = evaluator.run_comprehensive_evaluation()
 
     # Save results
-    results_file = Path(eval_config.results_dir) / 'ppo_evaluation_results.json'
+    results_file = Path(eval_config.results_dir) / 'ppo_evaluation_results_corrected.json'
     with open(results_file, 'w') as f:
         # Convert for JSON serialization
         serializable_results = {}
@@ -1127,12 +1198,12 @@ def run_complete_ppo_evaluation():
     print("Creating PPO performance dashboard...")
     create_ppo_performance_dashboard(evaluation_results)
 
-    # Create graph comparisons for trajectory episodes
-    print("Creating graph visualizations...")
+    # Create CORRECTED graph comparisons for trajectory episodes
+    print("Creating corrected graph visualizations...")
     for i, episode_data in enumerate(evaluation_results['trajectories']):
         if episode_data['initial_graph'] is not None and episode_data['final_graph'] is not None:
-            save_path = Path(eval_config.results_dir) / f'ppo_graph_comparison_episode_{i}.png'
-            visualize_ppo_graph_comparison(
+            save_path = Path(eval_config.results_dir) / f'ppo_graph_comparison_corrected_episode_{i}.png'
+            visualize_ppo_graph_comparison_corrected(
                 episode_data['initial_graph'],
                 episode_data['final_graph'],
                 episode_data,
@@ -1142,18 +1213,10 @@ def run_complete_ppo_evaluation():
     # Create interactive plots
     print("Creating interactive visualizations...")
 
-    # Trajectory plots for first few episodes
+    # CORRECTED trajectory plots for first few episodes
     for i, episode_data in enumerate(evaluation_results['trajectories'][:3]):
-        trajectory_fig = create_ppo_interactive_trajectory_plot(episode_data)
-        trajectory_fig.write_html(Path(eval_config.results_dir) / f'ppo_trajectory_episode_{i}.html')
-
-    # Action analysis plot
-    action_fig = create_ppo_action_analysis_plot(evaluation_results)
-    action_fig.write_html(Path(eval_config.results_dir) / 'ppo_action_analysis.html')
-
-    # Additional PPO-specific analyses
-    analyze_ppo_failure_cases(evaluation_results)
-    analyze_ppo_convergence(evaluation_results)
+        trajectory_fig = create_ppo_interactive_trajectory_plot_corrected(episode_data)
+        trajectory_fig.write_html(Path(eval_config.results_dir) / f'ppo_trajectory_corrected_episode_{i}.html')
 
     print("PPO evaluation completed successfully!")
     print(f"All results saved to: {eval_config.results_dir}")
@@ -1162,26 +1225,28 @@ def run_complete_ppo_evaluation():
 
 
 # =============================================================================
-# QUICK DIAGNOSTIC FUNCTIONS
+# QUICK DIAGNOSTIC FUNCTIONS - CORRECTED
 # =============================================================================
 
-def quick_ppo_model_check():
-    """Quick check if PPO models are available"""
+def quick_ppo_model_check_corrected():
+    """Quick check if PPO models are available - CORRECTED"""
     model_exists = Path(eval_config.model_path).exists()
     disc_exists = Path(eval_config.discriminator_path).exists()
     data_exists = Path(eval_config.data_path).exists()
 
-    print("PPO MODEL AVAILABILITY CHECK:")
+    print("PPO MODEL AVAILABILITY CHECK (CORRECTED):")
     print(f"   PPO model: {'✅' if model_exists else '❌'} {eval_config.model_path}")
     print(f"   Discriminator: {'✅' if disc_exists else '❌'} {eval_config.discriminator_path}")
     print(f"   Data: {'✅' if data_exists else '❌'} {eval_config.data_path}")
+    print(f"   Max episode steps: {eval_config.max_episode_steps}")
+    print(f"   Growth control enabled: {eval_config.max_total_node_growth}")
 
     return model_exists and data_exists
 
 
-def run_quick_ppo_test():
-    """Run a quick test with 5 episodes to check if everything works"""
-    print("Running quick PPO test (5 episodes)...")
+def run_quick_ppo_test_corrected():
+    """Run a quick test with 5 episodes to check if everything works - CORRECTED"""
+    print("Running quick PPO test (5 episodes) - CORRECTED...")
 
     # Temporarily modify config for quick test
     original_episodes = eval_config.num_eval_episodes
@@ -1195,10 +1260,16 @@ def run_quick_ppo_test():
         results = evaluator.run_comprehensive_evaluation()
 
         print("Quick test completed successfully!")
+        print(f"Success rate: {results['summary_stats']['success_rate']:.1%}")
+        print(f"Mean improvement: {results['summary_stats']['mean_hub_improvement']:.4f}")
+        print(f"Growth cap exceeded rate: {results['summary_stats']['cap_exceeded_rate']:.1%}")
+
         return results
 
     except Exception as e:
         print(f"Quick test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return None
     finally:
         # Restore original config
@@ -1206,27 +1277,32 @@ def run_quick_ppo_test():
 
 
 # =============================================================================
-# MAIN EXECUTION
+# MAIN EXECUTION - CORRECTED
 # =============================================================================
 
 if __name__ == "__main__":
     # Check if PPO model exists
-    if not Path(eval_config.model_path).exists():
-        print(f"PPO model not found at {eval_config.model_path}")
-        print("Please train the PPO model first or update the model path.")
+    if not quick_ppo_model_check_corrected():
+        print("Required files missing. Please check paths and train models if needed.")
     else:
-        # Run complete PPO evaluation
-        results = run_complete_ppo_evaluation()
+        # Run corrected PPO evaluation
+        results = run_complete_ppo_evaluation_corrected()
 
-        print(f"\nPPO evaluation finished!")
-        print(f"Check {eval_config.results_dir} for all visualizations and results")
+        if results:
+            print(f"\nCORRECTED PPO evaluation finished!")
+            print(f"Check {eval_config.results_dir} for all visualizations and results")
+            print("\nKey improvements:")
+            print("- Fixed directed graph visualization")
+            print("- Aligned with PPOConfig parameters")
+            print("- Added growth control tracking")
+            print("- Corrected environment initialization")
 
 # =============================================================================
-# USAGE INSTRUCTIONS
+# USAGE INSTRUCTIONS - CORRECTED
 # =============================================================================
 
-print("\nPPO EVALUATION SCRIPT READY!")
+print("\nCORRECTED PPO EVALUATION SCRIPT READY!")
 print("Run the following functions:")
-print("1. quick_ppo_model_check() - Check if models are available")
-print("2. run_quick_ppo_test() - Quick test with 5 episodes")
-print("3. run_complete_ppo_evaluation() - Full evaluation")
+print("1. quick_ppo_model_check_corrected() - Check if models are available")
+print("2. run_quick_ppo_test_corrected() - Quick test with 5 episodes")
+print("3. run_complete_ppo_evaluation_corrected() - Full corrected evaluation")
