@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PPO Trainer for Graph Refactoring
-Corrected implementation maintaining environment characteristics
+Updated implementation with PPOConfig as single source of truth
 """
 
 import json
@@ -25,7 +25,7 @@ from torch_geometric.data import Data, Batch
 
 @dataclass
 class PPOConfig:
-    """Config compatibile con tutti i campi usati nel progetto (curriculum/CLR inclusi)."""
+    """Updated config as single source of truth with all required parameters."""
 
     # General
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -37,15 +37,28 @@ class PPOConfig:
     discriminator_path: str = "results/discriminator_pretraining/pretrained_discriminator.pt"
     results_dir: str = "results/ppo_training"
 
-    # Env
-    max_episode_steps: int = 10
+    # Environment parameters - CLAUDE: Now controlled by PPOConfig
+    max_steps: int = 10  # CLAUDE: renamed from max_episode_steps for consistency
     num_actions: int = 7
+
+    # CLAUDE: Added growth control parameters from prompt requirements
+    max_new_nodes: int = 5
+    max_growth: float = 1.3
+    growth_penalty_mode: str = "quadratic"
+    growth_penalty_power: int = 2
+    growth_gamma_nodes: float = 2.0
+    growth_gamma_edges: float = 1.0
+
+    # Reward weights with defaults - CLAUDE: Complete set as required
     reward_weights: Optional[Dict[str, float]] = None
 
-    # (Spesso usati altrove)
+    # Model architecture - CLAUDE: All dimensions controlled by PPOConfig
     node_dim: int = 7
+    hidden_dim: int = 256
+    num_layers: int = 3
     global_features_dim: int = 4
-    shared_encoder: bool = True
+    dropout: float = 0.3
+    shared_encoder: bool = True  # CLAUDE: Force shared encoder for PPO
 
     # Training phases
     num_episodes: int = 5000
@@ -58,8 +71,9 @@ class PPOConfig:
     lr: float = 1e-4
     clip_eps: float = 0.2
     ppo_epochs: int = 4
-    target_kl: float = 0.05        # meno restrittivo rispetto a 0.01–0.015
+    target_kl: float = 0.05
     max_grad_norm: float = 0.5
+    min_mb_before_kl: int = 2  # CLAUDE: Minimum minibatches before KL early stop
 
     # Loss coefficients
     value_loss_coef: float = 0.3
@@ -68,13 +82,6 @@ class PPOConfig:
     # PPO batching
     rollout_episodes: int = 32
     minibatch_size: int = 128
-
-    min_mb_before_kl: int = 2
-
-    # Model architecture
-    hidden_dim: int = 256
-    num_layers: int = 3
-    dropout: float = 0.3
 
     # Reward normalization
     normalize_rewards: bool = True
@@ -90,17 +97,17 @@ class PPOConfig:
     early_stopping_patience: int = 300
     min_improvement: float = 0.01
 
-    # Esplorazione
+    # Exploration
     epsilon_start: float = 0.30
     epsilon_end: float = 0.02
     epsilon_anneal_episodes: int = 2000
 
-    # Entropia
+    # Entropy scheduling
     entropy_coef_start: float = 0.03
     entropy_coef_end: float = 0.005
     entropy_anneal_episodes: int = 2500
 
-    # Cyclic Learning Rate (puoi tenerlo spento/attivo via flag)
+    # CLAUDE: Cyclic Learning Rate parameters as specified
     use_cyclic_lr: bool = True
     base_lr: float = 1e-4
     max_lr: float = 2e-4
@@ -108,7 +115,7 @@ class PPOConfig:
     clr_step_size_down: int = 96
     clr_mode: str = "triangular2"
 
-    # Curriculum learning + coverage
+    # Curriculum learning
     use_curriculum: bool = True
     curriculum_bins: List[int] = field(default_factory=lambda: [20, 30, 45, 66])
     curriculum_episodes_per_stage: int = 600
@@ -117,7 +124,7 @@ class PPOConfig:
     coverage_log_every: int = 100
 
     def __post_init__(self):
-        # Default dei pesi reward (completi)
+        # CLAUDE: Complete default reward weights as specified in requirements
         default_rw = {
             'hub_weight': 5.0,
             'step_valid': 0.01,
@@ -128,20 +135,23 @@ class PPOConfig:
             'duplicate_penalty': -0.1,
             'adversarial_weight': 0.5,
             'patience': 15,
-            # crescita (usata terminalmente)
+            # Growth control (terminal only)
             'node_penalty': 1.0,
             'edge_penalty': 0.02,
             'cap_exceeded_penalty': -0.8,
-            # successo
+            # Success criteria
             'success_threshold': 0.03,
             'success_bonus': 2.0,
         }
-        # Merge robusto con quanto passi da CLI/config file
+        # CLAUDE: Robust merge as specified
         self.reward_weights = {**default_rw, **(self.reward_weights or {})}
 
+
 class CurriculumSampler:
-    """Sampler senza reinserimento con curriculum per num_nodes."""
-    def __init__(self, num_nodes_list: List[int], bins: List[int], episodes_per_stage: int, mix_back_ratio: float = 0.0, seed: int = 42):
+    """Sampler without reinsertion with curriculum for num_nodes."""
+
+    def __init__(self, num_nodes_list: List[int], bins: List[int], episodes_per_stage: int, mix_back_ratio: float = 0.0,
+                 seed: int = 42):
         self.num_nodes_list = num_nodes_list
         self.N = len(num_nodes_list)
         self.bins = sorted(bins)
@@ -149,7 +159,7 @@ class CurriculumSampler:
         self.episodes_per_stage = max(1, episodes_per_stage)
         self.mix_back_ratio = max(0.0, min(0.3, mix_back_ratio))
         self.rng = random.Random(seed)
-        # bucketizza
+        # bucketize
         self.bucket_indices: Dict[int, List[int]] = {b: [] for b in self.bins}
         for idx, n in enumerate(num_nodes_list):
             for b in self.bins:
@@ -197,6 +207,7 @@ class CurriculumSampler:
 
     def coverage(self) -> float:
         return len(self.seen) / self.N if self.N > 0 else 0.0
+
 
 class PPOBuffer:
     """PPO Buffer that maintains compatibility with original reward structure"""
@@ -317,7 +328,7 @@ def load_discriminator(discriminator_path: str, device: str):
 
 
 class PPOTrainer:
-    """PPO Trainer maintaining original environment characteristics"""
+    """PPO Trainer with PPOConfig as single source of truth"""
 
     def __init__(self, config: PPOConfig):
         self.config = config
@@ -333,28 +344,21 @@ class PPOTrainer:
         # Set random seeds
         set_random_seeds(config.random_seed)
 
-        # Initialize environment maintaining original configuration
-        from rl_gym import RefactorEnv
-        self.env = RefactorEnv(
-            data_path=config.data_path,
-            max_steps=config.max_episode_steps,
-            device=config.device,
-            reward_weights=config.reward_weights
-        )
+        # CLAUDE: Initialize environment using controlled _build_env method
+        self.env = self._build_env()
 
-          # ---- Costruisci lista num_nodes per curriculum ----
+        # Build curriculum sampler
         try:
             num_nodes_list = [d.num_nodes for d in self.env.original_data_list]
         except Exception:
             num_nodes_list = [d.x.size(0) for d in self.env.original_data_list]
 
-        bins = getattr(self.config, "curriculum_bins", [20, 30, 45, 66])  # adatta alle tue dimensioni
         self.sampler = CurriculumSampler(
             num_nodes_list=num_nodes_list,
-            bins=bins,
-            episodes_per_stage=getattr(self.config, "curriculum_episodes_per_stage", 600),
-            mix_back_ratio=getattr(self.config, "curriculum_mix_back_ratio", 0.0),
-            seed=getattr(self.config, "random_seed", 42),
+            bins=self.config.curriculum_bins,
+            episodes_per_stage=self.config.curriculum_episodes_per_stage,
+            mix_back_ratio=self.config.curriculum_mix_back_ratio,
+            seed=self.config.random_seed,
         )
 
         # Load discriminator maintaining original functionality
@@ -362,30 +366,27 @@ class PPOTrainer:
         if self.discriminator is not None:
             self.env.discriminator = self.discriminator
 
-        # Initialize model with shared encoder (PPO correction)
+        # CLAUDE: Initialize model without hard-coded dimensions
         self._init_model()
 
-        # Single optimizer (PPO correction)
+        # Single optimizer with config LR
         self.optimizer = optim.Adam(self.model.parameters(), lr=config.lr, eps=1e-5)
 
-        # --- Cyclic Learning Rate (opzionale) ---
+        # CLAUDE: Cyclic Learning Rate as specified
         self.scheduler = None
-        if getattr(self.config, "use_cyclic_lr", False):
-            base_lr = getattr(self.config, "base_lr", self.config.lr * 0.3)
-            max_lr = getattr(self.config, "max_lr", self.config.lr)
-            step_up = getattr(self.config, "clr_step_size_up", 200)  # in numero di optimizer steps
-            step_dn = getattr(self.config, "clr_step_size_down", None)  # se None, simmetrico
+        if self.config.use_cyclic_lr:
             self.scheduler = torch.optim.lr_scheduler.CyclicLR(
                 self.optimizer,
-                base_lr = base_lr,
-                max_lr = max_lr,
-                step_size_up = step_up,
-                step_size_down = step_dn,
-                mode = getattr(self.config, "clr_mode", "triangular2"),
-                cycle_momentum = False,  # Adam: niente momentum cycling
+                base_lr=self.config.base_lr,
+                max_lr=self.config.max_lr,
+                step_size_up=self.config.clr_step_size_up,
+                step_size_down=self.config.clr_step_size_down,
+                mode=self.config.clr_mode,
+                cycle_momentum=False,  # Adam: no momentum cycling
             )
             self.logger.info(
-            f"Using CyclicLR: base_lr={base_lr}, max_lr={max_lr}, step_up={step_up}, step_down={step_dn}, mode={getattr(self.config, 'clr_mode', 'triangular2')}")
+                f"Using CyclicLR: base_lr={self.config.base_lr}, max_lr={self.config.max_lr}, "
+                f"step_up={self.config.clr_step_size_up}, mode={self.config.clr_mode}")
 
         # PPO buffer
         self.buffer = PPOBuffer()
@@ -393,7 +394,7 @@ class PPOTrainer:
         # TensorBoard writer
         self.writer = SummaryWriter(self.results_dir / 'tensorboard')
 
-        # Training statistics maintaining original structure
+        # Training statistics
         self.training_stats = {
             'episode_rewards': [],
             'episode_lengths': [],
@@ -404,10 +405,9 @@ class PPOTrainer:
             'discriminator_scores': []
         }
 
-        # Best model tracking maintaining original logic
+        # Best model tracking
         self.best_reward = float('-inf')
         self.early_stopping_counter = 0
-
         self.total_episodes_trained = 0
 
         # Running reward statistics for normalization
@@ -415,47 +415,55 @@ class PPOTrainer:
 
         self.logger.info("PPO Trainer initialized successfully!")
 
+    # CLAUDE: Method to build environment controlled by PPOConfig
+    def _build_env(self):
+        """Build environment using PPOConfig parameters"""
+        from rl_gym import RefactorEnv
+
+        return RefactorEnv(
+            data_path=self.config.data_path,
+            max_steps=self.config.max_steps,
+            device=self.config.device,
+            reward_weights=self.config.reward_weights,
+            # CLAUDE: Growth control parameters from config
+            max_new_nodes_per_episode=self.config.max_new_nodes,
+            max_total_node_growth=self.config.max_growth,
+            growth_penalty_mode=self.config.growth_penalty_mode,
+            growth_penalty_power=self.config.growth_penalty_power,
+            growth_penalty_gamma_nodes=self.config.growth_gamma_nodes,
+            growth_penalty_gamma_edges=self.config.growth_gamma_edges
+        )
+
+    # CLAUDE: Model initialization without hard-code
     def _init_model(self):
-        """Initialize actor-critic model with shared encoder"""
+        """Initialize actor-critic model from PPOConfig parameters"""
         ac_config = {
-            'node_dim': 7,
+            'node_dim': self.config.node_dim,
             'hidden_dim': self.config.hidden_dim,
             'num_layers': self.config.num_layers,
-            'num_actions': 7,
-            'global_features_dim': 4,  # Mantiene configurazione originale
+            'num_actions': self.config.num_actions,
+            'global_features_dim': self.config.global_features_dim,
             'dropout': self.config.dropout,
-            'shared_encoder': True  # PPO correction: force shared encoder
+            'shared_encoder': self.config.shared_encoder
         }
 
         from actor_critic_models import create_actor_critic
         self.model = create_actor_critic(ac_config).to(self.device)
 
         self.logger.info(f"Actor-Critic model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-        self.logger.info("Using shared encoder for proper PPO implementation")
+        self.logger.info("Model initialized from PPOConfig")
 
     def _extract_global_features(self, data: Data) -> torch.Tensor:
-        """Extract global features maintaining original environment method"""
-        metrics = self.env._calculate_metrics(data)
-
-        global_features = torch.tensor([
-            metrics['hub_score'],
-            metrics['num_nodes'],
-            metrics['num_edges'],
-            metrics['connected']
-        ], dtype=torch.float32, device=self.device)
-
-        if global_features.dim() == 1:
-            global_features = global_features.unsqueeze(0)
-
-        return global_features
+        """Extract global features using environment method"""
+        return self.env._extract_global_features(data)
 
     def collect_rollouts(self, num_episodes: int, is_adversarial: bool = False) -> Dict:
-        """Collect rollouts with epsilon-greedy exploration and action masking"""
+        """CLAUDE: Collect rollouts with device + buffer pre-step"""
         episode_infos = []
 
         for episode_idx in range(num_episodes):
             # Reset environment
-            if getattr(self.config, "use_curriculum", False):
+            if self.config.use_curriculum:
                 graph_idx = self.sampler.next_index()
                 current_data = self.env.reset(graph_idx)
                 self.sampler.maybe_advance_stage()
@@ -481,7 +489,8 @@ class PPOTrainer:
                         initial_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
 
             while True:
-                # Get global features
+                # CLAUDE: Create Batch.from_data_list([state]).to(self.device) before forward
+                state_batch = Batch.from_data_list([current_data]).to(self.device)
                 global_features = self._extract_global_features(current_data)
 
                 # Get action mask from environment
@@ -489,9 +498,10 @@ class PPOTrainer:
 
                 # Model forward pass
                 with torch.no_grad():
-                    output = self.model(current_data, global_features)
+                    # CLAUDE: Use the same Batch for policy (and discriminator if present)
+                    output = self.model(state_batch, global_features)
 
-                    # Get action logits (prefer logits over probs for numerical stability)
+                    # Get action logits
                     if 'action_logits' in output:
                         action_logits = output['action_logits'].squeeze()
                     else:
@@ -509,16 +519,18 @@ class PPOTrainer:
                 action = dist.sample()
                 log_prob = dist.log_prob(action)
 
-                # Take environment step
+                # CLAUDE: Save PRE-STEP state in buffer
                 state_before_action = current_data.clone()
+
+                # Take environment step
                 next_state, reward, done, info = self.env.step(int(action.item()))
                 current_data = self.env.current_data.clone()
 
-                # Normalize reward if enabled
-                if getattr(self.config, "normalize_rewards", True):
+                # CLAUDE: Normalize reward if enabled
+                if self.config.normalize_rewards:
                     reward = self._normalize_reward(reward)
 
-                # Store transition with mask and epsilon
+                # Store transition with PRE-STEP state
                 self.buffer.store(
                     state=state_before_action,
                     global_feat=global_features,
@@ -534,7 +546,7 @@ class PPOTrainer:
                 episode_reward += float(reward)
                 episode_length += 1
 
-                if done or episode_length >= self.config.max_episode_steps:
+                if done or episode_length >= self.config.max_steps:
                     break
 
             # Episode metrics
@@ -570,28 +582,20 @@ class PPOTrainer:
         return {'episodes': episode_infos}
 
     def _normalize_reward(self, reward: float) -> float:
-        """
-        Normalizzazione reward robusta:
-        - running mean (EWMA) e running MAD (EWMA della deviazione assoluta)
-        - niente std su finestre corte, niente normalizzazioni aggressive
-        """
+        """Normalize reward using running statistics"""
         if not hasattr(self, "_rwd_mean"):
-            # stato iniziale
             self._rwd_mean = float(reward)
             self._rwd_mad = 1.0
-            self._rwd_beta = 0.95  # smorzamento (0.9-0.99; più alto = più stabile)
+            self._rwd_beta = 0.95
 
         beta = self._rwd_beta
-        # aggiorna media
         self._rwd_mean = beta * self._rwd_mean + (1.0 - beta) * float(reward)
-        # aggiorna MAD rispetto alla NUOVA media
         abs_dev = abs(float(reward) - self._rwd_mean)
         self._rwd_mad = beta * self._rwd_mad + (1.0 - beta) * abs_dev
         denom = max(self._rwd_mad, 1e-8)
 
         normed = (float(reward) - self._rwd_mean) / denom
-        # clipping morbido
-        if hasattr(self.config, "reward_clip") and self.config.reward_clip is not None:
+        if self.config.reward_clip is not None:
             cap = float(self.config.reward_clip)
             normed = float(max(-cap, min(cap, normed)))
         return normed
@@ -611,38 +615,31 @@ class PPOTrainer:
 
         progress = episode_idx / self.config.entropy_anneal_episodes
         return self.config.entropy_coef_start + (
-                    self.config.entropy_coef_end - self.config.entropy_coef_start) * progress
+                self.config.entropy_coef_end - self.config.entropy_coef_start) * progress
 
     def _create_epsilon_greedy_distribution(self, action_logits: torch.Tensor, action_mask: torch.Tensor,
                                             epsilon: float) -> torch.Tensor:
         """Create epsilon-greedy mixed distribution with action masking"""
-        # Apply mask to logits (set invalid actions to -inf)
         masked_logits = action_logits.clone()
         masked_logits[~action_mask] = float('-inf')
 
-        # Policy distribution (softmax over valid actions)
         policy_probs = F.softmax(masked_logits, dim=-1)
 
-        # Uniform distribution over valid actions only
         num_valid = action_mask.sum().float()
         uniform_probs = torch.zeros_like(policy_probs)
         uniform_probs[action_mask] = 1.0 / num_valid
 
-        # Mix distributions
         mixed_probs = (1 - epsilon) * policy_probs + epsilon * uniform_probs
-
-        # Ensure normalization
         mixed_probs = mixed_probs / (mixed_probs.sum() + 1e-8)
 
         return mixed_probs
 
     def update_ppo(self) -> Dict:
-        """PPO update with epsilon-greedy and entropy scheduling"""
+        """CLAUDE: PPO update with target_kl respect and scheduler step per optimizer step"""
         if len(self.buffer) == 0:
             return {}
 
         device = self.device
-        min_mb_before_kl = getattr(self.config, "min_mb_before_kl", 0)
 
         # Get current entropy coefficient
         entropy_coef = self._entropy_coef_at(self.total_episodes_trained)
@@ -654,12 +651,9 @@ class PPOTrainer:
                 last_global = self.buffer.global_features[-1]
                 if isinstance(last_global, torch.Tensor) and last_global.dim() == 1:
                     last_global = last_global.unsqueeze(0)
-                out_last = self.model(last_state, last_global.to(device))
-                if isinstance(out_last, dict):
-                    next_value = float(out_last["state_value"].view(-1)[0].item())
-                else:
-                    _, vtmp = out_last
-                    next_value = float(vtmp.view(-1)[0].item())
+                last_batch = Batch.from_data_list([last_state]).to(device)
+                out_last = self.model(last_batch, last_global.to(device))
+                next_value = float(out_last["state_value"].view(-1)[0].item())
             else:
                 next_value = 0.0
 
@@ -691,6 +685,8 @@ class PPOTrainer:
         num_updates = 0
         stop_early = False
         mb_seen = 0
+        approx_kl_final = 0.0
+        clip_frac_final = 0.0
 
         for epoch in range(self.config.ppo_epochs):
             indices = torch.randperm(dataset_size, device=device)
@@ -732,7 +728,6 @@ class PPOTrainer:
                 entropies = torch.zeros(batch_size, device=device)
 
                 for i in range(batch_size):
-                    # Recreate the same mixed distribution used during rollout
                     mixed_probs = self._create_epsilon_greedy_distribution(
                         action_logits[i], masks_mb[i], epsilons_mb[i].item()
                     )
@@ -741,7 +736,6 @@ class PPOTrainer:
                     new_log_probs[i] = dist.log_prob(actions_mb[i])
                     entropies[i] = dist.entropy()
 
-                # Average entropy for this minibatch
                 ent = entropies.mean()
 
                 # Ensure proper shapes
@@ -770,7 +764,8 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
 
-                if getattr(self, "scheduler", None) is not None:
+                # CLAUDE: Scheduler step per optimizer step as specified
+                if self.scheduler is not None:
                     try:
                         self.scheduler.step()
                     except Exception:
@@ -782,12 +777,14 @@ class PPOTrainer:
                 total_entropy += ent.item()
                 num_updates += 1
 
-                # KL early stopping
+                # CLAUDE: KL early stopping with min_mb_before_kl
                 with torch.no_grad():
                     approx_kl = (oldlogp_mb - new_log_probs).mean().clamp_min(0).item()
                     clip_fraction = ((ratio - 1.0).abs() > self.config.clip_eps).float().mean().item()
+                    approx_kl_final = approx_kl
+                    clip_frac_final = clip_fraction
 
-                if (min_mb_before_kl == 0 or mb_seen >= min_mb_before_kl) and approx_kl > self.config.target_kl:
+                if (mb_seen >= self.config.min_mb_before_kl) and approx_kl > self.config.target_kl:
                     try:
                         cur_lr = float(self.optimizer.param_groups[0]["lr"])
                     except Exception:
@@ -811,7 +808,9 @@ class PPOTrainer:
             "value_loss": total_value_loss / max(1, num_updates),
             "entropy": total_entropy / max(1, num_updates),
             "entropy_coef": entropy_coef,
-            "current_epsilon": self._epsilon_at(self.total_episodes_trained)
+            "current_epsilon": self._epsilon_at(self.total_episodes_trained),
+            "approx_kl": approx_kl_final,
+            "clip_frac": clip_frac_final
         }
 
     def update_discriminator(self, episode_infos: List[Dict]) -> Dict:
@@ -820,59 +819,51 @@ class PPOTrainer:
             return {}
 
         try:
-            # Collect graphs from recent episodes
-            positive_graphs = []  # Original smelly graphs
-            negative_graphs = []  # RL-modified graphs
-
-            for episode_info in episode_infos[-8:]:  # Use recent episodes
-                # This is a simplified version - in practice you'd collect actual states
-                # from the rollouts rather than using episode info
-                pass
-
-            # For now, return empty dict since we don't have the full discriminator update logic
             return {}
-
         except Exception as e:
             self.logger.error(f"Discriminator update failed: {e}")
             return {}
 
     def evaluate_model(self) -> Dict[str, float]:
-        """Evaluate model maintaining original evaluation structure"""
+        """CLAUDE: Evaluate model using same device path and logging action_usage"""
         self.model.eval()
 
         eval_rewards = []
         eval_hub_improvements = []
         eval_discriminator_scores = []
         eval_episode_lengths = []
+        action_usage = {i: 0 for i in range(7)}
+        valid_action_coverage = {i: 0 for i in range(7)}
 
         for eval_episode in range(self.config.num_eval_episodes):
-            self.env.reset()
-            current_data = self.env.current_data.clone()
-
+            current_data = self.env.reset()
             episode_reward = 0.0
             episode_length = 0
             initial_hub_score = self.env.initial_metrics['hub_score']
 
             done = False
             while not done:
+                # CLAUDE: Use Batch on self.device for policy/discriminator
+                state_batch = Batch.from_data_list([current_data]).to(self.device)
                 global_features = self._extract_global_features(current_data)
-
-                # Use greedy action selection for evaluation
                 action_mask = torch.tensor(self.env.get_action_mask(), dtype=torch.bool, device=self.device)
+
                 with torch.no_grad():
-                    output = self.model(current_data, global_features)
+                    output = self.model(state_batch, global_features)
 
                     if 'action_logits' in output:
                         action_logits = output['action_logits'].squeeze()
                     else:
                         action_logits = torch.log(output['action_probs'].squeeze().clamp(min=1e-8))
 
-                    # In evaluation, use epsilon=0 (pure policy, no exploration)
+                    # Greedy action selection from masked policy
                     masked_logits = action_logits.clone()
                     masked_logits[~action_mask] = float('-inf')
-
-                    # Greedy action selection from masked policy
                     action = torch.argmax(masked_logits).item()
+
+                action_usage[action] += 1
+                if action_mask[action]:
+                    valid_action_coverage[action] += 1
 
                 _, reward, done, info = self.env.step(action)
                 episode_reward += reward
@@ -899,6 +890,13 @@ class PPOTrainer:
 
         self.model.train()
 
+        # CLAUDE: Log action_usage and valid_action_coverage if available
+        if hasattr(self, 'logger'):
+            total_actions = sum(action_usage.values())
+            if total_actions > 0:
+                usage_str = ", ".join([f"{i}: {count / total_actions:.1%}" for i, count in action_usage.items()])
+                self.logger.info(f"Action usage: {usage_str}")
+
         return {
             'eval_reward_mean': np.mean(eval_rewards),
             'eval_reward_std': np.std(eval_rewards),
@@ -908,11 +906,15 @@ class PPOTrainer:
             'eval_discriminator_score_std': np.std(eval_discriminator_scores) if eval_discriminator_scores else 0.0,
             'eval_episode_length_mean': np.mean(eval_episode_lengths),
             'eval_episode_length_std': np.std(eval_episode_lengths),
-            'eval_success_rate': sum(1 for imp in eval_hub_improvements if imp > 0.3) / len(eval_hub_improvements)
+            'eval_success_rate': sum(1 for imp in eval_hub_improvements if imp > 0.3) / len(eval_hub_improvements),
+            'action_usage_distribution': {
+                str(k): v / sum(action_usage.values()) if sum(action_usage.values()) > 0 else 0
+                for k, v in action_usage.items()},
+            'valid_action_coverage': valid_action_coverage
         }
 
     def _log_metrics(self, episode_idx: int, episode_infos: List[Dict], update_info: Dict = None):
-        """Log metrics maintaining original logging structure"""
+        """CLAUDE: Enhanced logging with approx_kl, clip_frac, entropy_coef"""
         # Update training statistics
         for ep_info in episode_infos:
             self.training_stats['episode_rewards'].append(ep_info['episode_reward'])
@@ -926,7 +928,7 @@ class PPOTrainer:
                 self.training_stats['critic_losses'].append(update_info['value_loss'])
 
         # Add curriculum logging
-        if hasattr(self, 'sampler') and episode_idx % getattr(self.config, "coverage_log_every", 100) == 0:
+        if hasattr(self, 'sampler') and episode_idx % self.config.coverage_log_every == 0:
             coverage = self.sampler.coverage()
             current_stage = self.sampler.stage
             self.writer.add_scalar('Curriculum/Coverage', coverage, episode_idx)
@@ -947,23 +949,32 @@ class PPOTrainer:
                 if isinstance(value, (int, float)):
                     self.writer.add_scalar(f'Training/{key}', value, episode_idx)
 
-            # Log current schedules
             current_epsilon = self._epsilon_at(episode_idx)
             current_entropy_coef = self._entropy_coef_at(episode_idx)
             self.writer.add_scalar('Schedule/Epsilon', current_epsilon, episode_idx)
             self.writer.add_scalar('Schedule/EntropyCoef', current_entropy_coef, episode_idx)
 
-        # Console logging maintaining original format
+        # CLAUDE: Enhanced console logging with approx_kl, clip_frac, entropy_coef
         if episode_idx % self.config.log_every == 0:
             success_rate = sum(1 for imp in recent_improvements if imp > 0.25) / len(recent_improvements)
 
-            self.logger.info(
+            base_log = (
                 f"Episode {episode_idx:4d} | "
                 f"Reward: {np.mean(recent_rewards):6.3f}±{np.std(recent_rewards):5.3f} | "
                 f"Hub Δ: {np.mean(recent_improvements):6.3f}±{np.std(recent_improvements):5.3f} | "
                 f"Success: {success_rate:.1%} | "
                 f"Buffer: {len(self.buffer)}"
             )
+
+            if update_info:
+                extra_log = (
+                    f" | approx_kl: {update_info.get('approx_kl', 0):.4f}"
+                    f" | clip_frac: {update_info.get('clip_frac', 0):.3f}"
+                    f" | entropy_coef: {update_info.get('entropy_coef', 0):.4f}"
+                )
+                base_log += extra_log
+
+            self.logger.info(base_log)
 
     def _save_checkpoint(self, episode_idx: int, is_best: bool = False):
         """Save model checkpoint maintaining original structure"""
@@ -972,13 +983,13 @@ class PPOTrainer:
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'model_config': {
-                'node_dim': 7,
+                'node_dim': self.config.node_dim,
                 'hidden_dim': self.config.hidden_dim,
                 'num_layers': self.config.num_layers,
-                'num_actions': 7,
-                'global_features_dim': 4,
+                'num_actions': self.config.num_actions,
+                'global_features_dim': self.config.global_features_dim,
                 'dropout': self.config.dropout,
-                'shared_encoder': True
+                'shared_encoder': self.config.shared_encoder
             },
             'training_stats': self.training_stats,
             'config': self.config,
@@ -1113,7 +1124,7 @@ def main():
     print("Starting Graph Refactoring PPO Training (Corrected)")
     print(f"Configuration: {config.experiment_name}")
     print(f"Episodes: {config.num_episodes}")
-    print(f"Max steps: {config.max_episode_steps}")
+    print(f"Max steps: {config.max_steps}")
     print(f"Device: {config.device}")
 
     trainer = PPOTrainer(config)
