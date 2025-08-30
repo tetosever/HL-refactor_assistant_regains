@@ -3636,3 +3636,934 @@
 2025-08-30 12:39:18,985 [INFO] __main__: Evaluation completed and saved to results/evaluation
 2025-08-30 12:39:18,997 [INFO] __main__: Evaluation completed successfully
 2025-08-30 12:39:18,998 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-30 18:57:30,355 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 18:57:30,355 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 18:57:30,355 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 18:57:30,355 [INFO] __main__: Starting PPO training...
+2025-08-30 18:57:33,102 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 18:57:33,129 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 18:57:33,129 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 18:57:33,129 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 18:57:33,130 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 18:57:33,130 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 18:57:33,130 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 18:57:33,131 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 18:57:33,131 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 18:58:20,774 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 18:58:20,775 [INFO] ppo_trainer: Episode  800 | Reward:  3.109±1.340 | Hub Δ:  0.347±0.186 | Success: 68.8% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0500
+2025-08-30 18:58:22,742 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 21.3%, 3: 0.0%, 4: 0.0%, 5: 78.7%, 6: 0.0%
+2025-08-30 18:58:22,743 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 3.760±1.480 | Hub Δ: 0.494±0.210 | Success: 84.0%
+2025-08-30 18:58:22,794 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-30 18:58:36,841 [INFO] ppo_trainer: Discriminator Performance (Episode 1088):
+2025-08-30 18:58:36,841 [INFO] ppo_trainer:   Recent Loss: 2.4828 ± 0.0000
+2025-08-30 18:58:36,842 [INFO] ppo_trainer:   Recent Accuracy: 0.234 ± 0.000
+2025-08-30 18:58:36,842 [INFO] ppo_trainer:   Real Confidence: 0.384 ± 0.000
+2025-08-30 18:58:36,842 [INFO] ppo_trainer:   Fake Confidence: 0.225 ± 0.000
+2025-08-30 18:58:36,842 [INFO] ppo_trainer:   Buffer: 64 real, 64 fake graphs
+2025-08-30 18:58:36,842 [INFO] ppo_trainer:   Adversarial Weight: 0.035
+2025-08-30 18:58:38,507 [INFO] ppo_trainer: Discriminator Performance (Episode 1120):
+2025-08-30 18:58:38,507 [INFO] ppo_trainer:   Recent Loss: 2.3250 ± 0.1578
+2025-08-30 18:58:38,507 [INFO] ppo_trainer:   Recent Accuracy: 0.250 ± 0.016
+2025-08-30 18:58:38,507 [INFO] ppo_trainer:   Real Confidence: 0.378 ± 0.006
+2025-08-30 18:58:38,507 [INFO] ppo_trainer:   Fake Confidence: 0.244 ± 0.019
+2025-08-30 18:58:38,507 [INFO] ppo_trainer:   Buffer: 96 real, 96 fake graphs
+2025-08-30 18:58:38,507 [INFO] ppo_trainer:   Adversarial Weight: 0.048
+2025-08-30 18:58:39,862 [INFO] ppo_trainer: Discriminator Performance (Episode 1152):
+2025-08-30 18:58:39,863 [INFO] ppo_trainer:   Recent Loss: 2.2432 ± 0.1732
+2025-08-30 18:58:39,863 [INFO] ppo_trainer:   Recent Accuracy: 0.268 ± 0.029
+2025-08-30 18:58:39,863 [INFO] ppo_trainer:   Real Confidence: 0.388 ± 0.015
+2025-08-30 18:58:39,863 [INFO] ppo_trainer:   Fake Confidence: 0.253 ± 0.020
+2025-08-30 18:58:39,863 [INFO] ppo_trainer:   Buffer: 128 real, 128 fake graphs
+2025-08-30 18:58:39,863 [INFO] ppo_trainer:   Adversarial Weight: 0.060
+2025-08-30 18:58:41,104 [INFO] ppo_trainer: Discriminator Performance (Episode 1184):
+2025-08-30 18:58:41,104 [INFO] ppo_trainer:   Recent Loss: 2.2180 ± 0.1562
+2025-08-30 18:58:41,104 [INFO] ppo_trainer:   Recent Accuracy: 0.262 ± 0.027
+2025-08-30 18:58:41,105 [INFO] ppo_trainer:   Real Confidence: 0.395 ± 0.018
+2025-08-30 18:58:41,105 [INFO] ppo_trainer:   Fake Confidence: 0.242 ± 0.026
+2025-08-30 18:58:41,105 [INFO] ppo_trainer:   Buffer: 160 real, 160 fake graphs
+2025-08-30 18:58:41,105 [INFO] ppo_trainer:   Adversarial Weight: 0.073
+2025-08-30 18:58:42,319 [INFO] ppo_trainer: Discriminator Performance (Episode 1216):
+2025-08-30 18:58:42,319 [INFO] ppo_trainer:   Recent Loss: 2.1942 ± 0.1475
+2025-08-30 18:58:42,320 [INFO] ppo_trainer:   Recent Accuracy: 0.283 ± 0.049
+2025-08-30 18:58:42,320 [INFO] ppo_trainer:   Real Confidence: 0.409 ± 0.032
+2025-08-30 18:58:42,320 [INFO] ppo_trainer:   Fake Confidence: 0.248 ± 0.027
+2025-08-30 18:58:42,320 [INFO] ppo_trainer:   Buffer: 192 real, 192 fake graphs
+2025-08-30 18:58:42,320 [INFO] ppo_trainer:   Adversarial Weight: 0.086
+2025-08-30 18:58:43,780 [INFO] ppo_trainer: Discriminator Performance (Episode 1248):
+2025-08-30 18:58:43,780 [INFO] ppo_trainer:   Recent Loss: 2.0814 ± 0.0871
+2025-08-30 18:58:43,781 [INFO] ppo_trainer:   Recent Accuracy: 0.306 ± 0.048
+2025-08-30 18:58:43,781 [INFO] ppo_trainer:   Real Confidence: 0.422 ± 0.033
+2025-08-30 18:58:43,781 [INFO] ppo_trainer:   Fake Confidence: 0.272 ± 0.043
+2025-08-30 18:58:43,781 [INFO] ppo_trainer:   Buffer: 224 real, 224 fake graphs
+2025-08-30 18:58:43,781 [INFO] ppo_trainer:   Adversarial Weight: 0.099
+2025-08-30 18:58:45,587 [INFO] ppo_trainer: Discriminator Performance (Episode 1280):
+2025-08-30 18:58:45,587 [INFO] ppo_trainer:   Recent Loss: 2.0307 ± 0.0958
+2025-08-30 18:58:45,587 [INFO] ppo_trainer:   Recent Accuracy: 0.312 ± 0.044
+2025-08-30 18:58:45,587 [INFO] ppo_trainer:   Real Confidence: 0.435 ± 0.021
+2025-08-30 18:58:45,588 [INFO] ppo_trainer:   Fake Confidence: 0.282 ± 0.046
+2025-08-30 18:58:45,588 [INFO] ppo_trainer:   Buffer: 256 real, 256 fake graphs
+2025-08-30 18:58:45,588 [INFO] ppo_trainer:   Adversarial Weight: 0.112
+2025-08-30 18:58:47,655 [INFO] ppo_trainer: Discriminator Performance (Episode 1312):
+2025-08-30 18:58:47,655 [INFO] ppo_trainer:   Recent Loss: 2.0170 ± 0.0927
+2025-08-30 18:58:47,656 [INFO] ppo_trainer:   Recent Accuracy: 0.323 ± 0.048
+2025-08-30 18:58:47,656 [INFO] ppo_trainer:   Real Confidence: 0.445 ± 0.016
+2025-08-30 18:58:47,656 [INFO] ppo_trainer:   Fake Confidence: 0.294 ± 0.049
+2025-08-30 18:58:47,656 [INFO] ppo_trainer:   Buffer: 288 real, 288 fake graphs
+2025-08-30 18:58:47,656 [INFO] ppo_trainer:   Adversarial Weight: 0.124
+2025-08-30 18:58:48,957 [INFO] ppo_trainer: Discriminator Performance (Episode 1344):
+2025-08-30 18:58:48,957 [INFO] ppo_trainer:   Recent Loss: 1.9303 ± 0.1300
+2025-08-30 18:58:48,958 [INFO] ppo_trainer:   Recent Accuracy: 0.352 ± 0.029
+2025-08-30 18:58:48,958 [INFO] ppo_trainer:   Real Confidence: 0.454 ± 0.010
+2025-08-30 18:58:48,958 [INFO] ppo_trainer:   Fake Confidence: 0.327 ± 0.033
+2025-08-30 18:58:48,958 [INFO] ppo_trainer:   Buffer: 320 real, 320 fake graphs
+2025-08-30 18:58:48,958 [INFO] ppo_trainer:   Adversarial Weight: 0.137
+2025-08-30 18:58:50,152 [INFO] ppo_trainer: Discriminator Performance (Episode 1376):
+2025-08-30 18:58:50,152 [INFO] ppo_trainer:   Recent Loss: 1.8764 ± 0.1016
+2025-08-30 18:58:50,153 [INFO] ppo_trainer:   Recent Accuracy: 0.356 ± 0.033
+2025-08-30 18:58:50,153 [INFO] ppo_trainer:   Real Confidence: 0.454 ± 0.010
+2025-08-30 18:58:50,153 [INFO] ppo_trainer:   Fake Confidence: 0.347 ± 0.023
+2025-08-30 18:58:50,153 [INFO] ppo_trainer:   Buffer: 352 real, 352 fake graphs
+2025-08-30 18:58:50,153 [INFO] ppo_trainer:   Adversarial Weight: 0.150
+2025-08-30 18:58:51,415 [INFO] ppo_trainer: Discriminator Performance (Episode 1408):
+2025-08-30 18:58:51,415 [INFO] ppo_trainer:   Recent Loss: 1.8949 ± 0.1151
+2025-08-30 18:58:51,415 [INFO] ppo_trainer:   Recent Accuracy: 0.352 ± 0.035
+2025-08-30 18:58:51,416 [INFO] ppo_trainer:   Real Confidence: 0.452 ± 0.012
+2025-08-30 18:58:51,416 [INFO] ppo_trainer:   Fake Confidence: 0.334 ± 0.036
+2025-08-30 18:58:51,416 [INFO] ppo_trainer:   Buffer: 384 real, 384 fake graphs
+2025-08-30 18:58:51,416 [INFO] ppo_trainer:   Adversarial Weight: 0.163
+2025-08-30 18:58:52,729 [INFO] ppo_trainer: Discriminator Performance (Episode 1440):
+2025-08-30 18:58:52,730 [INFO] ppo_trainer:   Recent Loss: 1.8494 ± 0.1409
+2025-08-30 18:58:52,730 [INFO] ppo_trainer:   Recent Accuracy: 0.369 ± 0.023
+2025-08-30 18:58:52,730 [INFO] ppo_trainer:   Real Confidence: 0.453 ± 0.010
+2025-08-30 18:58:52,730 [INFO] ppo_trainer:   Fake Confidence: 0.340 ± 0.035
+2025-08-30 18:58:52,730 [INFO] ppo_trainer:   Buffer: 416 real, 416 fake graphs
+2025-08-30 18:58:52,730 [INFO] ppo_trainer:   Adversarial Weight: 0.176
+2025-08-30 18:58:54,391 [INFO] ppo_trainer: Discriminator Performance (Episode 1472):
+2025-08-30 18:58:54,391 [INFO] ppo_trainer:   Recent Loss: 1.7682 ± 0.1412
+2025-08-30 18:58:54,391 [INFO] ppo_trainer:   Recent Accuracy: 0.367 ± 0.024
+2025-08-30 18:58:54,392 [INFO] ppo_trainer:   Real Confidence: 0.446 ± 0.015
+2025-08-30 18:58:54,392 [INFO] ppo_trainer:   Fake Confidence: 0.350 ± 0.037
+2025-08-30 18:58:54,392 [INFO] ppo_trainer:   Buffer: 448 real, 448 fake graphs
+2025-08-30 18:58:54,392 [INFO] ppo_trainer:   Adversarial Weight: 0.188
+2025-08-30 18:58:55,747 [INFO] ppo_trainer: Discriminator Performance (Episode 1504):
+2025-08-30 18:58:55,748 [INFO] ppo_trainer:   Recent Loss: 1.7215 ± 0.1850
+2025-08-30 18:58:55,748 [INFO] ppo_trainer:   Recent Accuracy: 0.367 ± 0.024
+2025-08-30 18:58:55,748 [INFO] ppo_trainer:   Real Confidence: 0.448 ± 0.018
+2025-08-30 18:58:55,748 [INFO] ppo_trainer:   Fake Confidence: 0.355 ± 0.041
+2025-08-30 18:58:55,748 [INFO] ppo_trainer:   Buffer: 480 real, 480 fake graphs
+2025-08-30 18:58:55,748 [INFO] ppo_trainer:   Adversarial Weight: 0.201
+2025-08-30 18:58:57,082 [INFO] ppo_trainer: Discriminator Performance (Episode 1536):
+2025-08-30 18:58:57,082 [INFO] ppo_trainer:   Recent Loss: 1.6409 ± 0.2068
+2025-08-30 18:58:57,083 [INFO] ppo_trainer:   Recent Accuracy: 0.369 ± 0.025
+2025-08-30 18:58:57,083 [INFO] ppo_trainer:   Real Confidence: 0.447 ± 0.017
+2025-08-30 18:58:57,083 [INFO] ppo_trainer:   Fake Confidence: 0.361 ± 0.046
+2025-08-30 18:58:57,083 [INFO] ppo_trainer:   Buffer: 512 real, 512 fake graphs
+2025-08-30 18:58:57,083 [INFO] ppo_trainer:   Adversarial Weight: 0.214
+2025-08-30 18:58:58,207 [INFO] ppo_trainer: Discriminator Performance (Episode 1568):
+2025-08-30 18:58:58,207 [INFO] ppo_trainer:   Recent Loss: 1.5544 ± 0.0927
+2025-08-30 18:58:58,207 [INFO] ppo_trainer:   Recent Accuracy: 0.377 ± 0.016
+2025-08-30 18:58:58,208 [INFO] ppo_trainer:   Real Confidence: 0.450 ± 0.017
+2025-08-30 18:58:58,208 [INFO] ppo_trainer:   Fake Confidence: 0.385 ± 0.020
+2025-08-30 18:58:58,208 [INFO] ppo_trainer:   Buffer: 544 real, 544 fake graphs
+2025-08-30 18:58:58,208 [INFO] ppo_trainer:   Adversarial Weight: 0.227
+2025-08-30 18:59:01,289 [INFO] ppo_trainer: Discriminator Performance (Episode 1600):
+2025-08-30 18:59:01,290 [INFO] ppo_trainer:   Recent Loss: 1.5315 ± 0.0683
+2025-08-30 18:59:01,290 [INFO] ppo_trainer:   Recent Accuracy: 0.373 ± 0.016
+2025-08-30 18:59:01,290 [INFO] ppo_trainer:   Real Confidence: 0.454 ± 0.017
+2025-08-30 18:59:01,290 [INFO] ppo_trainer:   Fake Confidence: 0.394 ± 0.009
+2025-08-30 18:59:01,291 [INFO] ppo_trainer:   Buffer: 576 real, 576 fake graphs
+2025-08-30 18:59:01,291 [INFO] ppo_trainer:   Adversarial Weight: 0.240
+2025-08-30 18:59:01,291 [INFO] ppo_trainer: Curriculum: Stage 2, Coverage 59.0%
+2025-08-30 18:59:01,294 [INFO] ppo_trainer: Episode 1600 | Reward:  3.177±1.884 | Hub Δ:  0.479±0.266 | Success: 78.1% | Buffer: 0 | approx_kl: 0.0005 | clip_frac: 0.000 | entropy_coef: 0.0400 | Disc: acc=0.367, adv_w=0.240
+2025-08-30 18:59:04,050 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 11.9%, 3: 0.0%, 4: 0.0%, 5: 88.1%, 6: 0.0%
+2025-08-30 18:59:04,050 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 3.766±1.262 | Hub Δ: 0.475±0.217 | Success: 78.0%
+2025-08-30 18:59:05,616 [INFO] ppo_trainer: Discriminator Performance (Episode 1632):
+2025-08-30 18:59:05,616 [INFO] ppo_trainer:   Recent Loss: 1.5275 ± 0.0644
+2025-08-30 18:59:05,616 [INFO] ppo_trainer:   Recent Accuracy: 0.373 ± 0.016
+2025-08-30 18:59:05,616 [INFO] ppo_trainer:   Real Confidence: 0.457 ± 0.010
+2025-08-30 18:59:05,617 [INFO] ppo_trainer:   Fake Confidence: 0.398 ± 0.004
+2025-08-30 18:59:05,617 [INFO] ppo_trainer:   Buffer: 608 real, 608 fake graphs
+2025-08-30 18:59:05,617 [INFO] ppo_trainer:   Adversarial Weight: 0.252
+2025-08-30 18:59:07,086 [INFO] ppo_trainer: Discriminator Performance (Episode 1664):
+2025-08-30 18:59:07,087 [INFO] ppo_trainer:   Recent Loss: 1.5534 ± 0.0642
+2025-08-30 18:59:07,087 [INFO] ppo_trainer:   Recent Accuracy: 0.380 ± 0.023
+2025-08-30 18:59:07,087 [INFO] ppo_trainer:   Real Confidence: 0.453 ± 0.007
+2025-08-30 18:59:07,087 [INFO] ppo_trainer:   Fake Confidence: 0.396 ± 0.006
+2025-08-30 18:59:07,087 [INFO] ppo_trainer:   Buffer: 640 real, 640 fake graphs
+2025-08-30 18:59:07,087 [INFO] ppo_trainer:   Adversarial Weight: 0.265
+2025-08-30 18:59:08,583 [INFO] ppo_trainer: Discriminator Performance (Episode 1696):
+2025-08-30 18:59:08,584 [INFO] ppo_trainer:   Recent Loss: 1.6043 ± 0.0402
+2025-08-30 18:59:08,584 [INFO] ppo_trainer:   Recent Accuracy: 0.373 ± 0.021
+2025-08-30 18:59:08,584 [INFO] ppo_trainer:   Real Confidence: 0.453 ± 0.007
+2025-08-30 18:59:08,584 [INFO] ppo_trainer:   Fake Confidence: 0.387 ± 0.015
+2025-08-30 18:59:08,584 [INFO] ppo_trainer:   Buffer: 672 real, 672 fake graphs
+2025-08-30 18:59:08,584 [INFO] ppo_trainer:   Adversarial Weight: 0.278
+2025-08-30 18:59:09,961 [INFO] ppo_trainer: Discriminator Performance (Episode 1728):
+2025-08-30 18:59:09,961 [INFO] ppo_trainer:   Recent Loss: 1.5913 ± 0.0545
+2025-08-30 18:59:09,961 [INFO] ppo_trainer:   Recent Accuracy: 0.369 ± 0.024
+2025-08-30 18:59:09,961 [INFO] ppo_trainer:   Real Confidence: 0.450 ± 0.007
+2025-08-30 18:59:09,961 [INFO] ppo_trainer:   Fake Confidence: 0.379 ± 0.017
+2025-08-30 18:59:09,962 [INFO] ppo_trainer:   Buffer: 704 real, 704 fake graphs
+2025-08-30 18:59:09,962 [INFO] ppo_trainer:   Adversarial Weight: 0.291
+2025-08-30 18:59:11,522 [INFO] ppo_trainer: Discriminator Performance (Episode 1760):
+2025-08-30 18:59:11,523 [INFO] ppo_trainer:   Recent Loss: 1.5242 ± 0.1536
+2025-08-30 18:59:11,523 [INFO] ppo_trainer:   Recent Accuracy: 0.383 ± 0.037
+2025-08-30 18:59:11,523 [INFO] ppo_trainer:   Real Confidence: 0.452 ± 0.012
+2025-08-30 18:59:11,523 [INFO] ppo_trainer:   Fake Confidence: 0.394 ± 0.040
+2025-08-30 18:59:11,523 [INFO] ppo_trainer:   Buffer: 736 real, 736 fake graphs
+2025-08-30 18:59:11,523 [INFO] ppo_trainer:   Adversarial Weight: 0.304
+2025-08-30 18:59:12,525 [INFO] ppo_trainer: Discriminator Performance (Episode 1792):
+2025-08-30 18:59:12,526 [INFO] ppo_trainer:   Recent Loss: 1.4977 ± 0.1522
+2025-08-30 18:59:12,526 [INFO] ppo_trainer:   Recent Accuracy: 0.388 ± 0.034
+2025-08-30 18:59:12,526 [INFO] ppo_trainer:   Real Confidence: 0.453 ± 0.011
+2025-08-30 18:59:12,526 [INFO] ppo_trainer:   Fake Confidence: 0.395 ± 0.040
+2025-08-30 18:59:12,526 [INFO] ppo_trainer:   Buffer: 768 real, 768 fake graphs
+2025-08-30 18:59:12,526 [INFO] ppo_trainer:   Adversarial Weight: 0.316
+2025-08-30 18:59:15,909 [INFO] ppo_trainer: Discriminator Performance (Episode 1824):
+2025-08-30 18:59:15,909 [INFO] ppo_trainer:   Recent Loss: 1.4416 ± 0.1541
+2025-08-30 18:59:15,909 [INFO] ppo_trainer:   Recent Accuracy: 0.394 ± 0.040
+2025-08-30 18:59:15,909 [INFO] ppo_trainer:   Real Confidence: 0.458 ± 0.014
+2025-08-30 18:59:15,910 [INFO] ppo_trainer:   Fake Confidence: 0.415 ± 0.053
+2025-08-30 18:59:15,910 [INFO] ppo_trainer:   Buffer: 800 real, 800 fake graphs
+2025-08-30 18:59:15,910 [INFO] ppo_trainer:   Adversarial Weight: 0.329
+2025-08-30 18:59:18,057 [INFO] ppo_trainer: Discriminator Performance (Episode 1856):
+2025-08-30 18:59:18,057 [INFO] ppo_trainer:   Recent Loss: 1.4207 ± 0.1243
+2025-08-30 18:59:18,057 [INFO] ppo_trainer:   Recent Accuracy: 0.395 ± 0.039
+2025-08-30 18:59:18,057 [INFO] ppo_trainer:   Real Confidence: 0.457 ± 0.015
+2025-08-30 18:59:18,057 [INFO] ppo_trainer:   Fake Confidence: 0.423 ± 0.046
+2025-08-30 18:59:18,058 [INFO] ppo_trainer:   Buffer: 832 real, 832 fake graphs
+2025-08-30 18:59:18,058 [INFO] ppo_trainer:   Adversarial Weight: 0.342
+2025-08-30 18:59:20,382 [INFO] ppo_trainer: Discriminator Performance (Episode 1888):
+2025-08-30 18:59:20,382 [INFO] ppo_trainer:   Recent Loss: 1.3782 ± 0.1217
+2025-08-30 18:59:20,382 [INFO] ppo_trainer:   Recent Accuracy: 0.405 ± 0.031
+2025-08-30 18:59:20,383 [INFO] ppo_trainer:   Real Confidence: 0.459 ± 0.013
+2025-08-30 18:59:20,383 [INFO] ppo_trainer:   Fake Confidence: 0.431 ± 0.037
+2025-08-30 18:59:20,383 [INFO] ppo_trainer:   Buffer: 864 real, 864 fake graphs
+2025-08-30 18:59:20,383 [INFO] ppo_trainer:   Adversarial Weight: 0.355
+2025-08-30 18:59:22,564 [INFO] ppo_trainer: Discriminator Performance (Episode 1920):
+2025-08-30 18:59:22,564 [INFO] ppo_trainer:   Recent Loss: 1.3733 ± 0.1276
+2025-08-30 18:59:22,565 [INFO] ppo_trainer:   Recent Accuracy: 0.409 ± 0.037
+2025-08-30 18:59:22,565 [INFO] ppo_trainer:   Real Confidence: 0.468 ± 0.028
+2025-08-30 18:59:22,565 [INFO] ppo_trainer:   Fake Confidence: 0.423 ± 0.032
+2025-08-30 18:59:22,565 [INFO] ppo_trainer:   Buffer: 896 real, 896 fake graphs
+2025-08-30 18:59:22,565 [INFO] ppo_trainer:   Adversarial Weight: 0.368
+2025-08-30 18:59:25,316 [INFO] ppo_trainer: Discriminator Performance (Episode 1952):
+2025-08-30 18:59:25,317 [INFO] ppo_trainer:   Recent Loss: 1.4031 ± 0.1567
+2025-08-30 18:59:25,317 [INFO] ppo_trainer:   Recent Accuracy: 0.417 ± 0.032
+2025-08-30 18:59:25,317 [INFO] ppo_trainer:   Real Confidence: 0.463 ± 0.033
+2025-08-30 18:59:25,317 [INFO] ppo_trainer:   Fake Confidence: 0.428 ± 0.031
+2025-08-30 18:59:25,317 [INFO] ppo_trainer:   Buffer: 928 real, 928 fake graphs
+2025-08-30 18:59:25,317 [INFO] ppo_trainer:   Adversarial Weight: 0.380
+2025-08-30 18:59:27,441 [INFO] ppo_trainer: Discriminator Performance (Episode 1984):
+2025-08-30 18:59:27,441 [INFO] ppo_trainer:   Recent Loss: 1.3814 ± 0.1727
+2025-08-30 18:59:27,441 [INFO] ppo_trainer:   Recent Accuracy: 0.423 ± 0.039
+2025-08-30 18:59:27,441 [INFO] ppo_trainer:   Real Confidence: 0.460 ± 0.033
+2025-08-30 18:59:27,442 [INFO] ppo_trainer:   Fake Confidence: 0.427 ± 0.029
+2025-08-30 18:59:27,442 [INFO] ppo_trainer:   Buffer: 960 real, 960 fake graphs
+2025-08-30 18:59:27,442 [INFO] ppo_trainer:   Adversarial Weight: 0.393
+2025-08-30 18:59:28,896 [INFO] ppo_trainer: Discriminator Performance (Episode 2016):
+2025-08-30 18:59:28,896 [INFO] ppo_trainer:   Recent Loss: 1.3043 ± 0.1532
+2025-08-30 18:59:28,897 [INFO] ppo_trainer:   Recent Accuracy: 0.438 ± 0.031
+2025-08-30 18:59:28,897 [INFO] ppo_trainer:   Real Confidence: 0.467 ± 0.033
+2025-08-30 18:59:28,897 [INFO] ppo_trainer:   Fake Confidence: 0.444 ± 0.033
+2025-08-30 18:59:28,897 [INFO] ppo_trainer:   Buffer: 992 real, 992 fake graphs
+2025-08-30 18:59:28,897 [INFO] ppo_trainer:   Adversarial Weight: 0.406
+2025-08-30 18:59:30,948 [INFO] ppo_trainer: Discriminator Performance (Episode 2048):
+2025-08-30 18:59:30,949 [INFO] ppo_trainer:   Recent Loss: 1.3252 ± 0.1584
+2025-08-30 18:59:30,949 [INFO] ppo_trainer:   Recent Accuracy: 0.433 ± 0.039
+2025-08-30 18:59:30,949 [INFO] ppo_trainer:   Real Confidence: 0.473 ± 0.032
+2025-08-30 18:59:30,949 [INFO] ppo_trainer:   Fake Confidence: 0.440 ± 0.038
+2025-08-30 18:59:30,949 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:30,949 [INFO] ppo_trainer:   Adversarial Weight: 0.419
+2025-08-30 18:59:33,556 [INFO] ppo_trainer: Discriminator Performance (Episode 2080):
+2025-08-30 18:59:33,557 [INFO] ppo_trainer:   Recent Loss: 1.2898 ± 0.1951
+2025-08-30 18:59:33,557 [INFO] ppo_trainer:   Recent Accuracy: 0.428 ± 0.036
+2025-08-30 18:59:33,557 [INFO] ppo_trainer:   Real Confidence: 0.469 ± 0.027
+2025-08-30 18:59:33,557 [INFO] ppo_trainer:   Fake Confidence: 0.457 ± 0.046
+2025-08-30 18:59:33,557 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:33,557 [INFO] ppo_trainer:   Adversarial Weight: 0.432
+2025-08-30 18:59:35,381 [INFO] ppo_trainer: Discriminator Performance (Episode 2112):
+2025-08-30 18:59:35,381 [INFO] ppo_trainer:   Recent Loss: 1.1690 ± 0.1455
+2025-08-30 18:59:35,382 [INFO] ppo_trainer:   Recent Accuracy: 0.434 ± 0.036
+2025-08-30 18:59:35,382 [INFO] ppo_trainer:   Real Confidence: 0.486 ± 0.015
+2025-08-30 18:59:35,382 [INFO] ppo_trainer:   Fake Confidence: 0.469 ± 0.045
+2025-08-30 18:59:35,382 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:35,382 [INFO] ppo_trainer:   Adversarial Weight: 0.444
+2025-08-30 18:59:37,854 [INFO] ppo_trainer: Discriminator Performance (Episode 2144):
+2025-08-30 18:59:37,855 [INFO] ppo_trainer:   Recent Loss: 1.1550 ± 0.1436
+2025-08-30 18:59:37,855 [INFO] ppo_trainer:   Recent Accuracy: 0.430 ± 0.032
+2025-08-30 18:59:37,855 [INFO] ppo_trainer:   Real Confidence: 0.491 ± 0.009
+2025-08-30 18:59:37,855 [INFO] ppo_trainer:   Fake Confidence: 0.473 ± 0.046
+2025-08-30 18:59:37,856 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:37,856 [INFO] ppo_trainer:   Adversarial Weight: 0.457
+2025-08-30 18:59:40,034 [INFO] ppo_trainer: Discriminator Performance (Episode 2176):
+2025-08-30 18:59:40,035 [INFO] ppo_trainer:   Recent Loss: 1.1221 ± 0.1503
+2025-08-30 18:59:40,035 [INFO] ppo_trainer:   Recent Accuracy: 0.431 ± 0.033
+2025-08-30 18:59:40,035 [INFO] ppo_trainer:   Real Confidence: 0.499 ± 0.012
+2025-08-30 18:59:40,035 [INFO] ppo_trainer:   Fake Confidence: 0.471 ± 0.046
+2025-08-30 18:59:40,035 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:40,035 [INFO] ppo_trainer:   Adversarial Weight: 0.470
+2025-08-30 18:59:41,455 [INFO] ppo_trainer: Discriminator Performance (Episode 2208):
+2025-08-30 18:59:41,455 [INFO] ppo_trainer:   Recent Loss: 1.0693 ± 0.0621
+2025-08-30 18:59:41,456 [INFO] ppo_trainer:   Recent Accuracy: 0.456 ± 0.019
+2025-08-30 18:59:41,456 [INFO] ppo_trainer:   Real Confidence: 0.501 ± 0.010
+2025-08-30 18:59:41,456 [INFO] ppo_trainer:   Fake Confidence: 0.495 ± 0.012
+2025-08-30 18:59:41,456 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:41,456 [INFO] ppo_trainer:   Adversarial Weight: 0.483
+2025-08-30 18:59:43,811 [INFO] ppo_trainer: Discriminator Performance (Episode 2240):
+2025-08-30 18:59:43,811 [INFO] ppo_trainer:   Recent Loss: 1.0207 ± 0.1290
+2025-08-30 18:59:43,811 [INFO] ppo_trainer:   Recent Accuracy: 0.491 ± 0.062
+2025-08-30 18:59:43,812 [INFO] ppo_trainer:   Real Confidence: 0.512 ± 0.022
+2025-08-30 18:59:43,812 [INFO] ppo_trainer:   Fake Confidence: 0.512 ± 0.041
+2025-08-30 18:59:43,812 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:43,812 [INFO] ppo_trainer:   Adversarial Weight: 0.496
+2025-08-30 18:59:46,856 [INFO] ppo_trainer: Discriminator Performance (Episode 2272):
+2025-08-30 18:59:46,856 [INFO] ppo_trainer:   Recent Loss: 1.0055 ± 0.1352
+2025-08-30 18:59:46,857 [INFO] ppo_trainer:   Recent Accuracy: 0.497 ± 0.058
+2025-08-30 18:59:46,857 [INFO] ppo_trainer:   Real Confidence: 0.522 ± 0.027
+2025-08-30 18:59:46,857 [INFO] ppo_trainer:   Fake Confidence: 0.511 ± 0.042
+2025-08-30 18:59:46,857 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:46,857 [INFO] ppo_trainer:   Adversarial Weight: 0.508
+2025-08-30 18:59:48,457 [INFO] ppo_trainer: Discriminator Performance (Episode 2304):
+2025-08-30 18:59:48,457 [INFO] ppo_trainer:   Recent Loss: 0.9570 ± 0.1185
+2025-08-30 18:59:48,457 [INFO] ppo_trainer:   Recent Accuracy: 0.520 ± 0.059
+2025-08-30 18:59:48,458 [INFO] ppo_trainer:   Real Confidence: 0.532 ± 0.022
+2025-08-30 18:59:48,458 [INFO] ppo_trainer:   Fake Confidence: 0.521 ± 0.043
+2025-08-30 18:59:48,458 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:48,458 [INFO] ppo_trainer:   Adversarial Weight: 0.521
+2025-08-30 18:59:50,224 [INFO] ppo_trainer: Discriminator Performance (Episode 2336):
+2025-08-30 18:59:50,225 [INFO] ppo_trainer:   Recent Loss: 0.9533 ± 0.1166
+2025-08-30 18:59:50,225 [INFO] ppo_trainer:   Recent Accuracy: 0.523 ± 0.056
+2025-08-30 18:59:50,225 [INFO] ppo_trainer:   Real Confidence: 0.526 ± 0.028
+2025-08-30 18:59:50,225 [INFO] ppo_trainer:   Fake Confidence: 0.530 ± 0.037
+2025-08-30 18:59:50,225 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:50,225 [INFO] ppo_trainer:   Adversarial Weight: 0.534
+2025-08-30 18:59:51,987 [INFO] ppo_trainer: Discriminator Performance (Episode 2368):
+2025-08-30 18:59:51,988 [INFO] ppo_trainer:   Recent Loss: 0.9155 ± 0.0712
+2025-08-30 18:59:51,988 [INFO] ppo_trainer:   Recent Accuracy: 0.519 ± 0.059
+2025-08-30 18:59:51,988 [INFO] ppo_trainer:   Real Confidence: 0.530 ± 0.025
+2025-08-30 18:59:51,988 [INFO] ppo_trainer:   Fake Confidence: 0.527 ± 0.039
+2025-08-30 18:59:51,988 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:51,988 [INFO] ppo_trainer:   Adversarial Weight: 0.547
+2025-08-30 18:59:54,055 [INFO] ppo_trainer: Discriminator Performance (Episode 2400):
+2025-08-30 18:59:54,055 [INFO] ppo_trainer:   Recent Loss: 0.9277 ± 0.0515
+2025-08-30 18:59:54,055 [INFO] ppo_trainer:   Recent Accuracy: 0.509 ± 0.047
+2025-08-30 18:59:54,056 [INFO] ppo_trainer:   Real Confidence: 0.524 ± 0.023
+2025-08-30 18:59:54,056 [INFO] ppo_trainer:   Fake Confidence: 0.523 ± 0.032
+2025-08-30 18:59:54,056 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:54,056 [INFO] ppo_trainer:   Adversarial Weight: 0.560
+2025-08-30 18:59:54,056 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 74.7%
+2025-08-30 18:59:54,059 [INFO] ppo_trainer: Episode 2400 | Reward:  3.120±1.397 | Hub Δ:  0.419±0.250 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0001 | clip_frac: 0.000 | entropy_coef: 0.0300 | Disc: acc=0.562, adv_w=0.560
+2025-08-30 18:59:56,064 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 16.1%, 3: 0.0%, 4: 0.0%, 5: 83.9%, 6: 0.0%
+2025-08-30 18:59:56,064 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 3.688±1.308 | Hub Δ: 0.478±0.216 | Success: 78.0%
+2025-08-30 18:59:57,160 [INFO] ppo_trainer: Discriminator Performance (Episode 2432):
+2025-08-30 18:59:57,161 [INFO] ppo_trainer:   Recent Loss: 0.9389 ± 0.0550
+2025-08-30 18:59:57,161 [INFO] ppo_trainer:   Recent Accuracy: 0.498 ± 0.058
+2025-08-30 18:59:57,161 [INFO] ppo_trainer:   Real Confidence: 0.512 ± 0.019
+2025-08-30 18:59:57,161 [INFO] ppo_trainer:   Fake Confidence: 0.521 ± 0.033
+2025-08-30 18:59:57,161 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 18:59:57,161 [INFO] ppo_trainer:   Adversarial Weight: 0.572
+2025-08-30 19:00:00,852 [INFO] ppo_trainer: Discriminator Performance (Episode 2464):
+2025-08-30 19:00:00,852 [INFO] ppo_trainer:   Recent Loss: 0.9350 ± 0.0580
+2025-08-30 19:00:00,853 [INFO] ppo_trainer:   Recent Accuracy: 0.484 ± 0.046
+2025-08-30 19:00:00,853 [INFO] ppo_trainer:   Real Confidence: 0.508 ± 0.014
+2025-08-30 19:00:00,853 [INFO] ppo_trainer:   Fake Confidence: 0.519 ± 0.032
+2025-08-30 19:00:00,853 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:00,853 [INFO] ppo_trainer:   Adversarial Weight: 0.585
+2025-08-30 19:00:03,009 [INFO] ppo_trainer: Discriminator Performance (Episode 2496):
+2025-08-30 19:00:03,009 [INFO] ppo_trainer:   Recent Loss: 0.9161 ± 0.0452
+2025-08-30 19:00:03,009 [INFO] ppo_trainer:   Recent Accuracy: 0.486 ± 0.046
+2025-08-30 19:00:03,010 [INFO] ppo_trainer:   Real Confidence: 0.513 ± 0.010
+2025-08-30 19:00:03,010 [INFO] ppo_trainer:   Fake Confidence: 0.523 ± 0.032
+2025-08-30 19:00:03,010 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:03,010 [INFO] ppo_trainer:   Adversarial Weight: 0.598
+2025-08-30 19:00:05,589 [INFO] ppo_trainer: Discriminator Performance (Episode 2528):
+2025-08-30 19:00:05,589 [INFO] ppo_trainer:   Recent Loss: 0.9033 ± 0.0419
+2025-08-30 19:00:05,589 [INFO] ppo_trainer:   Recent Accuracy: 0.495 ± 0.046
+2025-08-30 19:00:05,589 [INFO] ppo_trainer:   Real Confidence: 0.518 ± 0.016
+2025-08-30 19:00:05,589 [INFO] ppo_trainer:   Fake Confidence: 0.529 ± 0.029
+2025-08-30 19:00:05,589 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:05,589 [INFO] ppo_trainer:   Adversarial Weight: 0.611
+2025-08-30 19:00:07,257 [INFO] ppo_trainer: Discriminator Performance (Episode 2560):
+2025-08-30 19:00:07,257 [INFO] ppo_trainer:   Recent Loss: 0.9154 ± 0.0334
+2025-08-30 19:00:07,257 [INFO] ppo_trainer:   Recent Accuracy: 0.473 ± 0.033
+2025-08-30 19:00:07,257 [INFO] ppo_trainer:   Real Confidence: 0.512 ± 0.019
+2025-08-30 19:00:07,257 [INFO] ppo_trainer:   Fake Confidence: 0.513 ± 0.024
+2025-08-30 19:00:07,258 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:07,258 [INFO] ppo_trainer:   Adversarial Weight: 0.624
+2025-08-30 19:00:08,564 [INFO] ppo_trainer: Discriminator Performance (Episode 2592):
+2025-08-30 19:00:08,564 [INFO] ppo_trainer:   Recent Loss: 0.8778 ± 0.0458
+2025-08-30 19:00:08,565 [INFO] ppo_trainer:   Recent Accuracy: 0.494 ± 0.026
+2025-08-30 19:00:08,565 [INFO] ppo_trainer:   Real Confidence: 0.524 ± 0.023
+2025-08-30 19:00:08,565 [INFO] ppo_trainer:   Fake Confidence: 0.523 ± 0.017
+2025-08-30 19:00:08,565 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:08,565 [INFO] ppo_trainer:   Adversarial Weight: 0.636
+2025-08-30 19:00:09,864 [INFO] ppo_trainer: Discriminator Performance (Episode 2624):
+2025-08-30 19:00:09,864 [INFO] ppo_trainer:   Recent Loss: 0.8750 ± 0.0457
+2025-08-30 19:00:09,865 [INFO] ppo_trainer:   Recent Accuracy: 0.494 ± 0.026
+2025-08-30 19:00:09,865 [INFO] ppo_trainer:   Real Confidence: 0.524 ± 0.023
+2025-08-30 19:00:09,865 [INFO] ppo_trainer:   Fake Confidence: 0.522 ± 0.016
+2025-08-30 19:00:09,865 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:09,865 [INFO] ppo_trainer:   Adversarial Weight: 0.649
+2025-08-30 19:00:12,225 [INFO] ppo_trainer: Discriminator Performance (Episode 2656):
+2025-08-30 19:00:12,225 [INFO] ppo_trainer:   Recent Loss: 0.8828 ± 0.0542
+2025-08-30 19:00:12,225 [INFO] ppo_trainer:   Recent Accuracy: 0.500 ± 0.025
+2025-08-30 19:00:12,225 [INFO] ppo_trainer:   Real Confidence: 0.527 ± 0.022
+2025-08-30 19:00:12,226 [INFO] ppo_trainer:   Fake Confidence: 0.518 ± 0.016
+2025-08-30 19:00:12,226 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:12,226 [INFO] ppo_trainer:   Adversarial Weight: 0.662
+2025-08-30 19:00:14,409 [INFO] ppo_trainer: Discriminator Performance (Episode 2688):
+2025-08-30 19:00:14,409 [INFO] ppo_trainer:   Recent Loss: 0.8455 ± 0.0899
+2025-08-30 19:00:14,409 [INFO] ppo_trainer:   Recent Accuracy: 0.505 ± 0.029
+2025-08-30 19:00:14,409 [INFO] ppo_trainer:   Real Confidence: 0.531 ± 0.026
+2025-08-30 19:00:14,410 [INFO] ppo_trainer:   Fake Confidence: 0.529 ± 0.030
+2025-08-30 19:00:14,410 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:14,410 [INFO] ppo_trainer:   Adversarial Weight: 0.675
+2025-08-30 19:00:16,565 [INFO] ppo_trainer: Discriminator Performance (Episode 2720):
+2025-08-30 19:00:16,565 [INFO] ppo_trainer:   Recent Loss: 0.8321 ± 0.0836
+2025-08-30 19:00:16,566 [INFO] ppo_trainer:   Recent Accuracy: 0.519 ± 0.014
+2025-08-30 19:00:16,566 [INFO] ppo_trainer:   Real Confidence: 0.535 ± 0.020
+2025-08-30 19:00:16,566 [INFO] ppo_trainer:   Fake Confidence: 0.544 ± 0.025
+2025-08-30 19:00:16,566 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:16,566 [INFO] ppo_trainer:   Adversarial Weight: 0.688
+2025-08-30 19:00:19,114 [INFO] ppo_trainer: Discriminator Performance (Episode 2752):
+2025-08-30 19:00:19,115 [INFO] ppo_trainer:   Recent Loss: 0.8312 ± 0.0840
+2025-08-30 19:00:19,115 [INFO] ppo_trainer:   Recent Accuracy: 0.514 ± 0.015
+2025-08-30 19:00:19,115 [INFO] ppo_trainer:   Real Confidence: 0.534 ± 0.018
+2025-08-30 19:00:19,115 [INFO] ppo_trainer:   Fake Confidence: 0.544 ± 0.025
+2025-08-30 19:00:19,115 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:19,115 [INFO] ppo_trainer:   Adversarial Weight: 0.700
+2025-08-30 19:00:20,818 [INFO] ppo_trainer: Discriminator Performance (Episode 2784):
+2025-08-30 19:00:20,818 [INFO] ppo_trainer:   Recent Loss: 0.8157 ± 0.0826
+2025-08-30 19:00:20,818 [INFO] ppo_trainer:   Recent Accuracy: 0.514 ± 0.015
+2025-08-30 19:00:20,819 [INFO] ppo_trainer:   Real Confidence: 0.540 ± 0.017
+2025-08-30 19:00:20,819 [INFO] ppo_trainer:   Fake Confidence: 0.541 ± 0.027
+2025-08-30 19:00:20,819 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:20,819 [INFO] ppo_trainer:   Adversarial Weight: 0.713
+2025-08-30 19:00:23,323 [INFO] ppo_trainer: Discriminator Performance (Episode 2816):
+2025-08-30 19:00:23,324 [INFO] ppo_trainer:   Recent Loss: 0.7786 ± 0.0466
+2025-08-30 19:00:23,324 [INFO] ppo_trainer:   Recent Accuracy: 0.516 ± 0.015
+2025-08-30 19:00:23,324 [INFO] ppo_trainer:   Real Confidence: 0.546 ± 0.018
+2025-08-30 19:00:23,324 [INFO] ppo_trainer:   Fake Confidence: 0.544 ± 0.024
+2025-08-30 19:00:23,324 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:23,324 [INFO] ppo_trainer:   Adversarial Weight: 0.726
+2025-08-30 19:00:24,358 [INFO] ppo_trainer: Discriminator Performance (Episode 2848):
+2025-08-30 19:00:24,359 [INFO] ppo_trainer:   Recent Loss: 0.7993 ± 0.0267
+2025-08-30 19:00:24,359 [INFO] ppo_trainer:   Recent Accuracy: 0.508 ± 0.010
+2025-08-30 19:00:24,359 [INFO] ppo_trainer:   Real Confidence: 0.538 ± 0.018
+2025-08-30 19:00:24,359 [INFO] ppo_trainer:   Fake Confidence: 0.544 ± 0.023
+2025-08-30 19:00:24,359 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:24,359 [INFO] ppo_trainer:   Adversarial Weight: 0.739
+2025-08-30 19:00:25,538 [INFO] ppo_trainer: Discriminator Performance (Episode 2880):
+2025-08-30 19:00:25,539 [INFO] ppo_trainer:   Recent Loss: 0.7778 ± 0.0231
+2025-08-30 19:00:25,539 [INFO] ppo_trainer:   Recent Accuracy: 0.522 ± 0.036
+2025-08-30 19:00:25,539 [INFO] ppo_trainer:   Real Confidence: 0.546 ± 0.014
+2025-08-30 19:00:25,539 [INFO] ppo_trainer:   Fake Confidence: 0.545 ± 0.025
+2025-08-30 19:00:25,539 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:25,539 [INFO] ppo_trainer:   Adversarial Weight: 0.752
+2025-08-30 19:00:27,530 [INFO] ppo_trainer: Discriminator Performance (Episode 2912):
+2025-08-30 19:00:27,531 [INFO] ppo_trainer:   Recent Loss: 0.7719 ± 0.0243
+2025-08-30 19:00:27,531 [INFO] ppo_trainer:   Recent Accuracy: 0.525 ± 0.035
+2025-08-30 19:00:27,531 [INFO] ppo_trainer:   Real Confidence: 0.545 ± 0.014
+2025-08-30 19:00:27,531 [INFO] ppo_trainer:   Fake Confidence: 0.550 ± 0.023
+2025-08-30 19:00:27,531 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:27,531 [INFO] ppo_trainer:   Adversarial Weight: 0.764
+2025-08-30 19:00:28,464 [INFO] ppo_trainer: Discriminator Performance (Episode 2944):
+2025-08-30 19:00:28,464 [INFO] ppo_trainer:   Recent Loss: 0.7609 ± 0.0247
+2025-08-30 19:00:28,464 [INFO] ppo_trainer:   Recent Accuracy: 0.537 ± 0.035
+2025-08-30 19:00:28,464 [INFO] ppo_trainer:   Real Confidence: 0.546 ± 0.014
+2025-08-30 19:00:28,465 [INFO] ppo_trainer:   Fake Confidence: 0.559 ± 0.018
+2025-08-30 19:00:28,465 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:28,465 [INFO] ppo_trainer:   Adversarial Weight: 0.777
+2025-08-30 19:00:31,351 [INFO] ppo_trainer: Discriminator Performance (Episode 2976):
+2025-08-30 19:00:31,352 [INFO] ppo_trainer:   Recent Loss: 0.7714 ± 0.0342
+2025-08-30 19:00:31,352 [INFO] ppo_trainer:   Recent Accuracy: 0.531 ± 0.041
+2025-08-30 19:00:31,352 [INFO] ppo_trainer:   Real Confidence: 0.541 ± 0.012
+2025-08-30 19:00:31,352 [INFO] ppo_trainer:   Fake Confidence: 0.560 ± 0.016
+2025-08-30 19:00:31,352 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:31,352 [INFO] ppo_trainer:   Adversarial Weight: 0.790
+2025-08-30 19:00:33,777 [INFO] ppo_trainer: Discriminator Performance (Episode 3008):
+2025-08-30 19:00:33,778 [INFO] ppo_trainer:   Recent Loss: 0.7402 ± 0.0542
+2025-08-30 19:00:33,778 [INFO] ppo_trainer:   Recent Accuracy: 0.556 ± 0.051
+2025-08-30 19:00:33,778 [INFO] ppo_trainer:   Real Confidence: 0.552 ± 0.013
+2025-08-30 19:00:33,778 [INFO] ppo_trainer:   Fake Confidence: 0.570 ± 0.030
+2025-08-30 19:00:33,778 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:33,778 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:35,432 [INFO] ppo_trainer: Discriminator Performance (Episode 3040):
+2025-08-30 19:00:35,432 [INFO] ppo_trainer:   Recent Loss: 0.7489 ± 0.0567
+2025-08-30 19:00:35,433 [INFO] ppo_trainer:   Recent Accuracy: 0.539 ± 0.050
+2025-08-30 19:00:35,433 [INFO] ppo_trainer:   Real Confidence: 0.541 ± 0.026
+2025-08-30 19:00:35,433 [INFO] ppo_trainer:   Fake Confidence: 0.569 ± 0.030
+2025-08-30 19:00:35,433 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:35,433 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:38,206 [INFO] ppo_trainer: Discriminator Performance (Episode 3072):
+2025-08-30 19:00:38,207 [INFO] ppo_trainer:   Recent Loss: 0.7531 ± 0.0578
+2025-08-30 19:00:38,207 [INFO] ppo_trainer:   Recent Accuracy: 0.536 ± 0.052
+2025-08-30 19:00:38,208 [INFO] ppo_trainer:   Real Confidence: 0.534 ± 0.029
+2025-08-30 19:00:38,208 [INFO] ppo_trainer:   Fake Confidence: 0.571 ± 0.029
+2025-08-30 19:00:38,208 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:38,208 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:39,674 [INFO] ppo_trainer: Discriminator Performance (Episode 3104):
+2025-08-30 19:00:39,674 [INFO] ppo_trainer:   Recent Loss: 0.7592 ± 0.0575
+2025-08-30 19:00:39,674 [INFO] ppo_trainer:   Recent Accuracy: 0.531 ± 0.050
+2025-08-30 19:00:39,674 [INFO] ppo_trainer:   Real Confidence: 0.527 ± 0.028
+2025-08-30 19:00:39,675 [INFO] ppo_trainer:   Fake Confidence: 0.565 ± 0.032
+2025-08-30 19:00:39,675 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:39,675 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:42,451 [INFO] ppo_trainer: Discriminator Performance (Episode 3136):
+2025-08-30 19:00:42,452 [INFO] ppo_trainer:   Recent Loss: 0.7377 ± 0.0509
+2025-08-30 19:00:42,452 [INFO] ppo_trainer:   Recent Accuracy: 0.542 ± 0.044
+2025-08-30 19:00:42,452 [INFO] ppo_trainer:   Real Confidence: 0.527 ± 0.028
+2025-08-30 19:00:42,452 [INFO] ppo_trainer:   Fake Confidence: 0.574 ± 0.028
+2025-08-30 19:00:42,452 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:42,452 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:43,486 [INFO] ppo_trainer: Discriminator Performance (Episode 3168):
+2025-08-30 19:00:43,486 [INFO] ppo_trainer:   Recent Loss: 0.7455 ± 0.0383
+2025-08-30 19:00:43,486 [INFO] ppo_trainer:   Recent Accuracy: 0.525 ± 0.017
+2025-08-30 19:00:43,486 [INFO] ppo_trainer:   Real Confidence: 0.520 ± 0.016
+2025-08-30 19:00:43,487 [INFO] ppo_trainer:   Fake Confidence: 0.561 ± 0.014
+2025-08-30 19:00:43,487 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:43,487 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:46,326 [INFO] ppo_trainer: Discriminator Performance (Episode 3200):
+2025-08-30 19:00:46,326 [INFO] ppo_trainer:   Recent Loss: 0.7078 ± 0.0658
+2025-08-30 19:00:46,326 [INFO] ppo_trainer:   Recent Accuracy: 0.552 ± 0.047
+2025-08-30 19:00:46,327 [INFO] ppo_trainer:   Real Confidence: 0.544 ± 0.038
+2025-08-30 19:00:46,327 [INFO] ppo_trainer:   Fake Confidence: 0.566 ± 0.020
+2025-08-30 19:00:46,327 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:46,327 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:46,327 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 89.1%
+2025-08-30 19:00:46,330 [INFO] ppo_trainer: Episode 3200 | Reward:  3.130±1.763 | Hub Δ:  0.438±0.252 | Success: 71.9% | Buffer: 0 | approx_kl: 0.0238 | clip_frac: 0.058 | entropy_coef: 0.0200 | Disc: acc=0.641, adv_w=0.800
+2025-08-30 19:00:48,487 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 11.4%, 3: 0.0%, 4: 0.0%, 5: 88.6%, 6: 0.0%
+2025-08-30 19:00:48,488 [INFO] ppo_trainer: Evaluation at episode 3200: Reward: 3.857±1.309 | Hub Δ: 0.495±0.230 | Success: 80.0%
+2025-08-30 19:00:48,536 [INFO] ppo_trainer: Saved new best model at episode 3200
+2025-08-30 19:00:49,633 [INFO] ppo_trainer: Discriminator Performance (Episode 3232):
+2025-08-30 19:00:49,633 [INFO] ppo_trainer:   Recent Loss: 0.7012 ± 0.0599
+2025-08-30 19:00:49,633 [INFO] ppo_trainer:   Recent Accuracy: 0.558 ± 0.042
+2025-08-30 19:00:49,633 [INFO] ppo_trainer:   Real Confidence: 0.549 ± 0.035
+2025-08-30 19:00:49,633 [INFO] ppo_trainer:   Fake Confidence: 0.560 ± 0.024
+2025-08-30 19:00:49,634 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:49,634 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:50,979 [INFO] ppo_trainer: Discriminator Performance (Episode 3264):
+2025-08-30 19:00:50,979 [INFO] ppo_trainer:   Recent Loss: 0.6861 ± 0.0497
+2025-08-30 19:00:50,979 [INFO] ppo_trainer:   Recent Accuracy: 0.550 ± 0.048
+2025-08-30 19:00:50,979 [INFO] ppo_trainer:   Real Confidence: 0.555 ± 0.031
+2025-08-30 19:00:50,979 [INFO] ppo_trainer:   Fake Confidence: 0.564 ± 0.022
+2025-08-30 19:00:50,979 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:50,980 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:52,506 [INFO] ppo_trainer: Discriminator Performance (Episode 3296):
+2025-08-30 19:00:52,506 [INFO] ppo_trainer:   Recent Loss: 0.6620 ± 0.0598
+2025-08-30 19:00:52,506 [INFO] ppo_trainer:   Recent Accuracy: 0.567 ± 0.055
+2025-08-30 19:00:52,506 [INFO] ppo_trainer:   Real Confidence: 0.565 ± 0.033
+2025-08-30 19:00:52,506 [INFO] ppo_trainer:   Fake Confidence: 0.571 ± 0.030
+2025-08-30 19:00:52,507 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:52,507 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:54,818 [INFO] ppo_trainer: Discriminator Performance (Episode 3328):
+2025-08-30 19:00:54,818 [INFO] ppo_trainer:   Recent Loss: 0.6704 ± 0.0656
+2025-08-30 19:00:54,818 [INFO] ppo_trainer:   Recent Accuracy: 0.562 ± 0.058
+2025-08-30 19:00:54,819 [INFO] ppo_trainer:   Real Confidence: 0.566 ± 0.032
+2025-08-30 19:00:54,819 [INFO] ppo_trainer:   Fake Confidence: 0.571 ± 0.030
+2025-08-30 19:00:54,819 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:54,819 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:57,396 [INFO] ppo_trainer: Discriminator Performance (Episode 3360):
+2025-08-30 19:00:57,396 [INFO] ppo_trainer:   Recent Loss: 0.6778 ± 0.0584
+2025-08-30 19:00:57,396 [INFO] ppo_trainer:   Recent Accuracy: 0.552 ± 0.047
+2025-08-30 19:00:57,396 [INFO] ppo_trainer:   Real Confidence: 0.560 ± 0.024
+2025-08-30 19:00:57,396 [INFO] ppo_trainer:   Fake Confidence: 0.567 ± 0.028
+2025-08-30 19:00:57,397 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:57,397 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:00:59,220 [INFO] ppo_trainer: Discriminator Performance (Episode 3392):
+2025-08-30 19:00:59,220 [INFO] ppo_trainer:   Recent Loss: 0.6596 ± 0.0485
+2025-08-30 19:00:59,220 [INFO] ppo_trainer:   Recent Accuracy: 0.559 ± 0.046
+2025-08-30 19:00:59,220 [INFO] ppo_trainer:   Real Confidence: 0.567 ± 0.021
+2025-08-30 19:00:59,220 [INFO] ppo_trainer:   Fake Confidence: 0.578 ± 0.023
+2025-08-30 19:00:59,221 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:00:59,221 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:01,934 [INFO] ppo_trainer: Discriminator Performance (Episode 3424):
+2025-08-30 19:01:01,935 [INFO] ppo_trainer:   Recent Loss: 0.6405 ± 0.0503
+2025-08-30 19:01:01,935 [INFO] ppo_trainer:   Recent Accuracy: 0.592 ± 0.050
+2025-08-30 19:01:01,935 [INFO] ppo_trainer:   Real Confidence: 0.578 ± 0.021
+2025-08-30 19:01:01,935 [INFO] ppo_trainer:   Fake Confidence: 0.586 ± 0.020
+2025-08-30 19:01:01,935 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:01,935 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:03,140 [INFO] ppo_trainer: Discriminator Performance (Episode 3456):
+2025-08-30 19:01:03,141 [INFO] ppo_trainer:   Recent Loss: 0.6455 ± 0.0462
+2025-08-30 19:01:03,141 [INFO] ppo_trainer:   Recent Accuracy: 0.592 ± 0.050
+2025-08-30 19:01:03,141 [INFO] ppo_trainer:   Real Confidence: 0.575 ± 0.020
+2025-08-30 19:01:03,141 [INFO] ppo_trainer:   Fake Confidence: 0.585 ± 0.019
+2025-08-30 19:01:03,141 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:03,141 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:05,867 [INFO] ppo_trainer: Discriminator Performance (Episode 3488):
+2025-08-30 19:01:05,867 [INFO] ppo_trainer:   Recent Loss: 0.6090 ± 0.0352
+2025-08-30 19:01:05,868 [INFO] ppo_trainer:   Recent Accuracy: 0.625 ± 0.043
+2025-08-30 19:01:05,868 [INFO] ppo_trainer:   Real Confidence: 0.586 ± 0.011
+2025-08-30 19:01:05,868 [INFO] ppo_trainer:   Fake Confidence: 0.605 ± 0.029
+2025-08-30 19:01:05,868 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:05,868 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:10,282 [INFO] ppo_trainer: Discriminator Performance (Episode 3520):
+2025-08-30 19:01:10,283 [INFO] ppo_trainer:   Recent Loss: 0.5969 ± 0.0360
+2025-08-30 19:01:10,283 [INFO] ppo_trainer:   Recent Accuracy: 0.639 ± 0.039
+2025-08-30 19:01:10,283 [INFO] ppo_trainer:   Real Confidence: 0.587 ± 0.012
+2025-08-30 19:01:10,284 [INFO] ppo_trainer:   Fake Confidence: 0.614 ± 0.024
+2025-08-30 19:01:10,284 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:10,284 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:11,862 [INFO] ppo_trainer: Discriminator Performance (Episode 3552):
+2025-08-30 19:01:11,862 [INFO] ppo_trainer:   Recent Loss: 0.5907 ± 0.0277
+2025-08-30 19:01:11,863 [INFO] ppo_trainer:   Recent Accuracy: 0.655 ± 0.018
+2025-08-30 19:01:11,863 [INFO] ppo_trainer:   Real Confidence: 0.596 ± 0.012
+2025-08-30 19:01:11,863 [INFO] ppo_trainer:   Fake Confidence: 0.610 ± 0.028
+2025-08-30 19:01:11,863 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:11,863 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:13,498 [INFO] ppo_trainer: Discriminator Performance (Episode 3584):
+2025-08-30 19:01:13,499 [INFO] ppo_trainer:   Recent Loss: 0.5913 ± 0.0279
+2025-08-30 19:01:13,499 [INFO] ppo_trainer:   Recent Accuracy: 0.639 ± 0.032
+2025-08-30 19:01:13,499 [INFO] ppo_trainer:   Real Confidence: 0.592 ± 0.014
+2025-08-30 19:01:13,500 [INFO] ppo_trainer:   Fake Confidence: 0.614 ± 0.027
+2025-08-30 19:01:13,500 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:13,500 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:16,883 [INFO] ppo_trainer: Discriminator Performance (Episode 3616):
+2025-08-30 19:01:16,883 [INFO] ppo_trainer:   Recent Loss: 0.5839 ± 0.0253
+2025-08-30 19:01:16,884 [INFO] ppo_trainer:   Recent Accuracy: 0.639 ± 0.032
+2025-08-30 19:01:16,884 [INFO] ppo_trainer:   Real Confidence: 0.595 ± 0.011
+2025-08-30 19:01:16,884 [INFO] ppo_trainer:   Fake Confidence: 0.615 ± 0.027
+2025-08-30 19:01:16,884 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:16,884 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:18,188 [INFO] ppo_trainer: Discriminator Performance (Episode 3648):
+2025-08-30 19:01:18,188 [INFO] ppo_trainer:   Recent Loss: 0.5984 ± 0.0214
+2025-08-30 19:01:18,189 [INFO] ppo_trainer:   Recent Accuracy: 0.633 ± 0.026
+2025-08-30 19:01:18,189 [INFO] ppo_trainer:   Real Confidence: 0.594 ± 0.011
+2025-08-30 19:01:18,189 [INFO] ppo_trainer:   Fake Confidence: 0.605 ± 0.017
+2025-08-30 19:01:18,189 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:18,189 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:20,613 [INFO] ppo_trainer: Discriminator Performance (Episode 3680):
+2025-08-30 19:01:20,614 [INFO] ppo_trainer:   Recent Loss: 0.6092 ± 0.0177
+2025-08-30 19:01:20,614 [INFO] ppo_trainer:   Recent Accuracy: 0.627 ± 0.023
+2025-08-30 19:01:20,614 [INFO] ppo_trainer:   Real Confidence: 0.595 ± 0.011
+2025-08-30 19:01:20,614 [INFO] ppo_trainer:   Fake Confidence: 0.599 ± 0.018
+2025-08-30 19:01:20,614 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:20,614 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:22,227 [INFO] ppo_trainer: Discriminator Performance (Episode 3712):
+2025-08-30 19:01:22,227 [INFO] ppo_trainer:   Recent Loss: 0.5992 ± 0.0214
+2025-08-30 19:01:22,227 [INFO] ppo_trainer:   Recent Accuracy: 0.631 ± 0.029
+2025-08-30 19:01:22,227 [INFO] ppo_trainer:   Real Confidence: 0.595 ± 0.011
+2025-08-30 19:01:22,227 [INFO] ppo_trainer:   Fake Confidence: 0.604 ± 0.012
+2025-08-30 19:01:22,227 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:22,227 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:24,684 [INFO] ppo_trainer: Discriminator Performance (Episode 3744):
+2025-08-30 19:01:24,684 [INFO] ppo_trainer:   Recent Loss: 0.5949 ± 0.0228
+2025-08-30 19:01:24,684 [INFO] ppo_trainer:   Recent Accuracy: 0.639 ± 0.019
+2025-08-30 19:01:24,685 [INFO] ppo_trainer:   Real Confidence: 0.599 ± 0.009
+2025-08-30 19:01:24,685 [INFO] ppo_trainer:   Fake Confidence: 0.598 ± 0.012
+2025-08-30 19:01:24,685 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:24,685 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:27,299 [INFO] ppo_trainer: Discriminator Performance (Episode 3776):
+2025-08-30 19:01:27,300 [INFO] ppo_trainer:   Recent Loss: 0.5887 ± 0.0297
+2025-08-30 19:01:27,300 [INFO] ppo_trainer:   Recent Accuracy: 0.658 ± 0.035
+2025-08-30 19:01:27,300 [INFO] ppo_trainer:   Real Confidence: 0.609 ± 0.017
+2025-08-30 19:01:27,301 [INFO] ppo_trainer:   Fake Confidence: 0.595 ± 0.009
+2025-08-30 19:01:27,301 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:27,301 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:29,136 [INFO] ppo_trainer: Discriminator Performance (Episode 3808):
+2025-08-30 19:01:29,136 [INFO] ppo_trainer:   Recent Loss: 0.5655 ± 0.0391
+2025-08-30 19:01:29,136 [INFO] ppo_trainer:   Recent Accuracy: 0.666 ± 0.036
+2025-08-30 19:01:29,136 [INFO] ppo_trainer:   Real Confidence: 0.614 ± 0.014
+2025-08-30 19:01:29,137 [INFO] ppo_trainer:   Fake Confidence: 0.607 ± 0.031
+2025-08-30 19:01:29,137 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:29,137 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:33,888 [INFO] ppo_trainer: Discriminator Performance (Episode 3840):
+2025-08-30 19:01:33,889 [INFO] ppo_trainer:   Recent Loss: 0.5503 ± 0.0259
+2025-08-30 19:01:33,889 [INFO] ppo_trainer:   Recent Accuracy: 0.669 ± 0.033
+2025-08-30 19:01:33,889 [INFO] ppo_trainer:   Real Confidence: 0.618 ± 0.012
+2025-08-30 19:01:33,889 [INFO] ppo_trainer:   Fake Confidence: 0.613 ± 0.029
+2025-08-30 19:01:33,889 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:33,889 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:35,421 [INFO] ppo_trainer: Discriminator Performance (Episode 3872):
+2025-08-30 19:01:35,422 [INFO] ppo_trainer:   Recent Loss: 0.5360 ± 0.0296
+2025-08-30 19:01:35,422 [INFO] ppo_trainer:   Recent Accuracy: 0.688 ± 0.051
+2025-08-30 19:01:35,422 [INFO] ppo_trainer:   Real Confidence: 0.622 ± 0.013
+2025-08-30 19:01:35,422 [INFO] ppo_trainer:   Fake Confidence: 0.623 ± 0.030
+2025-08-30 19:01:35,422 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:35,422 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:37,277 [INFO] ppo_trainer: Discriminator Performance (Episode 3904):
+2025-08-30 19:01:37,281 [INFO] ppo_trainer:   Recent Loss: 0.5296 ± 0.0221
+2025-08-30 19:01:37,282 [INFO] ppo_trainer:   Recent Accuracy: 0.706 ± 0.041
+2025-08-30 19:01:37,282 [INFO] ppo_trainer:   Real Confidence: 0.622 ± 0.013
+2025-08-30 19:01:37,282 [INFO] ppo_trainer:   Fake Confidence: 0.632 ± 0.024
+2025-08-30 19:01:37,282 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:37,282 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:40,146 [INFO] ppo_trainer: Discriminator Performance (Episode 3936):
+2025-08-30 19:01:40,146 [INFO] ppo_trainer:   Recent Loss: 0.5249 ± 0.0203
+2025-08-30 19:01:40,146 [INFO] ppo_trainer:   Recent Accuracy: 0.711 ± 0.044
+2025-08-30 19:01:40,147 [INFO] ppo_trainer:   Real Confidence: 0.620 ± 0.011
+2025-08-30 19:01:40,147 [INFO] ppo_trainer:   Fake Confidence: 0.636 ± 0.019
+2025-08-30 19:01:40,147 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:40,147 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:43,632 [INFO] ppo_trainer: Discriminator Performance (Episode 3968):
+2025-08-30 19:01:43,632 [INFO] ppo_trainer:   Recent Loss: 0.5321 ± 0.0183
+2025-08-30 19:01:43,632 [INFO] ppo_trainer:   Recent Accuracy: 0.714 ± 0.042
+2025-08-30 19:01:43,632 [INFO] ppo_trainer:   Real Confidence: 0.619 ± 0.011
+2025-08-30 19:01:43,632 [INFO] ppo_trainer:   Fake Confidence: 0.627 ± 0.011
+2025-08-30 19:01:43,632 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:43,633 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:45,864 [INFO] ppo_trainer: Discriminator Performance (Episode 4000):
+2025-08-30 19:01:45,864 [INFO] ppo_trainer:   Recent Loss: 0.5261 ± 0.0169
+2025-08-30 19:01:45,864 [INFO] ppo_trainer:   Recent Accuracy: 0.720 ± 0.032
+2025-08-30 19:01:45,864 [INFO] ppo_trainer:   Real Confidence: 0.619 ± 0.011
+2025-08-30 19:01:45,865 [INFO] ppo_trainer:   Fake Confidence: 0.630 ± 0.009
+2025-08-30 19:01:45,865 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:45,865 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:45,865 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 19:01:45,869 [INFO] ppo_trainer: Episode 4000 | Reward:  3.778±1.236 | Hub Δ:  0.485±0.219 | Success: 90.6% | Buffer: 0 | approx_kl: 0.0368 | clip_frac: 0.085 | entropy_coef: 0.0100 | Disc: acc=0.672, adv_w=0.800
+2025-08-30 19:01:47,564 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 7.8%, 3: 0.0%, 4: 0.0%, 5: 92.2%, 6: 0.0%
+2025-08-30 19:01:47,564 [INFO] ppo_trainer: Evaluation at episode 4000: Reward: 3.852±1.151 | Hub Δ: 0.450±0.207 | Success: 74.0%
+2025-08-30 19:01:49,020 [INFO] ppo_trainer: Discriminator Performance (Episode 4032):
+2025-08-30 19:01:49,021 [INFO] ppo_trainer:   Recent Loss: 0.5428 ± 0.0232
+2025-08-30 19:01:49,021 [INFO] ppo_trainer:   Recent Accuracy: 0.694 ± 0.038
+2025-08-30 19:01:49,021 [INFO] ppo_trainer:   Real Confidence: 0.611 ± 0.013
+2025-08-30 19:01:49,021 [INFO] ppo_trainer:   Fake Confidence: 0.622 ± 0.009
+2025-08-30 19:01:49,021 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:49,021 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:51,302 [INFO] ppo_trainer: Discriminator Performance (Episode 4064):
+2025-08-30 19:01:51,303 [INFO] ppo_trainer:   Recent Loss: 0.5366 ± 0.0252
+2025-08-30 19:01:51,303 [INFO] ppo_trainer:   Recent Accuracy: 0.698 ± 0.042
+2025-08-30 19:01:51,303 [INFO] ppo_trainer:   Real Confidence: 0.618 ± 0.017
+2025-08-30 19:01:51,303 [INFO] ppo_trainer:   Fake Confidence: 0.622 ± 0.009
+2025-08-30 19:01:51,303 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:51,303 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:53,699 [INFO] ppo_trainer: Discriminator Performance (Episode 4096):
+2025-08-30 19:01:53,700 [INFO] ppo_trainer:   Recent Loss: 0.5249 ± 0.0386
+2025-08-30 19:01:53,700 [INFO] ppo_trainer:   Recent Accuracy: 0.709 ± 0.057
+2025-08-30 19:01:53,700 [INFO] ppo_trainer:   Real Confidence: 0.622 ± 0.021
+2025-08-30 19:01:53,700 [INFO] ppo_trainer:   Fake Confidence: 0.631 ± 0.018
+2025-08-30 19:01:53,700 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:53,700 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:55,404 [INFO] ppo_trainer: Discriminator Performance (Episode 4128):
+2025-08-30 19:01:55,404 [INFO] ppo_trainer:   Recent Loss: 0.5052 ± 0.0490
+2025-08-30 19:01:55,404 [INFO] ppo_trainer:   Recent Accuracy: 0.730 ± 0.068
+2025-08-30 19:01:55,404 [INFO] ppo_trainer:   Real Confidence: 0.631 ± 0.023
+2025-08-30 19:01:55,405 [INFO] ppo_trainer:   Fake Confidence: 0.643 ± 0.027
+2025-08-30 19:01:55,405 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:55,405 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:01:57,547 [INFO] ppo_trainer: Discriminator Performance (Episode 4160):
+2025-08-30 19:01:57,547 [INFO] ppo_trainer:   Recent Loss: 0.4980 ± 0.0493
+2025-08-30 19:01:57,547 [INFO] ppo_trainer:   Recent Accuracy: 0.742 ± 0.062
+2025-08-30 19:01:57,547 [INFO] ppo_trainer:   Real Confidence: 0.637 ± 0.023
+2025-08-30 19:01:57,548 [INFO] ppo_trainer:   Fake Confidence: 0.648 ± 0.027
+2025-08-30 19:01:57,548 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:01:57,548 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:00,417 [INFO] ppo_trainer: Discriminator Performance (Episode 4192):
+2025-08-30 19:02:00,417 [INFO] ppo_trainer:   Recent Loss: 0.4806 ± 0.0255
+2025-08-30 19:02:00,418 [INFO] ppo_trainer:   Recent Accuracy: 0.758 ± 0.037
+2025-08-30 19:02:00,418 [INFO] ppo_trainer:   Real Confidence: 0.643 ± 0.012
+2025-08-30 19:02:00,418 [INFO] ppo_trainer:   Fake Confidence: 0.661 ± 0.017
+2025-08-30 19:02:00,418 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:00,418 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:02,269 [INFO] ppo_trainer: Discriminator Performance (Episode 4224):
+2025-08-30 19:02:02,269 [INFO] ppo_trainer:   Recent Loss: 0.4770 ± 0.0211
+2025-08-30 19:02:02,269 [INFO] ppo_trainer:   Recent Accuracy: 0.756 ± 0.037
+2025-08-30 19:02:02,269 [INFO] ppo_trainer:   Real Confidence: 0.644 ± 0.013
+2025-08-30 19:02:02,270 [INFO] ppo_trainer:   Fake Confidence: 0.660 ± 0.018
+2025-08-30 19:02:02,270 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:02,270 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:04,354 [INFO] ppo_trainer: Discriminator Performance (Episode 4256):
+2025-08-30 19:02:04,355 [INFO] ppo_trainer:   Recent Loss: 0.4806 ± 0.0203
+2025-08-30 19:02:04,355 [INFO] ppo_trainer:   Recent Accuracy: 0.744 ± 0.032
+2025-08-30 19:02:04,356 [INFO] ppo_trainer:   Real Confidence: 0.645 ± 0.013
+2025-08-30 19:02:04,356 [INFO] ppo_trainer:   Fake Confidence: 0.659 ± 0.018
+2025-08-30 19:02:04,356 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:04,356 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:07,905 [INFO] ppo_trainer: Discriminator Performance (Episode 4288):
+2025-08-30 19:02:07,905 [INFO] ppo_trainer:   Recent Loss: 0.4955 ± 0.0127
+2025-08-30 19:02:07,906 [INFO] ppo_trainer:   Recent Accuracy: 0.730 ± 0.009
+2025-08-30 19:02:07,906 [INFO] ppo_trainer:   Real Confidence: 0.639 ± 0.013
+2025-08-30 19:02:07,906 [INFO] ppo_trainer:   Fake Confidence: 0.650 ± 0.014
+2025-08-30 19:02:07,906 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:07,906 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:10,164 [INFO] ppo_trainer: Discriminator Performance (Episode 4320):
+2025-08-30 19:02:10,164 [INFO] ppo_trainer:   Recent Loss: 0.4855 ± 0.0288
+2025-08-30 19:02:10,164 [INFO] ppo_trainer:   Recent Accuracy: 0.745 ± 0.035
+2025-08-30 19:02:10,164 [INFO] ppo_trainer:   Real Confidence: 0.641 ± 0.014
+2025-08-30 19:02:10,165 [INFO] ppo_trainer:   Fake Confidence: 0.661 ± 0.028
+2025-08-30 19:02:10,165 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:10,165 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:12,823 [INFO] ppo_trainer: Discriminator Performance (Episode 4352):
+2025-08-30 19:02:12,824 [INFO] ppo_trainer:   Recent Loss: 0.4876 ± 0.0299
+2025-08-30 19:02:12,824 [INFO] ppo_trainer:   Recent Accuracy: 0.758 ± 0.031
+2025-08-30 19:02:12,824 [INFO] ppo_trainer:   Real Confidence: 0.644 ± 0.011
+2025-08-30 19:02:12,824 [INFO] ppo_trainer:   Fake Confidence: 0.658 ± 0.028
+2025-08-30 19:02:12,824 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:12,824 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:17,119 [INFO] ppo_trainer: Discriminator Performance (Episode 4384):
+2025-08-30 19:02:17,119 [INFO] ppo_trainer:   Recent Loss: 0.4846 ± 0.0294
+2025-08-30 19:02:17,119 [INFO] ppo_trainer:   Recent Accuracy: 0.759 ± 0.030
+2025-08-30 19:02:17,120 [INFO] ppo_trainer:   Real Confidence: 0.639 ± 0.012
+2025-08-30 19:02:17,120 [INFO] ppo_trainer:   Fake Confidence: 0.664 ± 0.023
+2025-08-30 19:02:17,120 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:17,120 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:20,708 [INFO] ppo_trainer: Discriminator Performance (Episode 4416):
+2025-08-30 19:02:20,708 [INFO] ppo_trainer:   Recent Loss: 0.4900 ± 0.0310
+2025-08-30 19:02:20,708 [INFO] ppo_trainer:   Recent Accuracy: 0.762 ± 0.028
+2025-08-30 19:02:20,708 [INFO] ppo_trainer:   Real Confidence: 0.639 ± 0.011
+2025-08-30 19:02:20,708 [INFO] ppo_trainer:   Fake Confidence: 0.660 ± 0.027
+2025-08-30 19:02:20,708 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:20,709 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:22,210 [INFO] ppo_trainer: Discriminator Performance (Episode 4448):
+2025-08-30 19:02:22,210 [INFO] ppo_trainer:   Recent Loss: 0.4785 ± 0.0295
+2025-08-30 19:02:22,210 [INFO] ppo_trainer:   Recent Accuracy: 0.772 ± 0.025
+2025-08-30 19:02:22,210 [INFO] ppo_trainer:   Real Confidence: 0.642 ± 0.009
+2025-08-30 19:02:22,211 [INFO] ppo_trainer:   Fake Confidence: 0.667 ± 0.026
+2025-08-30 19:02:22,211 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:22,211 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:23,455 [INFO] ppo_trainer: Discriminator Performance (Episode 4480):
+2025-08-30 19:02:23,456 [INFO] ppo_trainer:   Recent Loss: 0.4819 ± 0.0246
+2025-08-30 19:02:23,456 [INFO] ppo_trainer:   Recent Accuracy: 0.780 ± 0.039
+2025-08-30 19:02:23,456 [INFO] ppo_trainer:   Real Confidence: 0.642 ± 0.009
+2025-08-30 19:02:23,456 [INFO] ppo_trainer:   Fake Confidence: 0.663 ± 0.021
+2025-08-30 19:02:23,456 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:23,457 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:25,383 [INFO] ppo_trainer: Discriminator Performance (Episode 4512):
+2025-08-30 19:02:25,383 [INFO] ppo_trainer:   Recent Loss: 0.4694 ± 0.0244
+2025-08-30 19:02:25,384 [INFO] ppo_trainer:   Recent Accuracy: 0.783 ± 0.039
+2025-08-30 19:02:25,384 [INFO] ppo_trainer:   Real Confidence: 0.641 ± 0.010
+2025-08-30 19:02:25,384 [INFO] ppo_trainer:   Fake Confidence: 0.677 ± 0.029
+2025-08-30 19:02:25,384 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:25,384 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:27,651 [INFO] ppo_trainer: Discriminator Performance (Episode 4544):
+2025-08-30 19:02:27,651 [INFO] ppo_trainer:   Recent Loss: 0.4614 ± 0.0250
+2025-08-30 19:02:27,651 [INFO] ppo_trainer:   Recent Accuracy: 0.794 ± 0.033
+2025-08-30 19:02:27,651 [INFO] ppo_trainer:   Real Confidence: 0.647 ± 0.009
+2025-08-30 19:02:27,651 [INFO] ppo_trainer:   Fake Confidence: 0.683 ± 0.029
+2025-08-30 19:02:27,652 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:27,652 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:29,266 [INFO] ppo_trainer: Discriminator Performance (Episode 4576):
+2025-08-30 19:02:29,266 [INFO] ppo_trainer:   Recent Loss: 0.4477 ± 0.0064
+2025-08-30 19:02:29,266 [INFO] ppo_trainer:   Recent Accuracy: 0.798 ± 0.028
+2025-08-30 19:02:29,267 [INFO] ppo_trainer:   Real Confidence: 0.653 ± 0.015
+2025-08-30 19:02:29,267 [INFO] ppo_trainer:   Fake Confidence: 0.693 ± 0.014
+2025-08-30 19:02:29,267 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:29,267 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:32,869 [INFO] ppo_trainer: Discriminator Performance (Episode 4608):
+2025-08-30 19:02:32,869 [INFO] ppo_trainer:   Recent Loss: 0.4389 ± 0.0120
+2025-08-30 19:02:32,869 [INFO] ppo_trainer:   Recent Accuracy: 0.823 ± 0.049
+2025-08-30 19:02:32,870 [INFO] ppo_trainer:   Real Confidence: 0.661 ± 0.019
+2025-08-30 19:02:32,870 [INFO] ppo_trainer:   Fake Confidence: 0.698 ± 0.013
+2025-08-30 19:02:32,870 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:32,870 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:35,423 [INFO] ppo_trainer: Discriminator Performance (Episode 4640):
+2025-08-30 19:02:35,423 [INFO] ppo_trainer:   Recent Loss: 0.4243 ± 0.0263
+2025-08-30 19:02:35,423 [INFO] ppo_trainer:   Recent Accuracy: 0.831 ± 0.056
+2025-08-30 19:02:35,423 [INFO] ppo_trainer:   Real Confidence: 0.669 ± 0.022
+2025-08-30 19:02:35,423 [INFO] ppo_trainer:   Fake Confidence: 0.705 ± 0.017
+2025-08-30 19:02:35,424 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:35,424 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:36,959 [INFO] ppo_trainer: Discriminator Performance (Episode 4672):
+2025-08-30 19:02:36,960 [INFO] ppo_trainer:   Recent Loss: 0.4241 ± 0.0262
+2025-08-30 19:02:36,960 [INFO] ppo_trainer:   Recent Accuracy: 0.838 ± 0.052
+2025-08-30 19:02:36,960 [INFO] ppo_trainer:   Real Confidence: 0.678 ± 0.012
+2025-08-30 19:02:36,961 [INFO] ppo_trainer:   Fake Confidence: 0.693 ± 0.024
+2025-08-30 19:02:36,961 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:36,961 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:38,965 [INFO] ppo_trainer: Discriminator Performance (Episode 4704):
+2025-08-30 19:02:38,966 [INFO] ppo_trainer:   Recent Loss: 0.4177 ± 0.0244
+2025-08-30 19:02:38,966 [INFO] ppo_trainer:   Recent Accuracy: 0.841 ± 0.050
+2025-08-30 19:02:38,966 [INFO] ppo_trainer:   Real Confidence: 0.683 ± 0.005
+2025-08-30 19:02:38,966 [INFO] ppo_trainer:   Fake Confidence: 0.695 ± 0.024
+2025-08-30 19:02:38,966 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:38,966 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:41,458 [INFO] ppo_trainer: Discriminator Performance (Episode 4736):
+2025-08-30 19:02:41,458 [INFO] ppo_trainer:   Recent Loss: 0.4110 ± 0.0214
+2025-08-30 19:02:41,458 [INFO] ppo_trainer:   Recent Accuracy: 0.842 ± 0.048
+2025-08-30 19:02:41,459 [INFO] ppo_trainer:   Real Confidence: 0.685 ± 0.005
+2025-08-30 19:02:41,459 [INFO] ppo_trainer:   Fake Confidence: 0.698 ± 0.023
+2025-08-30 19:02:41,459 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:41,459 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:42,768 [INFO] ppo_trainer: Discriminator Performance (Episode 4768):
+2025-08-30 19:02:42,769 [INFO] ppo_trainer:   Recent Loss: 0.4050 ± 0.0235
+2025-08-30 19:02:42,769 [INFO] ppo_trainer:   Recent Accuracy: 0.836 ± 0.041
+2025-08-30 19:02:42,769 [INFO] ppo_trainer:   Real Confidence: 0.687 ± 0.005
+2025-08-30 19:02:42,769 [INFO] ppo_trainer:   Fake Confidence: 0.701 ± 0.025
+2025-08-30 19:02:42,769 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:42,769 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:44,816 [INFO] ppo_trainer: Discriminator Performance (Episode 4800):
+2025-08-30 19:02:44,817 [INFO] ppo_trainer:   Recent Loss: 0.4172 ± 0.0213
+2025-08-30 19:02:44,817 [INFO] ppo_trainer:   Recent Accuracy: 0.820 ± 0.030
+2025-08-30 19:02:44,817 [INFO] ppo_trainer:   Real Confidence: 0.678 ± 0.015
+2025-08-30 19:02:44,817 [INFO] ppo_trainer:   Fake Confidence: 0.697 ± 0.021
+2025-08-30 19:02:44,817 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:44,817 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:44,818 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 19:02:44,822 [INFO] ppo_trainer: Episode 4800 | Reward:  3.871±1.044 | Hub Δ:  0.470±0.229 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0001 | clip_frac: 0.000 | entropy_coef: 0.0100 | Disc: acc=0.812, adv_w=0.800
+2025-08-30 19:02:47,065 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 100.0%, 6: 0.0%
+2025-08-30 19:02:47,066 [INFO] ppo_trainer: Evaluation at episode 4800: Reward: 3.735±1.026 | Hub Δ: 0.426±0.221 | Success: 70.0%
+2025-08-30 19:02:49,786 [INFO] ppo_trainer: Discriminator Performance (Episode 4832):
+2025-08-30 19:02:49,787 [INFO] ppo_trainer:   Recent Loss: 0.4109 ± 0.0166
+2025-08-30 19:02:49,787 [INFO] ppo_trainer:   Recent Accuracy: 0.825 ± 0.032
+2025-08-30 19:02:49,788 [INFO] ppo_trainer:   Real Confidence: 0.678 ± 0.015
+2025-08-30 19:02:49,788 [INFO] ppo_trainer:   Fake Confidence: 0.706 ± 0.007
+2025-08-30 19:02:49,788 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:49,788 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:52,233 [INFO] ppo_trainer: Discriminator Performance (Episode 4864):
+2025-08-30 19:02:52,233 [INFO] ppo_trainer:   Recent Loss: 0.4083 ± 0.0172
+2025-08-30 19:02:52,233 [INFO] ppo_trainer:   Recent Accuracy: 0.828 ± 0.031
+2025-08-30 19:02:52,234 [INFO] ppo_trainer:   Real Confidence: 0.683 ± 0.019
+2025-08-30 19:02:52,234 [INFO] ppo_trainer:   Fake Confidence: 0.707 ± 0.007
+2025-08-30 19:02:52,234 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:52,234 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:54,277 [INFO] ppo_trainer: Discriminator Performance (Episode 4896):
+2025-08-30 19:02:54,277 [INFO] ppo_trainer:   Recent Loss: 0.4047 ± 0.0189
+2025-08-30 19:02:54,277 [INFO] ppo_trainer:   Recent Accuracy: 0.847 ± 0.025
+2025-08-30 19:02:54,278 [INFO] ppo_trainer:   Real Confidence: 0.683 ± 0.019
+2025-08-30 19:02:54,278 [INFO] ppo_trainer:   Fake Confidence: 0.710 ± 0.006
+2025-08-30 19:02:54,278 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:54,278 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:56,485 [INFO] ppo_trainer: Discriminator Performance (Episode 4928):
+2025-08-30 19:02:56,485 [INFO] ppo_trainer:   Recent Loss: 0.4140 ± 0.0185
+2025-08-30 19:02:56,485 [INFO] ppo_trainer:   Recent Accuracy: 0.831 ± 0.027
+2025-08-30 19:02:56,485 [INFO] ppo_trainer:   Real Confidence: 0.676 ± 0.022
+2025-08-30 19:02:56,486 [INFO] ppo_trainer:   Fake Confidence: 0.710 ± 0.006
+2025-08-30 19:02:56,486 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:56,486 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:57,514 [INFO] ppo_trainer: Discriminator Performance (Episode 4960):
+2025-08-30 19:02:57,514 [INFO] ppo_trainer:   Recent Loss: 0.3984 ± 0.0240
+2025-08-30 19:02:57,514 [INFO] ppo_trainer:   Recent Accuracy: 0.852 ± 0.040
+2025-08-30 19:02:57,514 [INFO] ppo_trainer:   Real Confidence: 0.687 ± 0.020
+2025-08-30 19:02:57,514 [INFO] ppo_trainer:   Fake Confidence: 0.716 ± 0.013
+2025-08-30 19:02:57,514 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:57,515 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:59,014 [INFO] ppo_trainer: Discriminator Performance (Episode 4992):
+2025-08-30 19:02:59,014 [INFO] ppo_trainer:   Recent Loss: 0.3953 ± 0.0230
+2025-08-30 19:02:59,014 [INFO] ppo_trainer:   Recent Accuracy: 0.852 ± 0.040
+2025-08-30 19:02:59,014 [INFO] ppo_trainer:   Real Confidence: 0.689 ± 0.019
+2025-08-30 19:02:59,014 [INFO] ppo_trainer:   Fake Confidence: 0.722 ± 0.012
+2025-08-30 19:02:59,015 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:59,015 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:59,564 [INFO] ppo_trainer: Discriminator Performance (Episode 5000):
+2025-08-30 19:02:59,565 [INFO] ppo_trainer:   Recent Loss: 0.3894 ± 0.0250
+2025-08-30 19:02:59,565 [INFO] ppo_trainer:   Recent Accuracy: 0.858 ± 0.038
+2025-08-30 19:02:59,565 [INFO] ppo_trainer:   Real Confidence: 0.691 ± 0.021
+2025-08-30 19:02:59,565 [INFO] ppo_trainer:   Fake Confidence: 0.727 ± 0.009
+2025-08-30 19:02:59,565 [INFO] ppo_trainer:   Buffer: 1000 real, 1000 fake graphs
+2025-08-30 19:02:59,565 [INFO] ppo_trainer:   Adversarial Weight: 0.800
+2025-08-30 19:02:59,565 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 19:02:59,569 [INFO] ppo_trainer: Episode 5000 | Reward:  4.575±1.179 | Hub Δ:  0.590±0.256 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0001 | clip_frac: 0.000 | entropy_coef: 0.0100 | Disc: acc=0.859, adv_w=0.800
+2025-08-30 19:03:01,682 [INFO] ppo_trainer: Action usage: 0: 6.3%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 90.5%, 6: 3.2%
+2025-08-30 19:03:01,682 [INFO] ppo_trainer: Evaluation at episode 5000: Reward: 3.722±1.367 | Hub Δ: 0.480±0.266 | Success: 68.0%
+2025-08-30 19:03:03,043 [INFO] ppo_trainer: Action usage: 0: 2.8%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 95.8%, 6: 1.4%
+2025-08-30 19:03:03,071 [INFO] ppo_trainer: PPO training completed in 0.09 hours
+2025-08-30 19:03:03,071 [INFO] ppo_trainer: Best reward: 3.857
+2025-08-30 19:03:03,071 [INFO] ppo_trainer: Final hub improvement: 0.4860
+2025-08-30 19:03:03,071 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-30 19:03:03,087 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-30 19:03:03,088 [INFO] __main__: PPO training completed
+2025-08-30 19:03:03,100 [INFO] __main__: PPO training phase completed successfully
+2025-08-30 19:03:03,100 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-30 19:03:03,100 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-30 19:03:03,127 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 256, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.3, 'shared_encoder': True}
+2025-08-30 19:03:08,843 [INFO] __main__: Evaluation Results:
+2025-08-30 19:03:08,843 [INFO] __main__:   Success Rate: 1.000
+2025-08-30 19:03:08,843 [INFO] __main__:   Avg Reward: 4.087 ± 1.111
+2025-08-30 19:03:08,843 [INFO] __main__:   Avg Hub Improvement: 0.498 ± 0.236
+2025-08-30 19:03:08,843 [INFO] __main__:   Avg Episode Length: 1.4
+2025-08-30 19:03:08,843 [INFO] __main__:   Discriminator Improvement: -0.053
+2025-08-30 19:03:08,845 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-30 19:03:08,854 [INFO] __main__: Evaluation completed successfully
+2025-08-30 19:03:08,855 [INFO] __main__: === Training Pipeline Completed Successfully ===

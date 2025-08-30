@@ -123,6 +123,22 @@ class PPOConfig:
     sampling_without_replacement: bool = True
     coverage_log_every: int = 100
 
+    # Discriminator training
+    discriminator_lr: float = 5e-5  # LR più basso del generatore
+    discriminator_update_every: int = 4  # Aggiorna ogni N rollout
+    discriminator_epochs_per_update: int = 2
+    discriminator_batch_size: int = 64
+
+    # Adversarial reward
+    adversarial_weight_start: float = 0.0  # Inizia senza adversarial
+    adversarial_weight_end: float = 0.8  # Peso finale per adversarial reward
+    adversarial_weight_anneal_episodes: int = 2000  # Episodi per raggiungere peso finale
+
+    # Discriminator data collection
+    collect_discriminator_data: bool = True
+    discriminator_buffer_size: int = 2000
+    real_fake_ratio: float = 0.5  # Rapporto tra grafi reali e generati
+
     def __post_init__(self):
         # CLAUDE: Complete default reward weights as specified in requirements
         default_rw = {
@@ -366,6 +382,29 @@ class PPOTrainer:
         if self.discriminator is not None:
             self.env.discriminator = self.discriminator
 
+            # Aggiungi ottimizzatore per il discriminatore
+            self.discriminator_optimizer = optim.Adam(
+                self.discriminator.parameters(),
+                lr=config.discriminator_lr,
+                eps=1e-5
+            )
+
+            # Buffer per i dati del discriminatore
+            self.discriminator_buffer = {
+                'real_graphs': [],
+                'fake_graphs': [],
+                'real_labels': [],
+                'fake_labels': []
+            }
+
+            # Statistics per il discriminatore
+            self.discriminator_stats = {
+                'losses': [],
+                'accuracies': [],
+                'real_confidences': [],
+                'fake_confidences': []
+            }
+
         # CLAUDE: Initialize model without hard-coded dimensions
         self._init_model()
 
@@ -458,7 +497,7 @@ class PPOTrainer:
         return self.env._extract_global_features(data)
 
     def collect_rollouts(self, num_episodes: int, is_adversarial: bool = False) -> Dict:
-        """CLAUDE: Collect rollouts with device + buffer pre-step"""
+        """Collect rollouts con adversarial weight passato all'ambiente"""
         episode_infos = []
 
         for episode_idx in range(num_episodes):
@@ -474,9 +513,13 @@ class PPOTrainer:
             episode_length = 0
             initial_hub_score = self.env.initial_metrics['hub_score']
 
-            # Get epsilon for this episode
+            # Get epsilon and adversarial weight for this episode
             current_episode = self.total_episodes_trained + episode_idx
             epsilon = self._epsilon_at(current_episode)
+            adversarial_weight = self._get_adversarial_weight(current_episode)
+
+            # CORREZIONE: Passa il peso adversariale all'ambiente
+            self.env.set_adversarial_weight(adversarial_weight)
 
             # Discriminator initial score
             initial_disc_score = None
@@ -489,19 +532,13 @@ class PPOTrainer:
                         initial_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
 
             while True:
-                # CLAUDE: Create Batch.from_data_list([state]).to(self.device) before forward
                 state_batch = Batch.from_data_list([current_data]).to(self.device)
                 global_features = self._extract_global_features(current_data)
-
-                # Get action mask from environment
                 action_mask = torch.tensor(self.env.get_action_mask(), dtype=torch.bool, device=self.device)
 
-                # Model forward pass
                 with torch.no_grad():
-                    # CLAUDE: Use the same Batch for policy (and discriminator if present)
                     output = self.model(state_batch, global_features)
 
-                    # Get action logits
                     if 'action_logits' in output:
                         action_logits = output['action_logits'].squeeze()
                     else:
@@ -511,26 +548,20 @@ class PPOTrainer:
                     if isinstance(state_value, torch.Tensor):
                         state_value = state_value.squeeze().item()
 
-                # Create epsilon-greedy mixed distribution
                 mixed_probs = self._create_epsilon_greedy_distribution(action_logits, action_mask, epsilon)
-
-                # Sample action from mixed distribution
                 dist = torch.distributions.Categorical(mixed_probs)
                 action = dist.sample()
                 log_prob = dist.log_prob(action)
 
-                # CLAUDE: Save PRE-STEP state in buffer
                 state_before_action = current_data.clone()
 
-                # Take environment step
+                # L'ambiente ora gestisce l'adversarial reward internamente
                 next_state, reward, done, info = self.env.step(int(action.item()))
                 current_data = self.env.current_data.clone()
 
-                # CLAUDE: Normalize reward if enabled
                 if self.config.normalize_rewards:
                     reward = self._normalize_reward(reward)
 
-                # Store transition with PRE-STEP state
                 self.buffer.store(
                     state=state_before_action,
                     global_feat=global_features,
@@ -575,7 +606,9 @@ class PPOTrainer:
                 'no_improve_steps': getattr(self.env, 'no_improve_steps', None),
                 'initial_disc_score': initial_disc_score,
                 'final_disc_score': final_disc_score,
-                'epsilon_used': epsilon
+                'epsilon_used': epsilon,
+                'adversarial_weight': adversarial_weight,
+                'final_graph': current_data.clone()  # Per il discriminatore
             })
 
         self.total_episodes_trained += num_episodes
@@ -813,16 +846,166 @@ class PPOTrainer:
             "clip_frac": clip_frac_final
         }
 
+    def _get_adversarial_weight(self, episode_idx: int) -> float:
+        """Calcola il peso adversariale corrente con annealing graduale"""
+        if episode_idx < self.config.adversarial_start_episode:
+            return 0.0
+
+        progress_episodes = episode_idx - self.config.adversarial_start_episode
+        if progress_episodes >= self.config.adversarial_weight_anneal_episodes:
+            return self.config.adversarial_weight_end
+
+        progress = progress_episodes / self.config.adversarial_weight_anneal_episodes
+        return self.config.adversarial_weight_start + (
+                self.config.adversarial_weight_end - self.config.adversarial_weight_start
+        ) * progress
+
+    def _collect_discriminator_data(self, episode_infos: List[Dict]):
+        """Raccoglie dati per l'addestramento del discriminatore"""
+        if self.discriminator is None or not self.config.collect_discriminator_data:
+            return
+
+        # Raccogli grafi generati dagli episodi recenti
+        for ep_info in episode_infos:
+            if 'final_graph' in ep_info:
+                # Aggiungi il grafo finale come "fake"
+                self.discriminator_buffer['fake_graphs'].append(ep_info['final_graph'].clone())
+                self.discriminator_buffer['fake_labels'].append(0)  # Label per "fake"
+
+        # Campiona grafi reali dal dataset originale
+        real_to_add = min(len(episode_infos), len(self.env.original_data_list))
+        for _ in range(real_to_add):
+            idx = np.random.randint(0, len(self.env.original_data_list))
+            real_graph = self.env.original_data_list[idx].clone()
+            self.discriminator_buffer['real_graphs'].append(real_graph)
+            self.discriminator_buffer['real_labels'].append(1)  # Label per "real"
+
+        # Mantieni buffer size limitato
+        max_size = self.config.discriminator_buffer_size // 2
+        if len(self.discriminator_buffer['fake_graphs']) > max_size:
+            self.discriminator_buffer['fake_graphs'] = self.discriminator_buffer['fake_graphs'][-max_size:]
+            self.discriminator_buffer['fake_labels'] = self.discriminator_buffer['fake_labels'][-max_size:]
+
+        if len(self.discriminator_buffer['real_graphs']) > max_size:
+            self.discriminator_buffer['real_graphs'] = self.discriminator_buffer['real_graphs'][-max_size:]
+            self.discriminator_buffer['real_labels'] = self.discriminator_buffer['real_labels'][-max_size:]
+
     def update_discriminator(self, episode_infos: List[Dict]) -> Dict:
-        """Update discriminator maintaining original functionality"""
-        if self.discriminator is None or len(episode_infos) < 4:
+        """Aggiorna il discriminatore con adversarial learning"""
+        if self.discriminator is None:
             return {}
 
-        try:
-            return {}
-        except Exception as e:
-            self.logger.error(f"Discriminator update failed: {e}")
-            return {}
+        # Raccogli dati per il discriminatore
+        self._collect_discriminator_data(episode_infos)
+
+        # Verifica che ci siano abbastanza dati
+        min_data_needed = self.config.discriminator_batch_size
+        total_fake = len(self.discriminator_buffer['fake_graphs'])
+        total_real = len(self.discriminator_buffer['real_graphs'])
+
+        if total_fake < min_data_needed or total_real < min_data_needed:
+            return {'discriminator_skipped': 'insufficient_data'}
+
+        self.discriminator.train()
+
+        total_loss = 0.0
+        total_accuracy = 0.0
+        total_real_confidence = 0.0
+        total_fake_confidence = 0.0
+        num_batches = 0
+
+        for epoch in range(self.config.discriminator_epochs_per_update):
+            # Prepara batch bilanciato
+            batch_size = self.config.discriminator_batch_size
+            real_batch_size = int(batch_size * self.config.real_fake_ratio)
+            fake_batch_size = batch_size - real_batch_size
+
+            # Campiona grafi reali e fake
+            real_indices = np.random.choice(total_real, real_batch_size, replace=False)
+            fake_indices = np.random.choice(total_fake, fake_batch_size, replace=False)
+
+            # Crea batch
+            batch_graphs = []
+            batch_labels = []
+
+            for idx in real_indices:
+                batch_graphs.append(self.discriminator_buffer['real_graphs'][idx])
+                batch_labels.append(1)  # Real
+
+            for idx in fake_indices:
+                batch_graphs.append(self.discriminator_buffer['fake_graphs'][idx])
+                batch_labels.append(0)  # Fake
+
+            # Converti in tensori
+            batch_data = Batch.from_data_list(batch_graphs).to(self.device)
+            labels = torch.tensor(batch_labels, dtype=torch.long, device=self.device)
+
+            # Forward pass
+            self.discriminator_optimizer.zero_grad()
+
+            disc_output = self.discriminator(batch_data)
+            if isinstance(disc_output, dict):
+                logits = disc_output['logits']
+            else:
+                logits = disc_output
+
+            # Calcola loss
+            loss = F.cross_entropy(logits, labels)
+
+            # Backward pass
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), 1.0)
+            self.discriminator_optimizer.step()
+
+            # Statistiche
+            with torch.no_grad():
+                probs = torch.softmax(logits, dim=1)
+                predictions = torch.argmax(logits, dim=1)
+                accuracy = (predictions == labels).float().mean().item()
+
+                # Confidence su real e fake
+                real_mask = labels == 1
+                fake_mask = labels == 0
+
+                if real_mask.sum() > 0:
+                    real_confidence = probs[real_mask, 1].mean().item()
+                else:
+                    real_confidence = 0.0
+
+                if fake_mask.sum() > 0:
+                    fake_confidence = probs[fake_mask, 0].mean().item()
+                else:
+                    fake_confidence = 0.0
+
+                total_loss += loss.item()
+                total_accuracy += accuracy
+                total_real_confidence += real_confidence
+                total_fake_confidence += fake_confidence
+                num_batches += 1
+
+        self.discriminator.eval()
+
+        # Aggiorna statistiche
+        if num_batches > 0:
+            avg_loss = total_loss / num_batches
+            avg_accuracy = total_accuracy / num_batches
+            avg_real_conf = total_real_confidence / num_batches
+            avg_fake_conf = total_fake_confidence / num_batches
+
+            self.discriminator_stats['losses'].append(avg_loss)
+            self.discriminator_stats['accuracies'].append(avg_accuracy)
+            self.discriminator_stats['real_confidences'].append(avg_real_conf)
+            self.discriminator_stats['fake_confidences'].append(avg_fake_conf)
+
+            return {
+                'discriminator_loss': avg_loss,
+                'discriminator_accuracy': avg_accuracy,
+                'discriminator_real_confidence': avg_real_conf,
+                'discriminator_fake_confidence': avg_fake_conf,
+                'discriminator_batches': num_batches
+            }
+
+        return {}
 
     def evaluate_model(self) -> Dict[str, float]:
         """CLAUDE: Evaluate model using same device path and logging action_usage"""
@@ -914,7 +1097,7 @@ class PPOTrainer:
         }
 
     def _log_metrics(self, episode_idx: int, episode_infos: List[Dict], update_info: Dict = None):
-        """CLAUDE: Enhanced logging with approx_kl, clip_frac, entropy_coef"""
+        """Enhanced logging senza duplicazioni discriminatore"""
         # Update training statistics
         for ep_info in episode_infos:
             self.training_stats['episode_rewards'].append(ep_info['episode_reward'])
@@ -951,10 +1134,13 @@ class PPOTrainer:
 
             current_epsilon = self._epsilon_at(episode_idx)
             current_entropy_coef = self._entropy_coef_at(episode_idx)
+            current_adv_weight = self._get_adversarial_weight(episode_idx)
+
             self.writer.add_scalar('Schedule/Epsilon', current_epsilon, episode_idx)
             self.writer.add_scalar('Schedule/EntropyCoef', current_entropy_coef, episode_idx)
+            self.writer.add_scalar('Schedule/AdversarialWeight', current_adv_weight, episode_idx)
 
-        # CLAUDE: Enhanced console logging with approx_kl, clip_frac, entropy_coef
+        # Console logging
         if episode_idx % self.config.log_every == 0:
             success_rate = sum(1 for imp in recent_improvements if imp > 0.25) / len(recent_improvements)
 
@@ -972,6 +1158,15 @@ class PPOTrainer:
                     f" | clip_frac: {update_info.get('clip_frac', 0):.3f}"
                     f" | entropy_coef: {update_info.get('entropy_coef', 0):.4f}"
                 )
+
+                # Aggiungi info discriminatore se disponibili
+                if 'discriminator_accuracy' in update_info:
+                    disc_log = (
+                        f" | Disc: acc={update_info.get('discriminator_accuracy', 0):.3f}"
+                        f", adv_w={self._get_adversarial_weight(episode_idx):.3f}"
+                    )
+                    extra_log += disc_log
+
                 base_log += extra_log
 
             self.logger.info(base_log)
@@ -996,6 +1191,11 @@ class PPOTrainer:
             'best_reward': self.best_reward
         }
 
+        if self.discriminator is not None:
+            checkpoint['discriminator_state_dict'] = self.discriminator.state_dict()
+            checkpoint['discriminator_optimizer_state_dict'] = self.discriminator_optimizer.state_dict()
+            checkpoint['discriminator_stats'] = self.discriminator_stats
+
         # Save regular checkpoint
         checkpoint_path = self.results_dir / f'checkpoint_episode_{episode_idx}.pt'
         torch.save(checkpoint, checkpoint_path)
@@ -1005,6 +1205,33 @@ class PPOTrainer:
             best_path = self.results_dir / 'best_model.pt'
             torch.save(checkpoint, best_path)
             self.logger.info(f"Saved new best model at episode {episode_idx}")
+
+    def _log_discriminator_performance(self, episode_idx: int):
+        """Log dettagliato performance discriminatore"""
+        if self.discriminator is None or not self.discriminator_stats['losses']:
+            return
+
+        # Statistiche recenti (ultimi 5 aggiornamenti)
+        recent_window = 5
+        recent_losses = self.discriminator_stats['losses'][-recent_window:]
+        recent_accs = self.discriminator_stats['accuracies'][-recent_window:]
+        recent_real_conf = self.discriminator_stats['real_confidences'][-recent_window:]
+        recent_fake_conf = self.discriminator_stats['fake_confidences'][-recent_window:]
+
+        self.logger.info(f"Discriminator Performance (Episode {episode_idx}):")
+        self.logger.info(f"  Recent Loss: {np.mean(recent_losses):.4f} ± {np.std(recent_losses):.4f}")
+        self.logger.info(f"  Recent Accuracy: {np.mean(recent_accs):.3f} ± {np.std(recent_accs):.3f}")
+        self.logger.info(f"  Real Confidence: {np.mean(recent_real_conf):.3f} ± {np.std(recent_real_conf):.3f}")
+        self.logger.info(f"  Fake Confidence: {np.mean(recent_fake_conf):.3f} ± {np.std(recent_fake_conf):.3f}")
+
+        # Buffer sizes
+        real_size = len(self.discriminator_buffer['real_graphs'])
+        fake_size = len(self.discriminator_buffer['fake_graphs'])
+        self.logger.info(f"  Buffer: {real_size} real, {fake_size} fake graphs")
+
+        # Current adversarial weight
+        current_adv_weight = self._get_adversarial_weight(episode_idx)
+        self.logger.info(f"  Adversarial Weight: {current_adv_weight:.3f}")
 
     def train(self):
         """Main training loop maintaining original training phases"""
@@ -1033,9 +1260,15 @@ class PPOTrainer:
 
             # Update discriminator in adversarial phase
             discriminator_info = {}
-            if is_adversarial and episode_count % 200 == 0:
+            if (is_adversarial and
+                    episode_count % self.config.discriminator_update_every == 0 and
+                    episode_count > self.config.adversarial_start_episode):
                 discriminator_info = self.update_discriminator(rollout_info['episodes'])
                 update_info.update(discriminator_info)
+
+                # Log performance discriminatore dopo ogni aggiornamento
+                if discriminator_info and 'discriminator_loss' in discriminator_info:
+                    self._log_discriminator_performance(episode_count)
 
             # Logging
             self._log_metrics(episode_count, rollout_info['episodes'], update_info)

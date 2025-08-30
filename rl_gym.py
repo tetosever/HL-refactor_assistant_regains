@@ -598,9 +598,13 @@ class RefactorEnv(gym.Env):
 
         return penalty
 
+    def set_adversarial_weight(self, weight: float):
+        """Imposta il peso adversariale dall'esterno (chiamato dal trainer)"""
+        self._adversarial_weight = weight
+
     def step(self, action: int) -> Tuple[Data, float, bool, Dict]:
         """
-        CLAUDE: Step with improved reward structure and growth control
+        Step con adversarial reward integrato direttamente nell'ambiente
         """
         if self.current_data is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
@@ -641,10 +645,12 @@ class RefactorEnv(gym.Env):
         # 3) Time penalty
         reward += self.reward_weights.get('time_penalty', -0.02)
 
-        # 4) Adversarial shaping (if present)
-        if prev_disc_score is not None and current_disc_score is not None:
-            disc_improvement = prev_disc_score - current_disc_score
-            reward += self.reward_weights.get('adversarial_weight', 0.5) * disc_improvement
+        # 4) Adversarial reward
+        if hasattr(self, '_adversarial_weight') and self._adversarial_weight > 0:
+            if prev_disc_score is not None and current_disc_score is not None:
+                disc_improvement = prev_disc_score - current_disc_score
+                adversarial_reward = self._adversarial_weight * disc_improvement
+                reward += adversarial_reward
 
         # 5) Structural penalties (if action succeeded)
         if success:
@@ -655,7 +661,6 @@ class RefactorEnv(gym.Env):
         exceeded_cap = current_nodes > growth_cap
         if exceeded_cap:
             reward += self.reward_weights.get('cap_exceeded_penalty', -0.8)
-            print(f"Growth cap exceeded! Current: {current_nodes}, Cap: {growth_cap}")
 
         # 7) Success bonus and early stop
         success_threshold = self.reward_weights.get('success_threshold', 0.03)
@@ -685,7 +690,7 @@ class RefactorEnv(gym.Env):
             if self.no_improve_steps >= patience:
                 done = True
 
-        # 10) CLAUDE: Terminal growth penalty ONLY when done
+        # 10) Terminal growth penalty ONLY when done
         growth_penalty = 0.0
         if done:
             growth_penalty = self._calculate_growth_penalties(
@@ -716,6 +721,9 @@ class RefactorEnv(gym.Env):
             'current_nodes': current_nodes,
             'initial_edges': self.initial_num_edges,
             'current_edges': current_edges,
+            'prev_disc_score': prev_disc_score,
+            'current_disc_score': current_disc_score,
+            'adversarial_weight': getattr(self, '_adversarial_weight', 0.0)
         }
 
         # Update state for next step
