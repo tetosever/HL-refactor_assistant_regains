@@ -3357,3 +3357,282 @@
 2025-08-29 19:43:23,230 [INFO] __main__: Evaluation completed and saved to results/evaluation
 2025-08-29 19:43:23,243 [INFO] __main__: Evaluation completed successfully
 2025-08-29 19:43:23,243 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-30 11:59:13,685 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 11:59:13,686 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 11:59:13,686 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 11:59:13,686 [INFO] __main__: Starting PPO training...
+2025-08-30 11:59:16,139 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 11:59:16,165 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 11:59:16,165 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 11:59:16,165 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 11:59:16,166 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 11:59:16,166 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 11:59:16,166 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 11:59:16,166 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 11:59:16,166 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 11:59:49,728 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 11:59:49,730 [INFO] ppo_trainer: Episode  800 | Reward:  0.028±1.320 | Hub Δ:  0.386±0.167 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0220
+2025-08-30 11:59:52,143 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 88.4%, 6: 11.6%
+2025-08-30 11:59:52,143 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 3.452±1.195 | Hub Δ: 0.494±0.246 | Success: 70.0%
+2025-08-30 11:59:52,143 [ERROR] __main__: Training pipeline failed: Got <class 'dict'>, but numpy array, torch tensor, or caffe2 blob name are expected.
+2025-08-30 12:01:49,080 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 12:01:49,085 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 12:01:49,085 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 12:01:49,085 [INFO] __main__: Starting PPO training...
+2025-08-30 12:01:51,594 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 12:01:51,619 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 12:01:51,619 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 12:01:51,619 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 12:01:51,621 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 12:01:51,621 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 12:01:51,621 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 12:01:51,621 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 12:01:51,621 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 12:02:34,287 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 12:02:34,289 [INFO] ppo_trainer: Episode  800 | Reward:  0.028±1.320 | Hub Δ:  0.386±0.167 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0220
+2025-08-30 12:02:36,940 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 88.4%, 6: 11.6%
+2025-08-30 12:02:36,941 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 3.452±1.195 | Hub Δ: 0.494±0.246 | Success: 70.0%
+2025-08-30 12:02:36,998 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-30 12:03:06,976 [INFO] ppo_trainer: Curriculum: Stage 2, Coverage 59.0%
+2025-08-30 12:03:06,979 [INFO] ppo_trainer: Episode 1600 | Reward: -0.527±3.008 | Hub Δ:  0.512±0.227 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.131 | entropy_coef: 0.0140
+2025-08-30 12:03:08,443 [INFO] ppo_trainer: Action usage: 0: 13.6%, 1: 0.0%, 2: 0.0%, 3: 9.9%, 4: 0.0%, 5: 71.6%, 6: 4.9%
+2025-08-30 12:03:08,443 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 3.651±1.470 | Hub Δ: 0.462±0.215 | Success: 82.0%
+2025-08-30 12:03:53,402 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 74.7%
+2025-08-30 12:03:53,405 [INFO] ppo_trainer: Episode 2400 | Reward: -0.026±2.646 | Hub Δ:  0.469±0.249 | Success: 78.1% | Buffer: 0 | approx_kl: 0.0123 | clip_frac: 0.038 | entropy_coef: 0.0060
+2025-08-30 12:03:54,908 [INFO] ppo_trainer: Action usage: 0: 22.2%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 74.1%, 6: 3.7%
+2025-08-30 12:03:54,909 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 3.792±1.570 | Hub Δ: 0.472±0.264 | Success: 68.0%
+2025-08-30 12:03:54,965 [INFO] ppo_trainer: Saved new best model at episode 2400
+2025-08-30 12:04:07,632 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05830, clip_frac=0.140, p_loss=-0.0157, v_loss=1.0883, lr=1.34e-04, entropy_coef=0.0050
+2025-08-30 12:04:24,024 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05103, clip_frac=0.029, p_loss=-0.0029, v_loss=1.4259, lr=1.16e-04, entropy_coef=0.0050
+2025-08-30 12:04:25,326 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05877, clip_frac=0.100, p_loss=-0.0134, v_loss=1.9098, lr=1.14e-04, entropy_coef=0.0050
+2025-08-30 12:04:47,320 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 89.1%
+2025-08-30 12:04:47,322 [INFO] ppo_trainer: Episode 3200 | Reward: -0.662±3.446 | Hub Δ:  0.486±0.251 | Success: 81.2% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.046 | entropy_coef: 0.0050
+2025-08-30 12:04:49,532 [INFO] ppo_trainer: Action usage: 0: 5.3%, 1: 0.0%, 2: 0.0%, 3: 7.9%, 4: 0.0%, 5: 85.5%, 6: 1.3%
+2025-08-30 12:04:49,532 [INFO] ppo_trainer: Evaluation at episode 3200: Reward: 3.817±1.231 | Hub Δ: 0.472±0.261 | Success: 74.0%
+2025-08-30 12:05:20,376 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.07929, clip_frac=0.098, p_loss=-0.0151, v_loss=1.0896, lr=1.20e-04, entropy_coef=0.0050
+2025-08-30 12:05:37,967 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:05:37,969 [INFO] ppo_trainer: Episode 4000 | Reward:  0.349±1.470 | Hub Δ:  0.434±0.222 | Success: 81.2% | Buffer: 0 | approx_kl: 0.0249 | clip_frac: 0.116 | entropy_coef: 0.0050
+2025-08-30 12:05:39,014 [INFO] ppo_trainer: Action usage: 0: 9.8%, 1: 0.0%, 2: 0.0%, 3: 1.6%, 4: 0.0%, 5: 86.9%, 6: 1.6%
+2025-08-30 12:05:39,015 [INFO] ppo_trainer: Evaluation at episode 4000: Reward: 3.782±1.041 | Hub Δ: 0.436±0.185 | Success: 76.0%
+2025-08-30 12:06:29,602 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:06:29,604 [INFO] ppo_trainer: Episode 4800 | Reward: -0.155±3.532 | Hub Δ:  0.473±0.233 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0001 | clip_frac: 0.000 | entropy_coef: 0.0050
+2025-08-30 12:06:32,887 [INFO] ppo_trainer: Action usage: 0: 12.9%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 85.9%, 6: 1.2%
+2025-08-30 12:06:32,887 [INFO] ppo_trainer: Evaluation at episode 4800: Reward: 3.863±1.343 | Hub Δ: 0.502±0.263 | Success: 70.0%
+2025-08-30 12:06:32,961 [INFO] ppo_trainer: Saved new best model at episode 4800
+2025-08-30 12:06:45,514 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:06:45,517 [INFO] ppo_trainer: Episode 5000 | Reward:  0.472±1.156 | Hub Δ:  0.593±0.260 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0050
+2025-08-30 12:06:47,890 [INFO] ppo_trainer: Action usage: 0: 14.7%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 84.0%, 6: 1.3%
+2025-08-30 12:06:47,890 [INFO] ppo_trainer: Evaluation at episode 5000: Reward: 3.847±1.166 | Hub Δ: 0.477±0.227 | Success: 76.0%
+2025-08-30 12:06:50,314 [INFO] ppo_trainer: Action usage: 0: 17.3%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 81.5%, 6: 1.2%
+2025-08-30 12:06:50,344 [INFO] ppo_trainer: PPO training completed in 0.08 hours
+2025-08-30 12:06:50,344 [INFO] ppo_trainer: Best reward: 3.863
+2025-08-30 12:06:50,344 [INFO] ppo_trainer: Final hub improvement: 0.5277
+2025-08-30 12:06:50,344 [INFO] ppo_trainer: PROGRESS: Improved beyond previous plateau
+2025-08-30 12:06:50,372 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-30 12:06:50,372 [INFO] __main__: PPO training completed
+2025-08-30 12:06:50,384 [INFO] __main__: PPO training phase completed successfully
+2025-08-30 12:06:50,384 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-30 12:06:50,384 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-30 12:06:50,396 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 256, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.3, 'shared_encoder': True}
+2025-08-30 12:06:57,652 [INFO] __main__: Evaluation Results:
+2025-08-30 12:06:57,652 [INFO] __main__:   Success Rate: 1.000
+2025-08-30 12:06:57,652 [INFO] __main__:   Avg Reward: 3.322 ± 1.283
+2025-08-30 12:06:57,652 [INFO] __main__:   Avg Hub Improvement: 0.442 ± 0.212
+2025-08-30 12:06:57,652 [INFO] __main__:   Avg Episode Length: 2.5
+2025-08-30 12:06:57,652 [INFO] __main__:   Discriminator Improvement: -0.037
+2025-08-30 12:06:57,655 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-30 12:06:57,665 [INFO] __main__: Evaluation completed successfully
+2025-08-30 12:06:57,665 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-30 12:17:36,420 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 12:17:36,421 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 12:17:36,421 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 12:17:36,421 [INFO] __main__: Starting PPO training...
+2025-08-30 12:17:38,558 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 12:17:38,571 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 12:17:38,571 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 12:17:38,572 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 12:17:38,573 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 12:17:38,573 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 12:17:38,573 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 12:17:38,573 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 12:17:38,573 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 12:18:22,125 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 12:18:22,127 [INFO] ppo_trainer: Episode  800 | Reward: -0.023±1.824 | Hub Δ:  0.304±0.202 | Success: 62.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0500
+2025-08-30 12:18:24,192 [INFO] ppo_trainer: Action usage: 0: 9.8%, 1: 6.5%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 83.7%, 6: 0.0%
+2025-08-30 12:18:24,192 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 3.669±1.311 | Hub Δ: 0.473±0.218 | Success: 78.0%
+2025-08-30 12:18:24,228 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-30 12:18:59,454 [INFO] ppo_trainer: Curriculum: Stage 2, Coverage 59.0%
+2025-08-30 12:18:59,456 [INFO] ppo_trainer: Episode 1600 | Reward: -0.254±2.100 | Hub Δ:  0.428±0.286 | Success: 71.9% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.015 | entropy_coef: 0.0400
+2025-08-30 12:19:01,260 [INFO] ppo_trainer: Action usage: 0: 6.9%, 1: 4.6%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 88.5%, 6: 0.0%
+2025-08-30 12:19:01,260 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 3.666±1.258 | Hub Δ: 0.456±0.235 | Success: 74.0%
+2025-08-30 12:19:45,553 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 74.7%
+2025-08-30 12:19:45,555 [INFO] ppo_trainer: Episode 2400 | Reward: -0.212±2.845 | Hub Δ:  0.430±0.233 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0017 | clip_frac: 0.000 | entropy_coef: 0.0300
+2025-08-30 12:19:47,591 [INFO] ppo_trainer: Action usage: 0: 3.4%, 1: 2.3%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 94.3%, 6: 0.0%
+2025-08-30 12:19:47,591 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 3.701±1.229 | Hub Δ: 0.469±0.252 | Success: 68.0%
+2025-08-30 12:20:32,926 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 89.1%
+2025-08-30 12:20:32,928 [INFO] ppo_trainer: Episode 3200 | Reward: -0.750±3.519 | Hub Δ:  0.477±0.225 | Success: 81.2% | Buffer: 0 | approx_kl: 0.0004 | clip_frac: 0.000 | entropy_coef: 0.0200
+2025-08-30 12:20:34,421 [INFO] ppo_trainer: Action usage: 0: 5.6%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 91.7%, 6: 2.8%
+2025-08-30 12:20:34,422 [INFO] ppo_trainer: Evaluation at episode 3200: Reward: 3.880±1.219 | Hub Δ: 0.477±0.238 | Success: 78.0%
+2025-08-30 12:21:16,641 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:21:16,643 [INFO] ppo_trainer: Episode 4000 | Reward:  0.396±1.886 | Hub Δ:  0.486±0.219 | Success: 90.6% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:21:18,932 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 98.7%, 6: 1.3%
+2025-08-30 12:21:18,933 [INFO] ppo_trainer: Evaluation at episode 4000: Reward: 3.861±1.099 | Hub Δ: 0.474±0.237 | Success: 74.0%
+2025-08-30 12:22:05,184 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:22:05,186 [INFO] ppo_trainer: Episode 4800 | Reward: -0.161±3.582 | Hub Δ:  0.471±0.229 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:22:07,192 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 96.2%, 6: 3.8%
+2025-08-30 12:22:07,193 [INFO] ppo_trainer: Evaluation at episode 4800: Reward: 3.567±1.055 | Hub Δ: 0.443±0.218 | Success: 74.0%
+2025-08-30 12:22:17,125 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:22:17,127 [INFO] ppo_trainer: Episode 5000 | Reward:  0.607±0.862 | Hub Δ:  0.590±0.256 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:22:19,515 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 97.5%, 6: 2.5%
+2025-08-30 12:22:19,515 [INFO] ppo_trainer: Evaluation at episode 5000: Reward: 3.512±1.025 | Hub Δ: 0.432±0.217 | Success: 62.0%
+2025-08-30 12:22:21,253 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 97.5%, 6: 2.5%
+2025-08-30 12:22:21,280 [INFO] ppo_trainer: PPO training completed in 0.08 hours
+2025-08-30 12:22:21,280 [INFO] ppo_trainer: Best reward: 3.669
+2025-08-30 12:22:21,280 [INFO] ppo_trainer: Final hub improvement: 0.4863
+2025-08-30 12:22:21,280 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-30 12:22:21,298 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-30 12:22:21,299 [INFO] __main__: PPO training completed
+2025-08-30 12:22:21,308 [INFO] __main__: PPO training phase completed successfully
+2025-08-30 12:22:21,308 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-30 12:22:21,308 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-30 12:22:21,316 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 256, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.3, 'shared_encoder': True}
+2025-08-30 12:22:27,093 [INFO] __main__: Evaluation Results:
+2025-08-30 12:22:27,093 [INFO] __main__:   Success Rate: 1.000
+2025-08-30 12:22:27,093 [INFO] __main__:   Avg Reward: 3.944 ± 1.281
+2025-08-30 12:22:27,093 [INFO] __main__:   Avg Hub Improvement: 0.524 ± 0.261
+2025-08-30 12:22:27,093 [INFO] __main__:   Avg Episode Length: 2.0
+2025-08-30 12:22:27,093 [INFO] __main__:   Discriminator Improvement: -0.046
+2025-08-30 12:22:27,094 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-30 12:22:27,103 [INFO] __main__: Evaluation completed successfully
+2025-08-30 12:22:27,103 [INFO] __main__: === Training Pipeline Completed Successfully ===
+2025-08-30 12:25:45,873 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 12:25:45,873 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 12:25:45,874 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 12:25:45,874 [INFO] __main__: Starting PPO training...
+2025-08-30 12:25:48,099 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 12:25:48,122 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 12:25:48,122 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 12:25:48,122 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 12:25:48,123 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 12:25:48,123 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 12:25:48,123 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 12:25:48,123 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 12:25:48,123 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 12:26:25,306 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 12:26:25,308 [INFO] ppo_trainer: Episode  800 | Reward: -0.023±1.824 | Hub Δ:  0.304±0.202 | Success: 62.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0500
+2025-08-30 12:26:27,170 [INFO] ppo_trainer: Action usage: 0: 9.8%, 1: 6.5%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 83.7%, 6: 0.0%
+2025-08-30 12:26:27,171 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 3.669±1.311 | Hub Δ: 0.473±0.218 | Success: 78.0%
+2025-08-30 12:26:27,219 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-30 12:27:00,704 [INFO] ppo_trainer: Curriculum: Stage 2, Coverage 59.0%
+2025-08-30 12:27:00,705 [INFO] ppo_trainer: Episode 1600 | Reward: -0.254±2.100 | Hub Δ:  0.428±0.286 | Success: 71.9% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.015 | entropy_coef: 0.0400
+2025-08-30 12:27:02,532 [INFO] ppo_trainer: Action usage: 0: 6.9%, 1: 4.6%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 88.5%, 6: 0.0%
+2025-08-30 12:27:02,532 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 3.666±1.258 | Hub Δ: 0.456±0.235 | Success: 74.0%
+2025-08-30 12:27:55,660 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 74.7%
+2025-08-30 12:27:55,662 [INFO] ppo_trainer: Episode 2400 | Reward: -0.212±2.845 | Hub Δ:  0.430±0.233 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0017 | clip_frac: 0.000 | entropy_coef: 0.0300
+2025-08-30 12:27:57,893 [INFO] ppo_trainer: Action usage: 0: 3.4%, 1: 2.3%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 94.3%, 6: 0.0%
+2025-08-30 12:27:57,893 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 3.701±1.229 | Hub Δ: 0.469±0.252 | Success: 68.0%
+2025-08-30 12:28:41,726 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 89.1%
+2025-08-30 12:28:41,728 [INFO] ppo_trainer: Episode 3200 | Reward: -0.750±3.519 | Hub Δ:  0.477±0.225 | Success: 81.2% | Buffer: 0 | approx_kl: 0.0004 | clip_frac: 0.000 | entropy_coef: 0.0200
+2025-08-30 12:28:43,177 [INFO] ppo_trainer: Action usage: 0: 5.6%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 91.7%, 6: 2.8%
+2025-08-30 12:28:43,177 [INFO] ppo_trainer: Evaluation at episode 3200: Reward: 3.880±1.219 | Hub Δ: 0.477±0.238 | Success: 78.0%
+2025-08-30 12:29:24,544 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:29:24,546 [INFO] ppo_trainer: Episode 4000 | Reward:  0.396±1.886 | Hub Δ:  0.486±0.219 | Success: 90.6% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:29:26,323 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 98.7%, 6: 1.3%
+2025-08-30 12:29:26,323 [INFO] ppo_trainer: Evaluation at episode 4000: Reward: 3.861±1.099 | Hub Δ: 0.474±0.237 | Success: 74.0%
+2025-08-30 12:30:08,032 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:30:08,034 [INFO] ppo_trainer: Episode 4800 | Reward: -0.161±3.582 | Hub Δ:  0.471±0.229 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:30:10,341 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 96.2%, 6: 3.8%
+2025-08-30 12:30:10,342 [INFO] ppo_trainer: Evaluation at episode 4800: Reward: 3.567±1.055 | Hub Δ: 0.443±0.218 | Success: 74.0%
+2025-08-30 12:30:20,270 [INFO] __main__: Training interrupted by user
+2025-08-30 12:30:29,845 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 12:30:29,845 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 12:30:29,845 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 12:30:29,845 [INFO] __main__: Starting PPO training...
+2025-08-30 12:30:32,113 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 12:30:32,146 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 12:30:32,146 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 12:30:32,147 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 12:30:32,148 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 12:30:32,148 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 12:30:32,149 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 12:30:32,149 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 12:30:32,149 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 12:31:11,541 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 12:31:11,543 [INFO] ppo_trainer: Episode  800 | Reward: -0.022±1.801 | Hub Δ:  0.305±0.201 | Success: 62.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0500
+2025-08-30 12:31:12,727 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 97.2%, 6: 2.8%
+2025-08-30 12:31:12,728 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 4.106±1.154 | Hub Δ: 0.522±0.237 | Success: 86.0%
+2025-08-30 12:31:12,769 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-30 12:31:43,842 [INFO] ppo_trainer: Curriculum: Stage 2, Coverage 59.0%
+2025-08-30 12:31:43,844 [INFO] ppo_trainer: Episode 1600 | Reward: -0.477±2.803 | Hub Δ:  0.519±0.237 | Success: 84.4% | Buffer: 0 | approx_kl: 0.0010 | clip_frac: 0.000 | entropy_coef: 0.0400
+2025-08-30 12:31:45,419 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 97.6%, 6: 2.4%
+2025-08-30 12:31:45,419 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 3.933±1.177 | Hub Δ: 0.510±0.246 | Success: 84.0%
+2025-08-30 12:32:27,632 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 74.7%
+2025-08-30 12:32:27,634 [INFO] ppo_trainer: Episode 2400 | Reward: -0.048±2.144 | Hub Δ:  0.443±0.242 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.016 | entropy_coef: 0.0300
+2025-08-30 12:32:29,708 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 98.8%, 6: 1.2%
+2025-08-30 12:32:29,709 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 3.888±1.192 | Hub Δ: 0.505±0.256 | Success: 80.0%
+2025-08-30 12:32:33,204 [INFO] ppo_trainer: Early stop (KL). approx_kl=0.05497, clip_frac=0.111, p_loss=-0.0137, v_loss=2.1000, lr=1.40e-04, entropy_coef=0.0292
+2025-08-30 12:33:06,303 [INFO] __main__: Training interrupted by user
+2025-08-30 12:33:14,921 [INFO] __main__: === Step 1: Discriminator Pretraining ===
+2025-08-30 12:33:14,922 [INFO] __main__: Pre-trained discriminator found at results/discriminator_pretraining/pretrained_discriminator.pt
+2025-08-30 12:33:14,922 [INFO] __main__: === Step 2: PPO Training ===
+2025-08-30 12:33:14,922 [INFO] __main__: Starting PPO training...
+2025-08-30 12:33:16,487 [INFO] root: Loaded pre-trained discriminator with F1: 0.8179292019954758
+2025-08-30 12:33:16,501 [INFO] ppo_trainer: Actor-Critic model parameters: 533,256
+2025-08-30 12:33:16,501 [INFO] ppo_trainer: Model initialized from PPOConfig
+2025-08-30 12:33:16,501 [INFO] ppo_trainer: Using CyclicLR: base_lr=0.0001, max_lr=0.0002, step_up=96, mode=triangular2
+2025-08-30 12:33:16,502 [INFO] ppo_trainer: PPO Trainer initialized successfully!
+2025-08-30 12:33:16,502 [INFO] ppo_trainer: Starting PPO training
+2025-08-30 12:33:16,502 [INFO] ppo_trainer: Training for 5000 episodes
+2025-08-30 12:33:16,502 [INFO] ppo_trainer: Warmup phase: episodes 1-1000
+2025-08-30 12:33:16,502 [INFO] ppo_trainer: Adversarial phase: episodes 1001+
+2025-08-30 12:34:00,621 [INFO] ppo_trainer: Curriculum: Stage 1, Coverage 36.0%
+2025-08-30 12:34:00,623 [INFO] ppo_trainer: Episode  800 | Reward:  3.096±1.335 | Hub Δ:  0.347±0.186 | Success: 68.8% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0500
+2025-08-30 12:34:02,242 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 21.3%, 3: 0.0%, 4: 0.0%, 5: 78.7%, 6: 0.0%
+2025-08-30 12:34:02,242 [INFO] ppo_trainer: Evaluation at episode 800: Reward: 3.734±1.480 | Hub Δ: 0.494±0.210 | Success: 84.0%
+2025-08-30 12:34:02,287 [INFO] ppo_trainer: Saved new best model at episode 800
+2025-08-30 12:34:38,053 [INFO] ppo_trainer: Curriculum: Stage 2, Coverage 59.0%
+2025-08-30 12:34:38,055 [INFO] ppo_trainer: Episode 1600 | Reward:  3.283±1.843 | Hub Δ:  0.479±0.276 | Success: 75.0% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.014 | entropy_coef: 0.0400
+2025-08-30 12:34:41,545 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 100.0%, 6: 0.0%
+2025-08-30 12:34:41,546 [INFO] ppo_trainer: Evaluation at episode 1600: Reward: 3.736±1.267 | Hub Δ: 0.514±0.282 | Success: 72.0%
+2025-08-30 12:34:41,607 [INFO] ppo_trainer: Saved new best model at episode 1600
+2025-08-30 12:35:43,179 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 74.7%
+2025-08-30 12:35:43,182 [INFO] ppo_trainer: Episode 2400 | Reward:  3.510±1.384 | Hub Δ:  0.472±0.255 | Success: 78.1% | Buffer: 0 | approx_kl: 0.0004 | clip_frac: 0.000 | entropy_coef: 0.0300
+2025-08-30 12:35:46,225 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 0.0%, 2: 16.0%, 3: 0.0%, 4: 0.0%, 5: 84.0%, 6: 0.0%
+2025-08-30 12:35:46,226 [INFO] ppo_trainer: Evaluation at episode 2400: Reward: 3.685±1.445 | Hub Δ: 0.482±0.243 | Success: 74.0%
+2025-08-30 12:36:39,770 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 89.1%
+2025-08-30 12:36:39,773 [INFO] ppo_trainer: Episode 3200 | Reward:  3.544±1.491 | Hub Δ:  0.495±0.235 | Success: 81.2% | Buffer: 0 | approx_kl: 0.0054 | clip_frac: 0.027 | entropy_coef: 0.0200
+2025-08-30 12:36:44,448 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 22.2%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 77.8%, 6: 0.0%
+2025-08-30 12:36:44,448 [INFO] ppo_trainer: Evaluation at episode 3200: Reward: 3.397±1.972 | Hub Δ: 0.503±0.252 | Success: 74.0%
+2025-08-30 12:37:43,539 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:37:43,541 [INFO] ppo_trainer: Episode 4000 | Reward:  3.677±1.504 | Hub Δ:  0.469±0.213 | Success: 90.6% | Buffer: 0 | approx_kl: 0.0002 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:37:46,495 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 5.7%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 94.3%, 6: 0.0%
+2025-08-30 12:37:46,496 [INFO] ppo_trainer: Evaluation at episode 4000: Reward: 3.900±1.330 | Hub Δ: 0.509±0.246 | Success: 82.0%
+2025-08-30 12:37:46,557 [INFO] ppo_trainer: Saved new best model at episode 4000
+2025-08-30 12:38:47,298 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:38:47,300 [INFO] ppo_trainer: Episode 4800 | Reward:  3.838±1.033 | Hub Δ:  0.473±0.233 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0001 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:38:49,244 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 14.1%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 85.9%, 6: 0.0%
+2025-08-30 12:38:49,245 [INFO] ppo_trainer: Evaluation at episode 4800: Reward: 3.629±1.309 | Hub Δ: 0.427±0.192 | Success: 70.0%
+2025-08-30 12:39:04,561 [INFO] ppo_trainer: Curriculum: Stage 3, Coverage 100.0%
+2025-08-30 12:39:04,563 [INFO] ppo_trainer: Episode 5000 | Reward:  4.554±1.161 | Hub Δ:  0.590±0.256 | Success: 87.5% | Buffer: 0 | approx_kl: 0.0000 | clip_frac: 0.000 | entropy_coef: 0.0100
+2025-08-30 12:39:06,446 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 8.1%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 91.9%, 6: 0.0%
+2025-08-30 12:39:06,446 [INFO] ppo_trainer: Evaluation at episode 5000: Reward: 3.911±1.042 | Hub Δ: 0.465±0.166 | Success: 84.0%
+2025-08-30 12:39:10,010 [INFO] ppo_trainer: Action usage: 0: 0.0%, 1: 15.0%, 2: 0.0%, 3: 0.0%, 4: 0.0%, 5: 85.0%, 6: 0.0%
+2025-08-30 12:39:10,041 [INFO] ppo_trainer: PPO training completed in 0.10 hours
+2025-08-30 12:39:10,041 [INFO] ppo_trainer: Best reward: 3.900
+2025-08-30 12:39:10,042 [INFO] ppo_trainer: Final hub improvement: 0.4434
+2025-08-30 12:39:10,042 [INFO] ppo_trainer: PLATEAU: Consider further tuning
+2025-08-30 12:39:10,067 [INFO] ppo_trainer: Results saved to results/ppo_training
+2025-08-30 12:39:10,067 [INFO] __main__: PPO training completed
+2025-08-30 12:39:10,081 [INFO] __main__: PPO training phase completed successfully
+2025-08-30 12:39:10,081 [INFO] __main__: === Step 3: Evaluation ===
+2025-08-30 12:39:10,081 [INFO] __main__: Starting comprehensive evaluation...
+2025-08-30 12:39:10,095 [INFO] __main__: Using saved model config: {'node_dim': 7, 'hidden_dim': 256, 'num_layers': 3, 'num_actions': 7, 'global_features_dim': 4, 'dropout': 0.3, 'shared_encoder': True}
+2025-08-30 12:39:18,981 [INFO] __main__: Evaluation Results:
+2025-08-30 12:39:18,982 [INFO] __main__:   Success Rate: 1.000
+2025-08-30 12:39:18,982 [INFO] __main__:   Avg Reward: 3.984 ± 1.059
+2025-08-30 12:39:18,982 [INFO] __main__:   Avg Hub Improvement: 0.504 ± 0.226
+2025-08-30 12:39:18,982 [INFO] __main__:   Avg Episode Length: 1.7
+2025-08-30 12:39:18,982 [INFO] __main__:   Discriminator Improvement: -0.052
+2025-08-30 12:39:18,985 [INFO] __main__: Evaluation completed and saved to results/evaluation
+2025-08-30 12:39:18,997 [INFO] __main__: Evaluation completed successfully
+2025-08-30 12:39:18,998 [INFO] __main__: === Training Pipeline Completed Successfully ===

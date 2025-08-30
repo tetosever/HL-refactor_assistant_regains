@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Main Training Script for Graph Refactoring PPO - SIMPLIFIED VERSION
-Uses only PPOConfig defaults, no argument parsing or overrides
+Main Training Script for Graph Refactoring PPO - UPDATED VERSION
+Uses PPOConfig as single source of truth with robust reward weight handling
 """
 
 import os
@@ -96,7 +96,7 @@ def run_discriminator_pretraining(discriminator_path: str, force_retrain: bool =
 
 
 def run_ppo_training(config: PPOConfig) -> Dict[str, Any]:
-    """Run complete PPO training"""
+    """CLAUDE: Run complete PPO training using PPOConfig as single source of truth"""
     logger = logging.getLogger(__name__)
     logger.info("Starting PPO training...")
 
@@ -112,7 +112,7 @@ def run_ppo_training(config: PPOConfig) -> Dict[str, Any]:
 
 
 def run_evaluation(config: PPOConfig, training_results: Dict[str, Any]) -> Dict[str, Any]:
-    """Comprehensive evaluation of trained PPO model"""
+    """CLAUDE: Comprehensive evaluation using _build_env pattern from trainer"""
     logger = logging.getLogger(__name__)
     logger.info("Starting comprehensive evaluation...")
 
@@ -131,12 +131,12 @@ def run_evaluation(config: PPOConfig, training_results: Dict[str, Any]) -> Dict[
         # Load model checkpoint
         checkpoint = torch.load(best_model_path, map_location=config.device)
 
-        # Use model config from checkpoint
+        # CLAUDE: Use model config from checkpoint or PPOConfig defaults
         if 'model_config' in checkpoint:
             ac_config = checkpoint['model_config']
             logger.info(f"Using saved model config: {ac_config}")
         else:
-            # Fallback config
+            # CLAUDE: Fallback config from PPOConfig
             ac_config = {
                 'node_dim': config.node_dim,
                 'hidden_dim': config.hidden_dim,
@@ -167,13 +167,20 @@ def run_evaluation(config: PPOConfig, training_results: Dict[str, Any]) -> Dict[
             except Exception as e:
                 logger.warning(f"Could not load discriminator: {e}")
 
-        # Initialize PPO-compatible environment
+        # CLAUDE: Initialize environment using same pattern as trainer (_build_env)
         env = PPORefactorEnv(
             data_path=config.data_path,
             discriminator=discriminator,
-            max_steps=config.max_episode_steps,
+            max_steps=config.max_steps,
             device=config.device,
-            reward_weights=config.reward_weights
+            reward_weights=config.reward_weights,
+            # CLAUDE: Growth control parameters from config
+            max_new_nodes_per_episode=config.max_new_nodes,
+            max_total_node_growth=config.max_growth,
+            growth_penalty_mode=config.growth_penalty_mode,
+            growth_penalty_power=config.growth_penalty_power,
+            growth_penalty_gamma_nodes=config.growth_gamma_nodes,
+            growth_penalty_gamma_edges=config.growth_gamma_edges
         )
 
         # Run evaluation episodes
@@ -220,7 +227,9 @@ def run_evaluation(config: PPOConfig, training_results: Dict[str, Any]) -> Dict[
 
                 # Get greedy action from model
                 with torch.no_grad():
-                    output = model(current_data, global_features)
+                    from torch_geometric.data import Batch
+                    state_batch = Batch.from_data_list([current_data]).to(config.device)
+                    output = model(state_batch, global_features)
                     action = torch.argmax(output['action_probs'], dim=1).item()
 
                 # Step returns Data object
@@ -310,9 +319,42 @@ def run_evaluation(config: PPOConfig, training_results: Dict[str, Any]) -> Dict[
     return eval_results
 
 
+def print_reward_weights_safely(reward_weights: Dict[str, float]):
+    """CLAUDE: Print reward weights using .get() to avoid KeyError"""
+    print("Reward Configuration:")
+
+    # Main reward components
+    print(f"  Hub Weight: {reward_weights.get('hub_weight', 'N/A')}")
+    print(f"  Adversarial Weight: {reward_weights.get('adversarial_weight', 'N/A')}")
+    print(f"  Success Threshold: {reward_weights.get('success_threshold', 'N/A')}")
+    print(f"  Success Bonus: {reward_weights.get('success_bonus', 'N/A')}")
+
+    # Step rewards
+    step_valid = reward_weights.get('step_valid', 'N/A')
+    step_invalid = reward_weights.get('step_invalid', 'N/A')
+    time_penalty = reward_weights.get('time_penalty', 'N/A')
+    print(f"  Step Valid: {step_valid}, Invalid: {step_invalid}, Time: {time_penalty}")
+
+    # Growth control
+    node_penalty = reward_weights.get('node_penalty', 'N/A')
+    edge_penalty = reward_weights.get('edge_penalty', 'N/A')
+    cap_exceeded = reward_weights.get('cap_exceeded_penalty', 'N/A')
+    print(f"  Growth - Node: {node_penalty}, Edge: {edge_penalty}, Cap Exceeded: {cap_exceeded}")
+
+    # Structural penalties
+    cycle_penalty = reward_weights.get('cycle_penalty', 'N/A')
+    duplicate_penalty = reward_weights.get('duplicate_penalty', 'N/A')
+    early_stop_penalty = reward_weights.get('early_stop_penalty', 'N/A')
+    print(f"  Structural - Cycle: {cycle_penalty}, Duplicate: {duplicate_penalty}, Early Stop: {early_stop_penalty}")
+
+    # Patience
+    patience = reward_weights.get('patience', 'N/A')
+    print(f"  Patience: {patience}")
+
+
 def main():
     """
-    Main function using only PPOConfig defaults
+    CLAUDE: Main function using PPOConfig as single source of truth
     """
 
     # Create PPOConfig with all defaults - no arguments, no overrides
@@ -324,9 +366,22 @@ def main():
     print(f"Episodes: {config.num_episodes}")
     print(f"Data path: {config.data_path}")
     print(f"Learning rate: {config.lr}")
-    print(f"Hub weight: {config.reward_weights['hub_weight']}")
-    print(f"Max episode steps: {config.max_episode_steps}")
+    print(f"Max episode steps: {config.max_steps}")
     print(f"Warmup episodes: {config.warmup_episodes}")
+    print()
+
+    # CLAUDE: Print reward weights safely using .get()
+    print_reward_weights_safely(config.reward_weights)
+    print()
+
+    # CLAUDE: Print growth control parameters
+    print("Growth Control Configuration:")
+    print(f"  Max New Nodes: {config.max_new_nodes}")
+    print(f"  Max Growth Ratio: {config.max_growth}")
+    print(f"  Growth Penalty Mode: {config.growth_penalty_mode}")
+    print(f"  Growth Gamma Nodes: {config.growth_gamma_nodes}")
+    print(f"  Growth Gamma Edges: {config.growth_gamma_edges}")
+    print()
 
     # Setup
     setup_project_structure()
@@ -364,10 +419,26 @@ def main():
             print(f"Success Rate: {summary['success_rate']:.1%}")
             print(f"Average Hub Improvement: {summary['avg_hub_improvement']:.4f}")
             print(f"Average Reward: {summary['avg_episode_reward']:.3f}")
+            print(f"Average Episode Length: {summary['avg_episode_length']:.1f}")
 
-            if summary['avg_hub_improvement'] > 0.6:
+            # CLAUDE: Check acceptance criteria from prompt
+            success_rate = summary['success_rate']
+            avg_reward = summary['avg_episode_reward']
+            avg_hub_delta = summary['avg_hub_improvement']
+            avg_length = summary['avg_episode_length']
+
+            print(f"\n=== ACCEPTANCE CRITERIA CHECK ===")
+            print(f"✓ Success Rate ≥ 90%: {'✅' if success_rate >= 0.9 else '❌'} ({success_rate:.1%})")
+            print(f"✓ Avg Reward ≥ 3.2: {'✅' if avg_reward >= 3.2 else '❌'} ({avg_reward:.3f})")
+            print(f"✓ Avg Hub Δ ≥ 0.40: {'✅' if avg_hub_delta >= 0.40 else '❌'} ({avg_hub_delta:.3f})")
+            print(f"✓ Avg Episode Length ≤ 3: {'✅' if avg_length <= 3.0 else '❌'} ({avg_length:.1f})")
+
+            if (success_rate >= 0.9 and avg_reward >= 3.2 and
+                    avg_hub_delta >= 0.40 and avg_length <= 3.0):
+                print("🎉 ALL ACCEPTANCE CRITERIA MET!")
+            elif avg_hub_delta > 0.6:
                 print("SUCCESS: Significant improvement achieved!")
-            elif summary['avg_hub_improvement'] > 0.3:
+            elif avg_hub_delta > 0.3:
                 print("PROGRESS: Moderate improvement achieved")
             else:
                 print("LIMITED: Consider tuning hyperparameters in PPOConfig")

@@ -2,8 +2,7 @@
 Ambiente di reinforcement learning per la rifattorizzazione automatica
 di sub-graph 1-hop di dependency graph usando PyTorch Geometric.
 
-CORRECTED VERSION for PPO - Maintains all original environment logic
-but fixes PPO interface compatibility issues.
+UPDATED VERSION - PPOConfig as single source of truth with robust reward weights
 """
 
 import gym
@@ -31,9 +30,7 @@ HUB_FEATURES = [
 
 
 class HubTracker:
-    """
-    MAINTAINED: Original robust hub tracking system
-    """
+    """MAINTAINED: Original robust hub tracking system"""
 
     def __init__(self, initial_hub_idx: int):
         self.original_hub_idx = initial_hub_idx
@@ -118,14 +115,7 @@ class HubTracker:
 
 class RefactorEnv(gym.Env):
     """
-    CORRECTED: Graph Refactoring Environment for PPO
-
-    MAIN CHANGES:
-    - reset() returns Data object instead of observation array
-    - step() returns Data object as next_state
-    - Simplified reward function for PPO
-    - Removed observation space conversion (not needed for PPO)
-    - Maintains all original environment logic and capabilities
+    UPDATED: Graph Refactoring Environment with PPOConfig as single source of truth
     """
 
     def __init__(self,
@@ -134,6 +124,7 @@ class RefactorEnv(gym.Env):
                  max_steps: int = 20,
                  reward_weights: Optional[Dict[str, float]] = None,
                  device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
+                 # CLAUDE: Growth control parameters from PPOConfig
                  max_new_nodes_per_episode: int = 5,
                  max_total_node_growth: float = 1.3,
                  growth_penalty_mode: str = 'quadratic',
@@ -141,14 +132,7 @@ class RefactorEnv(gym.Env):
                  growth_penalty_gamma_nodes: float = 2.0,
                  growth_penalty_gamma_edges: float = 1.0):
         """
-        ENHANCED: Initialize with growth control parameters
-
-        Args:
-            max_new_nodes_per_episode: Absolute limit on new nodes per episode
-            max_total_node_growth: Relative growth limit (e.g., 1.3 = 30% growth)
-            growth_penalty_mode: 'linear', 'quadratic', or 'barrier'
-            growth_penalty_power: Power for quadratic/barrier penalties
-            growth_penalty_gamma_nodes/edges: Scaling factors for penalties
+        CLAUDE: Initialize with all parameters controlled by PPOConfig
         """
         super(RefactorEnv, self).__init__()
 
@@ -156,6 +140,7 @@ class RefactorEnv(gym.Env):
         self.max_steps = max_steps
         self.discriminator = discriminator
 
+        # CLAUDE: Growth control parameters from config
         self.max_new_nodes_per_episode = max_new_nodes_per_episode
         self.max_total_node_growth = max_total_node_growth
         self.growth_penalty_mode = growth_penalty_mode
@@ -163,26 +148,37 @@ class RefactorEnv(gym.Env):
         self.growth_penalty_gamma_nodes = growth_penalty_gamma_nodes
         self.growth_penalty_gamma_edges = growth_penalty_gamma_edges
 
+        # CLAUDE: Robust reward weights merge with complete defaults
         default_rw = {
             'hub_weight': 5.0,
-            'step_valid': 0.0,
+            'step_valid': 0.01,
             'step_invalid': -0.1,
             'time_penalty': -0.02,
             'early_stop_penalty': -0.5,
             'cycle_penalty': -0.2,
             'duplicate_penalty': -0.1,
-            'adversarial_weight': 2.0,
+            'adversarial_weight': 0.5,
             'patience': 15,
-            # crescita (solo terminale)
+            # Growth control (terminal only)
             'node_penalty': 1.0,
             'edge_penalty': 0.02,
             'cap_exceeded_penalty': -0.8,
-            # successo
-            'success_threshold': 0.05,
+            # Success criteria
+            'success_threshold': 0.03,
             'success_bonus': 2.0,
         }
 
-        self.reward_weights = {**default_rw, **(reward_weights or {})}
+        # CLAUDE: Robust merge as specified in requirements
+        if reward_weights is None:
+            reward_weights = {}
+
+        # Validate that all required keys are present
+        self.reward_weights = {**default_rw, **reward_weights}
+
+        # Optional validation for missing keys
+        missing_keys = set(default_rw.keys()) - set(self.reward_weights.keys())
+        if missing_keys:
+            print(f"Warning: Missing reward weight keys filled with defaults: {missing_keys}")
 
         # MAINTAINED: Original performance tracking
         self.best_hub_score = 0.0
@@ -190,7 +186,7 @@ class RefactorEnv(gym.Env):
         self.disc_start = 0.5
         self.prev_disc_score = None
 
-        # MAINTAINED: Original data loading and preprocessing
+        # MAINTAINED: Original data loading
         print("Loading and preprocessing data...")
         self.original_data_list = self._load_and_preprocess_data(data_path)
 
@@ -201,7 +197,7 @@ class RefactorEnv(gym.Env):
         self.prev_hub_score = 0.0
         self.hub_tracker = None
 
-        # NEW: Growth tracking variables (initialized in reset())
+        # Growth tracking variables
         self.initial_num_nodes = 0
         self.initial_num_edges = 0
         self.prev_num_nodes = 0
@@ -516,9 +512,7 @@ class RefactorEnv(gym.Env):
         return processed_data
 
     def reset(self, graph_idx: Optional[int] = None) -> Data:
-        """
-        ENHANCED: Reset environment with growth tracking initialization
-        """
+        """ENHANCED: Reset environment with growth tracking initialization"""
         if graph_idx is None:
             graph_idx = np.random.randint(0, len(self.original_data_list))
 
@@ -532,6 +526,7 @@ class RefactorEnv(gym.Env):
 
         self.current_step = 0
 
+        # CLAUDE: Growth tracking initialization
         self.initial_num_nodes = int(self.current_data.num_nodes)
         self.initial_num_edges = int(self.current_data.edge_index.shape[1])
         self.prev_num_nodes = self.initial_num_nodes
@@ -563,9 +558,7 @@ class RefactorEnv(gym.Env):
         return self.current_data
 
     def _calculate_growth_cap(self) -> int:
-        """
-        NEW: Calculate the growth cap for current episode
-        """
+        """Calculate the growth cap for current episode"""
         growth_cap = int(max(
             self.initial_num_nodes * self.max_total_node_growth,
             self.initial_num_nodes + self.max_new_nodes_per_episode
@@ -580,28 +573,25 @@ class RefactorEnv(gym.Env):
             terminal: bool = False
     ) -> float:
         """
-        Penalità di crescita.
-        - Per default (terminal=False) NON applica costi per-step.
-        - Con terminal=True applica solo a fine episodio il costo sull'aumento NETTO
-          rispetto allo stato iniziale, e solo per l'eventuale eccesso oltre il cap.
+        CLAUDE: Growth penalties - ONLY terminal penalties for excess over cap
         """
-        # Nessuna penalità per-step: lasciamo spazio a sequenze costruttive (add→redirect→remove)
+        # No per-step penalties - allow constructive sequences
         if not terminal:
             return 0.0
 
-        # Calcolo del cap consentito in termini di nodi totali
-        node_cap_total = self._calculate_growth_cap()  # numero massimo totale di nodi consentiti
-        # Per gli edge, usiamo un cap proporzionale allo stesso fattore dei nodi
+        # Calculate caps
+        node_cap_total = self._calculate_growth_cap()
         edges_cap_total = int(self.initial_num_edges * self.max_total_node_growth)
 
-        # Eccesso netto finale (solo se > 0)
+        # Current state
         current_nodes = int(self.current_data.num_nodes)
         current_edges = int(self.current_data.edge_index.size(1))
 
+        # Only penalize excess
         excess_nodes = max(0, current_nodes - node_cap_total)
         excess_edges = max(0, current_edges - edges_cap_total)
 
-        # Penalità terminale: paghi solo l'eccesso
+        # Terminal penalty - only pay for excess
         node_pen = self.reward_weights.get('node_penalty', 1.0)
         edge_pen = self.reward_weights.get('edge_penalty', 0.02)
         penalty = node_pen * float(excess_nodes) + edge_pen * float(excess_edges)
@@ -610,31 +600,26 @@ class RefactorEnv(gym.Env):
 
     def step(self, action: int) -> Tuple[Data, float, bool, Dict]:
         """
-        Step con:
-        - reward principale = riduzione hub
-        - bonus di successo
-        - penalità di crescita SOLO terminale
-        - time/valid/adversarial/strutturali come prima
-        - early stop per successo o pazienza
+        CLAUDE: Step with improved reward structure and growth control
         """
         if self.current_data is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
-        # Stato precedente per calcolare i delta
+        # Previous state for deltas
         prev_hub_score = self._calculate_metrics(self.current_data)['hub_score']
         prev_disc_score = self._get_discriminator_score()
 
         self.current_step += 1
 
-        # Applica l'azione
+        # Apply action
         success = self._apply_action(action)
 
-        # Stato corrente
+        # Current state
         current_metrics = self._calculate_metrics(self.current_data)
         current_hub_score = current_metrics['hub_score']
         current_disc_score = self._get_discriminator_score()
 
-        # Growth tracking per diagnostica
+        # Growth tracking
         current_nodes = int(current_metrics['num_nodes'])
         current_edges = int(current_metrics['num_edges'])
         delta_nodes_step = max(0, current_nodes - self.prev_num_nodes)
@@ -643,50 +628,48 @@ class RefactorEnv(gym.Env):
         self.nodes_added_total = max(0, current_nodes - self.initial_num_nodes)
         self.edges_added_total = max(0, current_edges - self.initial_num_edges)
 
-        nodes_growth_ratio = self.nodes_added_total / max(1, self.initial_num_nodes)
-        edges_growth_ratio = self.edges_added_total / max(1, self.initial_num_edges)
-
-        # 1) Reward principale: miglioramento dell'hub
+        # 1) Main reward: hub improvement
         hub_improvement = prev_hub_score - current_hub_score
         reward = self.reward_weights.get('hub_weight', 5.0) * hub_improvement
 
-        # 2) Penalità di azione invalida
+        # 2) Action validity penalty
         if not success:
             reward += self.reward_weights.get('step_invalid', -0.1)
+        else:
+            reward += self.reward_weights.get('step_valid', 0.01)
 
-        # 3) Penalità tempo
+        # 3) Time penalty
         reward += self.reward_weights.get('time_penalty', -0.02)
 
-        # 4) Shaping avversariale (se presente)
+        # 4) Adversarial shaping (if present)
         if prev_disc_score is not None and current_disc_score is not None:
             disc_improvement = prev_disc_score - current_disc_score
             reward += self.reward_weights.get('adversarial_weight', 0.5) * disc_improvement
 
-        # 5) Penalità strutturali (solo se l'azione è passata)
+        # 5) Structural penalties (if action succeeded)
         if success:
             reward += self._check_structural_penalties()
 
-        # 6) Cap di crescita (diagnostico + eventuale penalità immediata blanda)
+        # 6) Growth cap checking
         growth_cap = self._calculate_growth_cap()
         exceeded_cap = current_nodes > growth_cap
         if exceeded_cap:
-            # Penalità lieve immediata per segnalare l'eccesso (il grosso è terminale)
             reward += self.reward_weights.get('cap_exceeded_penalty', -0.8)
             print(f"Growth cap exceeded! Current: {current_nodes}, Cap: {growth_cap}")
 
-        # 7) Bonus di successo + early stop per successo
-        success_threshold = self.reward_weights.get('success_threshold', 0.05)
+        # 7) Success bonus and early stop
+        success_threshold = self.reward_weights.get('success_threshold', 0.03)
         success_bonus = self.reward_weights.get('success_bonus', 2.0)
         done = False
         if current_hub_score <= success_threshold:
             reward += success_bonus
             done = True
 
-        # 8) Anti-early-STOP (se usi l'azione esplicita di stop)
+        # 8) Early stop penalty
         if action == 6 and self.current_step <= 2:
             reward += self.reward_weights.get('early_stop_penalty', -0.5)
 
-        # 9) Tracking best / pazienza (solo se non già done per successo)
+        # 9) Progress tracking
         if not done:
             if current_hub_score < self.best_hub_score:
                 self.best_hub_score = current_hub_score
@@ -694,15 +677,15 @@ class RefactorEnv(gym.Env):
             else:
                 self.no_improve_steps += 1
 
-            # Termina per step max / stop esplicito / cap ecceduto
+            # Termination conditions
             done = (action == 6) or (self.current_step >= self.max_steps) or exceeded_cap
 
-            # Early stopping per mancanza di miglioramenti
+            # Patience early stopping
             patience = self.reward_weights.get('patience', 15)
             if self.no_improve_steps >= patience:
                 done = True
 
-        # 10) Penalità di crescita TERMINALE (solo se done)
+        # 10) CLAUDE: Terminal growth penalty ONLY when done
         growth_penalty = 0.0
         if done:
             growth_penalty = self._calculate_growth_penalties(
@@ -712,7 +695,7 @@ class RefactorEnv(gym.Env):
             )
             reward -= growth_penalty
 
-        # Info estese per debug
+        # Extended info for diagnostics
         info = {
             'action_success': success,
             'hub_improvement_step': hub_improvement,
@@ -726,8 +709,6 @@ class RefactorEnv(gym.Env):
             'delta_edges_step': delta_edges_step,
             'nodes_added_total': self.nodes_added_total,
             'edges_added_total': self.edges_added_total,
-            'nodes_growth_ratio': nodes_growth_ratio,
-            'edges_growth_ratio': edges_growth_ratio,
             'growth_penalty': growth_penalty,
             'growth_cap': growth_cap,
             'cap_exceeded': exceeded_cap,
@@ -737,20 +718,19 @@ class RefactorEnv(gym.Env):
             'current_edges': current_edges,
         }
 
-        # Stato precedente per prossimo step
+        # Update state for next step
         self.prev_num_nodes = current_nodes
         self.prev_num_edges = current_edges
         self.prev_hub_score = current_hub_score
 
         return self.current_data, reward, done, info
 
-    # CORRECTED: Add helper method for PPO trainer
     def get_global_features(self) -> torch.Tensor:
         """Helper method to extract global features for PPO"""
         return self._extract_global_features(self.current_data)
 
     def _extract_global_features(self, data: Data) -> torch.Tensor:
-        """CORRECTED: Extract global features (4 features for PPO)"""
+        """Extract global features (4 features for PPO)"""
         metrics = self._calculate_metrics(data)
 
         global_features = torch.tensor([
@@ -765,11 +745,10 @@ class RefactorEnv(gym.Env):
 
         return global_features
 
-    # MAINTAINED: All original action methods
+    # MAINTAINED: All original action methods with growth cap checking
     def _apply_action(self, action: int) -> bool:
-        """ENHANCED: Apply action to graph with growth cap checking"""
+        """ENHANCED: Apply action with growth cap checking"""
         try:
-            # NEW: Check growth cap before node-adding actions
             growth_cap = self._calculate_growth_cap()
             at_cap = self.current_data.num_nodes >= growth_cap
 
@@ -853,8 +832,7 @@ class RefactorEnv(gym.Env):
         return self._remove_edge() and self._add_edge()
 
     def _extract_method(self) -> bool:
-        """ENHANCED: Extract method refactoring with growth cap check"""
-        # NEW: Check growth cap before adding nodes
+        """ENHANCED: Extract method with growth cap check"""
         growth_cap = self._calculate_growth_cap()
         if self.current_data.num_nodes >= growth_cap:
             return False
@@ -901,7 +879,6 @@ class RefactorEnv(gym.Env):
 
     def _extract_abstract_unit(self) -> bool:
         """ENHANCED: Extract abstract unit with growth cap check"""
-        # NEW: Check growth cap before adding nodes
         growth_cap = self._calculate_growth_cap()
         if self.current_data.num_nodes >= growth_cap:
             return False
@@ -960,8 +937,7 @@ class RefactorEnv(gym.Env):
         return True
 
     def _extract_unit(self) -> bool:
-        """ENHANCED: Extract unit with growth cap check"""
-        # NEW: Check growth cap before adding nodes (this action adds 2 nodes)
+        """CLAUDE: Extract unit with proper redirect - removes original (hub, n) when adding (new, n)"""
         growth_cap = self._calculate_growth_cap()
         if self.current_data.num_nodes + 1 >= growth_cap:  # Need room for 2 nodes
             return False
@@ -1003,15 +979,20 @@ class RefactorEnv(gym.Env):
 
         new_edges = []
 
+        # CLAUDE: Proper redirect - remove original (hub, n) when adding (new, n)
         for i in range(edge_index.shape[1]):
             src, dst = edge_index[0, i].item(), edge_index[1, i].item()
             if src != current_hub and dst != current_hub:
+                # Keep edges not involving hub
                 new_edges.append((src, dst))
             elif src == current_hub and dst in group1:
+                # Redirect to unit1, remove original
                 new_edges.append((unit1_idx, dst))
             elif src == current_hub and dst in group2:
+                # Redirect to unit2, remove original
                 new_edges.append((unit2_idx, dst))
             elif dst == current_hub:
+                # Incoming to hub - keep
                 new_edges.append((src, dst))
 
         new_edges.append((current_hub, unit1_idx))
@@ -1130,10 +1111,9 @@ class RefactorEnv(gym.Env):
             current_hub = self.hub_tracker.get_current_hub_index(self.current_data)
             edge_index = self.current_data.edge_index
 
-            # NEW: Check growth cap for node-adding actions
             growth_cap = self._calculate_growth_cap()
             at_cap = self.current_data.num_nodes >= growth_cap
-            near_cap = self.current_data.num_nodes + 1 >= growth_cap  # For actions that add 2 nodes
+            near_cap = self.current_data.num_nodes + 1 >= growth_cap
 
             # Action 0 (RemoveEdge): requires outgoing edges from hub
             hub_outgoing = 0
@@ -1157,13 +1137,11 @@ class RefactorEnv(gym.Env):
             # Action 2 (MoveEdge): requires both remove and add possible
             mask[2] = mask[0] and mask[1]
 
-            # Action 3 (ExtractMethod): requires at least one edge AND not at cap
-            mask[3] = (edge_index.shape[1] > 0) and (not at_cap)
+            # CLAUDE: Growth cap constraints for node-adding actions
+            mask[3] = (edge_index.shape[1] > 0) and (not at_cap)  # ExtractMethod
+            mask[4] = (edge_index.shape[1] >= 3) and (not at_cap)  # ExtractAbstractUnit
 
-            # Action 4 (ExtractAbstractUnit): requires at least 3 edges AND not at cap
-            mask[4] = (edge_index.shape[1] >= 3) and (not at_cap)
-
-            # Action 5 (ExtractUnit): requires at least 2 hub successors AND not near cap (adds 2 nodes)
+            # ExtractUnit: requires at least 2 hub successors AND not near cap (adds 2 nodes)
             hub_successors = set()
             for i in range(edge_index.shape[1]):
                 u, v = edge_index[0, i].item(), edge_index[1, i].item()
@@ -1204,7 +1182,7 @@ class RefactorEnv(gym.Env):
             'nodes_tracked': len(self.hub_tracker.node_id_mapping) if self.hub_tracker else 0,
             'discriminator_available': hasattr(self, 'discriminator') and self.discriminator is not None,
             'disc_start': self.disc_start,
-            # NEW: Growth statistics
+            # Growth statistics
             'initial_nodes': self.initial_num_nodes,
             'initial_edges': self.initial_num_edges,
             'nodes_added_total': self.nodes_added_total,
@@ -1238,163 +1216,9 @@ class RefactorEnv(gym.Env):
         print("Environment closed and resources freed")
 
 
-# MAINTAINED: Original testing and helper classes
-class RefactorEnvTester:
-    """ENHANCED: Testing and debugging helper with growth testing"""
-
-    def __init__(self, env: RefactorEnv):
-        self.env = env
-        self.test_results = []
-
-    def test_basic_functionality(self) -> Dict:
-        """Test basic environment functionality"""
-        results = {
-            'reset_test': False,
-            'step_test': False,
-            'state_consistency': False,
-            'hub_tracking': False,
-            'action_validity': False,
-            'growth_tracking': False,  # NEW
-            'growth_cap_enforcement': False  # NEW
-        }
-
-        try:
-            # Test reset - expects Data object
-            initial_state = self.env.reset()
-            results['reset_test'] = isinstance(initial_state, Data)
-
-            # Test step - expects Data object as next_state
-            next_state, reward, done, info = self.env.step(6)  # STOP action
-            results['step_test'] = isinstance(next_state, Data) and done
-
-            # Test hub tracking
-            hub_info = self.env.get_hub_info()
-            results['hub_tracking'] = (hub_info is not None and
-                                       'current_hub_index' in hub_info)
-
-            # Test action mask
-            action_mask = self.env.get_action_mask()
-            results['action_validity'] = (len(action_mask) == self.env.num_actions and
-                                          action_mask[6])  # STOP always valid
-
-            # NEW: Test growth tracking
-            results['growth_tracking'] = ('nodes_added_total' in info and
-                                          'edges_added_total' in info and
-                                          'growth_cap' in info)
-
-            # NEW: Test growth cap enforcement
-            if 'growth_cap' in info:
-                results['growth_cap_enforcement'] = info['growth_cap'] > 0
-
-        except Exception as e:
-            print(f"Error during basic tests: {e}")
-
-        return results
-
-    def test_growth_constraints(self) -> Dict:
-        """NEW: Test growth constraint functionality"""
-        results = {
-            'action_masking_at_cap': False,
-            'early_termination': False,
-            'penalty_calculation': False
-        }
-
-        try:
-            # Reset with a small graph
-            self.env.reset()
-
-            # Force approach to growth cap by setting low limits
-            original_max_nodes = self.env.max_new_nodes_per_episode
-            original_growth = self.env.max_total_node_growth
-
-            self.env.max_new_nodes_per_episode = 2
-            self.env.max_total_node_growth = 1.2
-
-            initial_nodes = self.env.current_data.num_nodes
-
-            # Try node-adding actions repeatedly
-            attempts = 0
-            while attempts < 10 and not results['early_termination']:
-                action_mask = self.env.get_action_mask()
-
-                # Check if node-adding actions are masked when at cap
-                growth_cap = self.env._calculate_growth_cap()
-                current_nodes = self.env.current_data.num_nodes
-
-                if current_nodes >= growth_cap:
-                    # At cap - node-adding actions should be masked
-                    results['action_masking_at_cap'] = not (action_mask[3] or action_mask[4] or action_mask[5])
-
-                # Try a node-adding action (ExtractMethod)
-                if action_mask[3]:  # If ExtractMethod is available
-                    next_state, reward, done, info = self.env.step(3)
-
-                    # Check for early termination due to cap
-                    if done and info.get('cap_exceeded', False):
-                        results['early_termination'] = True
-
-                    # Check penalty calculation
-                    if 'growth_penalty' in info and info['growth_penalty'] > 0:
-                        results['penalty_calculation'] = True
-                else:
-                    break
-
-                attempts += 1
-
-            # Restore original settings
-            self.env.max_new_nodes_per_episode = original_max_nodes
-            self.env.max_total_node_growth = original_growth
-
-        except Exception as e:
-            print(f"Error during growth constraint tests: {e}")
-
-        return results
-
-    def generate_test_report(self) -> str:
-        """Generate comprehensive test report"""
-        basic_results = self.test_basic_functionality()
-        growth_results = self.test_growth_constraints()
-
-        report = []
-        report.append("=" * 60)
-        report.append("GROWTH-CONSTRAINED REFACTOR ENVIRONMENT TEST REPORT")
-        report.append("=" * 60)
-
-        report.append("\nBASIC FUNCTIONALITY TESTS:")
-        for test_name, passed in basic_results.items():
-            status = "PASS" if passed else "FAIL"
-            report.append(f"   {test_name}: {status}")
-
-        report.append("\nGROWTH CONSTRAINT TESTS:")
-        for test_name, passed in growth_results.items():
-            status = "PASS" if passed else "FAIL"
-            report.append(f"   {test_name}: {status}")
-
-        # Environment info
-        stats = self.env.get_performance_stats()
-        report.append("\nENVIRONMENT STATUS:")
-        report.append(f"   Dataset size: {len(self.env.original_data_list)} graphs")
-        report.append(f"   Max nodes: {self.env.max_nodes}")
-        report.append(f"   Action space: {self.env.num_actions} actions")
-        report.append(f"   PPO Compatible: reset() and step() return Data objects")
-
-        # Growth control info
-        report.append("\nGROWTH CONTROL CONFIG:")
-        report.append(f"   Max new nodes per episode: {self.env.max_new_nodes_per_episode}")
-        report.append(f"   Max total node growth: {self.env.max_total_node_growth}")
-        report.append(f"   Growth penalty mode: {self.env.growth_penalty_mode}")
-        report.append(f"   Node penalty gamma: {self.env.growth_penalty_gamma_nodes}")
-        report.append(f"   Edge penalty gamma: {self.env.growth_penalty_gamma_edges}")
-
-        report.append("\n" + "=" * 60)
-
-        return "\n".join(report)
-
 # CORRECTED: PPO-compatible wrapper
 class PPORefactorEnv(RefactorEnv):
-    """
-    PPO-specific wrapper that ensures full compatibility with growth constraints
-    """
+    """PPO-specific wrapper that ensures full compatibility with growth constraints"""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1409,77 +1233,5 @@ class PPORefactorEnv(RefactorEnv):
         return super().step(action)
 
 
-# CORRECTED: Example usage
-def example_usage():
-    """Demonstrate growth-constrained PPO-compatible usage"""
-    print("Demonstrating Growth-Constrained RefactorEnv usage")
-
-    # Example configuration with growth constraints
-    # env = PPORefactorEnv(
-    #     data_path="/path/to/your/data",
-    #     max_steps=20,
-    #     max_new_nodes_per_episode=3,  # NEW: Limit new nodes
-    #     max_total_node_growth=1.2,    # NEW: 20% growth limit
-    #     growth_penalty_mode='quadratic',  # NEW: Quadratic penalties
-    #     growth_penalty_gamma_nodes=2.0,   # NEW: Node penalty scaling
-    #     growth_penalty_gamma_edges=1.0,   # NEW: Edge penalty scaling
-    #     reward_weights={
-    #         'hub_weight': 10.0,
-    #         'node_penalty': 1.0,      # NEW: Per-node penalty
-    #         'edge_penalty': 0.02,     # NEW: Per-edge penalty
-    #         'cap_exceeded_penalty': -0.8,  # NEW: Cap exceeded penalty
-    #         'adversarial_weight': 2.0,
-    #         'patience': 15
-    #     }
-    # )
-    #
-    # # PPO rollout collection with growth diagnostics:
-    # current_data = env.reset()  # Returns Data object
-    # assert isinstance(current_data, Data)
-    #
-    # for step in range(10):
-    #     # Extract global features for model
-    #     global_features = env.get_global_features()
-    #     assert global_features.shape[1] == 4
-    #
-    #     # Get action mask (respects growth caps)
-    #     action_mask = env.get_action_mask()
-    #
-    #     # Get action from PPO model (not shown)
-    #     # action = model.get_action(current_data, global_features, action_mask)
-    #     action = 0  # Example action
-    #
-    #     # Take step
-    #     next_data, reward, done, info = env.step(action)
-    #     assert isinstance(next_data, Data)
-    #
-    #     print(f"Step {step}:")
-    #     print(f"  Reward: {reward:.3f}")
-    #     print(f"  Nodes added: {info['nodes_added_total']}")
-    #     print(f"  Growth penalty: {info['growth_penalty']:.3f}")
-    #     print(f"  At cap: {info['cap_exceeded']}")
-    #     print(f"  Done: {done}")
-    #
-    #     if done:
-    #         print(f"Episode ended.")
-    #         if info['cap_exceeded']:
-    #             print("  Reason: Growth cap exceeded")
-    #         else:
-    #             print(f"  Hub improvement: {info['hub_improvement_total']:.4f}")
-    #         break
-    #
-    #     current_data = next_data
-    #
-    # # Show final performance stats
-    # final_stats = env.get_performance_stats()
-    # print("\nFinal Statistics:")
-    # print(f"  Nodes growth ratio: {final_stats['nodes_growth_ratio']:.3f}")
-    # print(f"  Growth cap utilization: {final_stats['growth_cap_utilization']:.3f}")
-    # print(f"  At growth cap: {final_stats['at_growth_cap']}")
-    #
-    # env.close()
-
-    pass
-
 if __name__ == "__main__":
-    example_usage()
+    print("Updated RL Gym with PPOConfig as single source of truth")

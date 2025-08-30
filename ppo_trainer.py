@@ -42,8 +42,8 @@ class PPOConfig:
     num_actions: int = 7
 
     # CLAUDE: Added growth control parameters from prompt requirements
-    max_new_nodes: int = 5
-    max_growth: float = 1.3
+    max_new_nodes: int = 10
+    max_growth: float = 1.6
     growth_penalty_mode: str = "quadratic"
     growth_penalty_power: int = 2
     growth_gamma_nodes: float = 2.0
@@ -69,11 +69,11 @@ class PPOConfig:
     gamma: float = 0.95
     gae_lambda: float = 0.95
     lr: float = 1e-4
-    clip_eps: float = 0.2
+    clip_eps: float = 0.22
     ppo_epochs: int = 4
     target_kl: float = 0.05
     max_grad_norm: float = 0.5
-    min_mb_before_kl: int = 2  # CLAUDE: Minimum minibatches before KL early stop
+    min_mb_before_kl: int = 4
 
     # Loss coefficients
     value_loss_coef: float = 0.3
@@ -84,7 +84,7 @@ class PPOConfig:
     minibatch_size: int = 128
 
     # Reward normalization
-    normalize_rewards: bool = True
+    normalize_rewards: bool = False
     reward_clip: float = 5.0
 
     # Logging / eval
@@ -98,14 +98,14 @@ class PPOConfig:
     min_improvement: float = 0.01
 
     # Exploration
-    epsilon_start: float = 0.30
-    epsilon_end: float = 0.02
-    epsilon_anneal_episodes: int = 2000
+    epsilon_start: float = 0.70
+    epsilon_end: float = 0.05
+    epsilon_anneal_episodes: int = 4000
 
     # Entropy scheduling
-    entropy_coef_start: float = 0.03
-    entropy_coef_end: float = 0.005
-    entropy_anneal_episodes: int = 2500
+    entropy_coef_start: float = 0.06
+    entropy_coef_end: float = 0.01
+    entropy_anneal_episodes: int = 4000
 
     # CLAUDE: Cyclic Learning Rate parameters as specified
     use_cyclic_lr: bool = True
@@ -128,17 +128,17 @@ class PPOConfig:
         default_rw = {
             'hub_weight': 5.0,
             'step_valid': 0.01,
-            'step_invalid': -0.1,
-            'time_penalty': -0.02,
-            'early_stop_penalty': -0.5,
+            'step_invalid': -0.05,
+            'time_penalty': -0.01,
+            'early_stop_penalty': -0.1,
             'cycle_penalty': -0.2,
             'duplicate_penalty': -0.1,
             'adversarial_weight': 0.5,
-            'patience': 15,
+            'patience': 5,
             # Growth control (terminal only)
-            'node_penalty': 1.0,
-            'edge_penalty': 0.02,
-            'cap_exceeded_penalty': -0.8,
+            'node_penalty': 0.3,
+            'edge_penalty': 0.005,
+            'cap_exceeded_penalty': -0.3,
             # Success criteria
             'success_threshold': 0.03,
             'success_bonus': 2.0,
@@ -1052,7 +1052,9 @@ class PPOTrainer:
                 )
 
                 for key, value in eval_metrics.items():
-                    self.writer.add_scalar(f'Evaluation/{key}', value, episode_count)
+                    # CLAUDE: Skip non-scalar values for TensorBoard
+                    if isinstance(value, (int, float)):
+                        self.writer.add_scalar(f'Evaluation/{key}', value, episode_count)
 
                 # Check for best model
                 current_reward = eval_metrics['eval_reward_mean']
