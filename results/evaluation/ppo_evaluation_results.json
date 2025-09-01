@@ -8,8 +8,8 @@
     "std_hub_improvement": 0.23629953806937481,
     "avg_episode_length": 1.4,
     "discriminator_improvement": -0.053276734352111776,
-    "avg_discriminator_score_before": 0.7069358950853348,
-    "avg_discriminator_score_after": 0.7602126294374466
+    "avg_discriminator_smell_prob_before": 0.7069358950853348,
+    "avg_discriminator_smell_prob_after": 0.7602126294374466
   },
   "detailed_metrics": {
     "episode_rewards": [

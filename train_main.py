@@ -283,8 +283,8 @@ def run_evaluation(config: PPOConfig, training_results: Dict[str, Any]) -> Dict[
             avg_disc_before = float(np.mean(eval_metrics['discriminator_scores_before']))
             avg_disc_after = float(np.mean(eval_metrics['discriminator_scores_after']))
             eval_summary['discriminator_improvement'] = avg_disc_before - avg_disc_after
-            eval_summary['avg_discriminator_score_before'] = avg_disc_before
-            eval_summary['avg_discriminator_score_after'] = avg_disc_after
+            eval_summary['avg_discriminator_smell_prob_before'] = avg_disc_before
+            eval_summary['avg_discriminator_smell_prob_after'] = avg_disc_after
 
         # Log evaluation results
         logger.info("Evaluation Results:")

@@ -228,7 +228,7 @@ class RefactorEnv(gym.Env):
 
     # MAINTAINED: All original computational methods
     def _get_discriminator_score(self) -> Optional[float]:
-        """UNCHANGED: Get discriminator score"""
+        """Ottieni probabilità che il grafo abbia smell (classe 1)"""
         if not hasattr(self, 'discriminator') or self.discriminator is None:
             return None
 
@@ -236,10 +236,11 @@ class RefactorEnv(gym.Env):
             with torch.no_grad():
                 disc_output = self.discriminator(self.current_data)
                 if isinstance(disc_output, dict):
-                    p_smelly = torch.softmax(disc_output['logits'], dim=1)[0, 1].item()
+                    # Probabilità di avere smell (classe 1)
+                    p_smell = torch.softmax(disc_output['logits'], dim=1)[0, 1].item()
                 else:
-                    p_smelly = torch.softmax(disc_output, dim=1)[0, 1].item()
-                return p_smelly
+                    p_smell = torch.softmax(disc_output, dim=1)[0, 1].item()
+                return p_smell
         except Exception:
             return None
 
@@ -604,14 +605,15 @@ class RefactorEnv(gym.Env):
 
     def step(self, action: int) -> Tuple[Data, float, bool, Dict]:
         """
-        Step con adversarial reward integrato direttamente nell'ambiente
+        Step con adversarial reward CORRETTO:
+        - Riduciamo la probabilità di smell = reward positivo
         """
         if self.current_data is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
         # Previous state for deltas
         prev_hub_score = self._calculate_metrics(self.current_data)['hub_score']
-        prev_disc_score = self._get_discriminator_score()
+        prev_disc_score = self._get_discriminator_score()  # Probabilità di smell PRIMA
 
         self.current_step += 1
 
@@ -621,7 +623,7 @@ class RefactorEnv(gym.Env):
         # Current state
         current_metrics = self._calculate_metrics(self.current_data)
         current_hub_score = current_metrics['hub_score']
-        current_disc_score = self._get_discriminator_score()
+        current_disc_score = self._get_discriminator_score()  # Probabilità di smell DOPO
 
         # Growth tracking
         current_nodes = int(current_metrics['num_nodes'])
@@ -645,11 +647,13 @@ class RefactorEnv(gym.Env):
         # 3) Time penalty
         reward += self.reward_weights.get('time_penalty', -0.02)
 
-        # 4) Adversarial reward
+        # 4) Adversarial reward CORRETTO
         if hasattr(self, '_adversarial_weight') and self._adversarial_weight > 0:
             if prev_disc_score is not None and current_disc_score is not None:
-                disc_improvement = prev_disc_score - current_disc_score
-                adversarial_reward = self._adversarial_weight * disc_improvement
+                # Se riduciamo la probabilità di smell -> reward positivo
+                # Se aumentiamo la probabilità di smell -> reward negativo
+                smell_reduction = prev_disc_score - current_disc_score
+                adversarial_reward = self._adversarial_weight * smell_reduction
                 reward += adversarial_reward
 
         # 5) Structural penalties (if action succeeded)
@@ -723,7 +727,9 @@ class RefactorEnv(gym.Env):
             'current_edges': current_edges,
             'prev_disc_score': prev_disc_score,
             'current_disc_score': current_disc_score,
-            'adversarial_weight': getattr(self, '_adversarial_weight', 0.0)
+            'adversarial_weight': getattr(self, '_adversarial_weight', 0.0),
+            'smell_reduction': prev_disc_score - current_disc_score if (
+                        prev_disc_score is not None and current_disc_score is not None) else 0.0
         }
 
         # Update state for next step

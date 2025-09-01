@@ -732,12 +732,13 @@ def train_final_model(data_list: List[Data], labels: List[int], device: torch.de
 
 
 def plot_training_curves(cv_results: Dict[str, Any], save_path: Path):
-    """Plot training curves from cross-validation"""
+    """Plot training curves from cross-validation including ROC curves"""
     try:
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig, axes = plt.subplots(2, 3, figsize=(20, 12))  # Aggiunto spazio per ROC
 
         max_epochs = max(len(fold['history']['train_loss']) for fold in cv_results['fold_results'])
 
+        # Plot delle metriche di training esistenti
         metrics = ['train_loss', 'val_loss', 'train_acc', 'val_acc']
         titles = ['Training Loss', 'Validation Loss', 'Training Accuracy', 'Validation Accuracy']
 
@@ -777,12 +778,87 @@ def plot_training_curves(cv_results: Dict[str, Any], save_path: Path):
             ax.legend()
             ax.grid(True, alpha=0.3)
 
+        # NUOVO: Plot delle curve ROC per ogni fold
+        ax_roc = axes[0, 2]
+
+        fold_aucs = []
+        mean_fpr = np.linspace(0, 1, 100)
+        all_tprs = []
+
+        for fold_idx, fold in enumerate(cv_results['fold_results']):
+            fold_result = fold['final_metrics']
+
+            # Estrai le probabilità e le label vere per questo fold
+            if 'probabilities' in fold_result and 'labels' in fold_result:
+                y_true = fold_result['labels']
+                y_scores = fold_result['probabilities']
+
+                # Calcola FPR, TPR e AUC per questo fold
+                from sklearn.metrics import roc_curve, auc
+                fpr, tpr, _ = roc_curve(y_true, y_scores)
+                roc_auc = auc(fpr, tpr)
+                fold_aucs.append(roc_auc)
+
+                # Plot della curva ROC per questo fold
+                ax_roc.plot(fpr, tpr, alpha=0.3,
+                           label=f'Fold {fold_idx + 1} (AUC = {roc_auc:.3f})')
+
+                # Interpola per calcolare la media
+                interp_tpr = np.interp(mean_fpr, fpr, tpr)
+                interp_tpr[0] = 0.0
+                all_tprs.append(interp_tpr)
+
+        # Calcola e plotta la curva ROC media
+        if all_tprs:
+            mean_tpr = np.mean(all_tprs, axis=0)
+            mean_tpr[-1] = 1.0
+            mean_auc = auc(mean_fpr, mean_tpr)
+            std_auc = np.std(fold_aucs)
+
+            ax_roc.plot(mean_fpr, mean_tpr, 'k-', linewidth=2,
+                       label=f'Mean ROC (AUC = {mean_auc:.3f} ± {std_auc:.3f})')
+
+            # Aggiungi l'area di confidenza
+            std_tpr = np.std(all_tprs, axis=0)
+            tprs_upper = np.minimum(mean_tpr + std_tpr, 1)
+            tprs_lower = np.maximum(mean_tpr - std_tpr, 0)
+            ax_roc.fill_between(mean_fpr, tprs_lower, tprs_upper,
+                               color='grey', alpha=0.2, label='± 1 std. dev.')
+
+        # Linea diagonale (classificatore random)
+        ax_roc.plot([0, 1], [0, 1], 'k--', alpha=0.6, label='Random Classifier')
+        ax_roc.set_xlim([0.0, 1.0])
+        ax_roc.set_ylim([0.0, 1.05])
+        ax_roc.set_xlabel('False Positive Rate')
+        ax_roc.set_ylabel('True Positive Rate')
+        ax_roc.set_title('ROC Curves (K-Fold Cross Validation)')
+        ax_roc.legend(loc="lower right", fontsize=9)
+        ax_roc.grid(True, alpha=0.3)
+
+        # Plot AUC distribution nel subplot rimanente
+        ax_auc = axes[1, 2]
+        if fold_aucs:
+            ax_auc.hist(fold_aucs, bins=max(3, len(fold_aucs)//2),
+                       alpha=0.7, color='skyblue', edgecolor='black')
+            ax_auc.axvline(np.mean(fold_aucs), color='red', linestyle='--',
+                          label=f'Mean AUC: {np.mean(fold_aucs):.3f}')
+            ax_auc.set_xlabel('AUC Score')
+            ax_auc.set_ylabel('Frequency')
+            ax_auc.set_title('AUC Distribution Across Folds')
+            ax_auc.legend()
+            ax_auc.grid(True, alpha=0.3)
+
+            # Aggiungi statistiche come testo
+            stats_text = f'Mean: {np.mean(fold_aucs):.3f}\nStd: {np.std(fold_aucs):.3f}\nMin: {np.min(fold_aucs):.3f}\nMax: {np.max(fold_aucs):.3f}'
+            ax_auc.text(0.05, 0.95, stats_text, transform=ax_auc.transAxes,
+                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
 
     except Exception as e:
-        logger.warning(f"Failed to plot training curves: {e}")
+        logger.warning(f"Failed to plot training curves with ROC: {e}")
         plt.close('all')
 
 
@@ -817,6 +893,8 @@ def plot_confusion_matrix(y_true: List[int], y_pred: List[int], save_path: Path)
     except Exception as e:
         logger.warning(f"Failed to plot confusion matrix: {e}")
         plt.close('all')
+
+
 
 
 def save_results(cv_results: Dict[str, Any], save_dir: Path):

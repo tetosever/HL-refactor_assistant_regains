@@ -497,7 +497,7 @@ class PPOTrainer:
         return self.env._extract_global_features(data)
 
     def collect_rollouts(self, num_episodes: int, is_adversarial: bool = False) -> Dict:
-        """Collect rollouts con adversarial weight passato all'ambiente"""
+        """Collect rollouts con adversarial reward corretto"""
         episode_infos = []
 
         for episode_idx in range(num_episodes):
@@ -518,15 +518,16 @@ class PPOTrainer:
             epsilon = self._epsilon_at(current_episode)
             adversarial_weight = self._get_adversarial_weight(current_episode)
 
-            # CORREZIONE: Passa il peso adversariale all'ambiente
+            # Passa il peso adversariale all'ambiente
             self.env.set_adversarial_weight(adversarial_weight)
 
-            # Discriminator initial score
+            # Score discriminatore iniziale (probabilità di smell)
             initial_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
                     disc_out = self.discriminator(current_data)
                     if isinstance(disc_out, dict):
+                        # Probabilità che sia "smelly" (classe 1)
                         initial_disc_score = torch.softmax(disc_out['logits'], dim=1)[0, 1].item()
                     else:
                         initial_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
@@ -585,12 +586,13 @@ class PPOTrainer:
             hub_improvement = initial_hub_score - final_hub_score
             best_hub_improvement = initial_hub_score - self.env.best_hub_score
 
-            # Final discriminator score
+            # Score discriminatore finale (probabilità di smell)
             final_disc_score = None
             if self.discriminator is not None:
                 with torch.no_grad():
                     disc_out = self.discriminator(current_data)
                     if isinstance(disc_out, dict):
+                        # Probabilità che sia "smelly" (classe 1)
                         final_disc_score = torch.softmax(disc_out['logits'], dim=1)[0, 1].item()
                     else:
                         final_disc_score = torch.softmax(disc_out, dim=1)[0, 1].item()
@@ -608,7 +610,7 @@ class PPOTrainer:
                 'final_disc_score': final_disc_score,
                 'epsilon_used': epsilon,
                 'adversarial_weight': adversarial_weight,
-                'final_graph': current_data.clone()  # Per il discriminatore
+                'final_graph': current_data.clone()
             })
 
         self.total_episodes_trained += num_episodes
@@ -861,24 +863,26 @@ class PPOTrainer:
         ) * progress
 
     def _collect_discriminator_data(self, episode_infos: List[Dict]):
-        """Raccoglie dati per l'addestramento del discriminatore"""
+        """Raccoglie dati per l'addestramento del discriminatore - CORRETTO"""
         if self.discriminator is None or not self.config.collect_discriminator_data:
             return
 
-        # Raccogli grafi generati dagli episodi recenti
+        # Raccogli grafi generati (quelli "trasformati" dal policy, potenzialmente meno smelly)
         for ep_info in episode_infos:
             if 'final_graph' in ep_info:
-                # Aggiungi il grafo finale come "fake"
+                # Il grafo finale è stato trasformato dal policy
+                # Assumiamo che sia "meno smelly" -> label 0 (no smell)
                 self.discriminator_buffer['fake_graphs'].append(ep_info['final_graph'].clone())
-                self.discriminator_buffer['fake_labels'].append(0)  # Label per "fake"
+                self.discriminator_buffer['fake_labels'].append(0)  # No smell
 
-        # Campiona grafi reali dal dataset originale
+        # Campiona grafi originali dal dataset (grafi con smell)
         real_to_add = min(len(episode_infos), len(self.env.original_data_list))
         for _ in range(real_to_add):
             idx = np.random.randint(0, len(self.env.original_data_list))
             real_graph = self.env.original_data_list[idx].clone()
+            # I grafi originali sono quelli con smell -> label 1
             self.discriminator_buffer['real_graphs'].append(real_graph)
-            self.discriminator_buffer['real_labels'].append(1)  # Label per "real"
+            self.discriminator_buffer['real_labels'].append(1)  # Con smell
 
         # Mantieni buffer size limitato
         max_size = self.config.discriminator_buffer_size // 2
@@ -891,7 +895,7 @@ class PPOTrainer:
             self.discriminator_buffer['real_labels'] = self.discriminator_buffer['real_labels'][-max_size:]
 
     def update_discriminator(self, episode_infos: List[Dict]) -> Dict:
-        """Aggiorna il discriminatore con adversarial learning"""
+        """Aggiorna il discriminatore - LABELS CORRETTI"""
         if self.discriminator is None:
             return {}
 
@@ -900,8 +904,8 @@ class PPOTrainer:
 
         # Verifica che ci siano abbastanza dati
         min_data_needed = self.config.discriminator_batch_size
-        total_fake = len(self.discriminator_buffer['fake_graphs'])
-        total_real = len(self.discriminator_buffer['real_graphs'])
+        total_fake = len(self.discriminator_buffer['fake_graphs'])  # Grafi trasformati (no smell)
+        total_real = len(self.discriminator_buffer['real_graphs'])  # Grafi originali (con smell)
 
         if total_fake < min_data_needed or total_real < min_data_needed:
             return {'discriminator_skipped': 'insufficient_data'}
@@ -910,31 +914,33 @@ class PPOTrainer:
 
         total_loss = 0.0
         total_accuracy = 0.0
-        total_real_confidence = 0.0
-        total_fake_confidence = 0.0
+        total_smell_confidence = 0.0  # Confidence su grafi con smell (originali)
+        total_clean_confidence = 0.0  # Confidence su grafi puliti (trasformati)
         num_batches = 0
 
         for epoch in range(self.config.discriminator_epochs_per_update):
             # Prepara batch bilanciato
             batch_size = self.config.discriminator_batch_size
-            real_batch_size = int(batch_size * self.config.real_fake_ratio)
-            fake_batch_size = batch_size - real_batch_size
+            smell_batch_size = int(batch_size * self.config.real_fake_ratio)  # Grafi con smell
+            clean_batch_size = batch_size - smell_batch_size  # Grafi puliti
 
-            # Campiona grafi reali e fake
-            real_indices = np.random.choice(total_real, real_batch_size, replace=False)
-            fake_indices = np.random.choice(total_fake, fake_batch_size, replace=False)
+            # Campiona grafi con smell e grafi puliti
+            smell_indices = np.random.choice(total_real, smell_batch_size, replace=False)
+            clean_indices = np.random.choice(total_fake, clean_batch_size, replace=False)
 
             # Crea batch
             batch_graphs = []
             batch_labels = []
 
-            for idx in real_indices:
+            # Aggiungi grafi con smell (originali)
+            for idx in smell_indices:
                 batch_graphs.append(self.discriminator_buffer['real_graphs'][idx])
-                batch_labels.append(1)  # Real
+                batch_labels.append(1)  # Con smell
 
-            for idx in fake_indices:
+            # Aggiungi grafi puliti (trasformati)
+            for idx in clean_indices:
                 batch_graphs.append(self.discriminator_buffer['fake_graphs'][idx])
-                batch_labels.append(0)  # Fake
+                batch_labels.append(0)  # Senza smell
 
             # Converti in tensori
             batch_data = Batch.from_data_list(batch_graphs).to(self.device)
@@ -963,24 +969,26 @@ class PPOTrainer:
                 predictions = torch.argmax(logits, dim=1)
                 accuracy = (predictions == labels).float().mean().item()
 
-                # Confidence su real e fake
-                real_mask = labels == 1
-                fake_mask = labels == 0
+                # Confidence sui due tipi di grafo
+                smell_mask = labels == 1  # Grafi con smell (originali)
+                clean_mask = labels == 0  # Grafi puliti (trasformati)
 
-                if real_mask.sum() > 0:
-                    real_confidence = probs[real_mask, 1].mean().item()
+                if smell_mask.sum() > 0:
+                    # Confidence che i grafi con smell vengano classificati come tali
+                    smell_confidence = probs[smell_mask, 1].mean().item()
                 else:
-                    real_confidence = 0.0
+                    smell_confidence = 0.0
 
-                if fake_mask.sum() > 0:
-                    fake_confidence = probs[fake_mask, 0].mean().item()
+                if clean_mask.sum() > 0:
+                    # Confidence che i grafi puliti vengano classificati come tali
+                    clean_confidence = probs[clean_mask, 0].mean().item()
                 else:
-                    fake_confidence = 0.0
+                    clean_confidence = 0.0
 
                 total_loss += loss.item()
                 total_accuracy += accuracy
-                total_real_confidence += real_confidence
-                total_fake_confidence += fake_confidence
+                total_smell_confidence += smell_confidence
+                total_clean_confidence += clean_confidence
                 num_batches += 1
 
         self.discriminator.eval()
@@ -989,19 +997,19 @@ class PPOTrainer:
         if num_batches > 0:
             avg_loss = total_loss / num_batches
             avg_accuracy = total_accuracy / num_batches
-            avg_real_conf = total_real_confidence / num_batches
-            avg_fake_conf = total_fake_confidence / num_batches
+            avg_smell_conf = total_smell_confidence / num_batches
+            avg_clean_conf = total_clean_confidence / num_batches
 
             self.discriminator_stats['losses'].append(avg_loss)
             self.discriminator_stats['accuracies'].append(avg_accuracy)
-            self.discriminator_stats['real_confidences'].append(avg_real_conf)
-            self.discriminator_stats['fake_confidences'].append(avg_fake_conf)
+            self.discriminator_stats['real_confidences'].append(avg_smell_conf)  # Ora è smell confidence
+            self.discriminator_stats['fake_confidences'].append(avg_clean_conf)  # Ora è clean confidence
 
             return {
                 'discriminator_loss': avg_loss,
                 'discriminator_accuracy': avg_accuracy,
-                'discriminator_real_confidence': avg_real_conf,
-                'discriminator_fake_confidence': avg_fake_conf,
+                'discriminator_smell_confidence': avg_smell_conf,  # Rinominato per chiarezza
+                'discriminator_clean_confidence': avg_clean_conf,  # Rinominato per chiarezza
                 'discriminator_batches': num_batches
             }
 
