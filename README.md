@@ -315,3 +315,9 @@ Expected performance:
 - Average Hub Improvement: >0.40
 - Average Reward: >3.2
 - Average Episode Length: ≤3 steps
+
+## License
+
+This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License - see the [LICENSE](LICENSE) file for details.
+
+For commercial use, please contact severgnini.matteo.00@gmail.com .
