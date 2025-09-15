@@ -1,483 +1,317 @@
-# Graph Refactoring RL: Actor-Critic for Automatic Code Dependency Refactoring
+# Graph Refactoring with PPO - Replication Package
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/release/python-380/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=flat&logo=PyTorch&logoColor=white)](https://pytorch.org/)
-[![PyG](https://img.shields.io/badge/PyG-3982f7?style=flat&logoColor=white)](https://pyg.org/)
+This repository contains the implementation of a Proximal Policy Optimization (PPO) system for automatic graph refactoring using Graph Neural Networks and Reinforcement Learning.
 
-A complete reinforcement learning system for automatic refactoring of dependency graphs using Graph Neural Networks (GNNs) and Actor-Critic algorithms.
+## System Overview
 
-## 🎯 Overview
+The system consists of three main components:
+1. **Data Pipeline**: Creates 1-hop ego graphs from dependency graphs for training
+2. **Discriminator Pre-training**: Trains a GNN to detect hub smell patterns
+3. **PPO Training**: Uses reinforcement learning to learn graph refactoring actions
 
-This project implements an RL-based approach to automatically refactor "smelly" code dependency patterns by learning optimal graph transformation strategies. The system uses:
-
-- **GCN-based Actor-Critic** networks for learning refactoring policies
-- **Pre-trained discriminator** for identifying code smells
-- **Adversarial training** for robust policy learning
-- **Multi-phase training pipeline** with warm-up and fine-tuning
-
-## 📁 Project Structure
+## Directory Structure
 
 ```
-graph_refactoring_rl/
-├── discriminator.py              # GNN discriminator models
-├── pre_training_discriminator.py # Discriminator pre-training script
-├── rl_gym.py                    # OpenAI Gym environment
-├── actor_critic_models.py       # Actor-Critic GNN models
-├── a2c_trainer.py              # A2C training algorithm
-├── train_main.py               # Main training pipeline
-├── utils_and_configs.py        # Utilities and configuration
-├── config.yaml                 # Configuration file
-├── requirements.txt            # Python dependencies
 ├── data_builder/
 │   └── dataset/
-│       └── graph_features/     # Training data (.pt files)
+│       └── graph_features/        # Training data (*.pt files)
 ├── results/
-│   ├── discriminator_pretraining/
-│   ├── rl_training/
-│   ├── evaluation/
-│   └── ablation/
-└── logs/                       # Training logs
+│   ├── discriminator_pretraining/  # Pre-trained discriminator models
+│   ├── ppo_training/              # PPO training outputs
+│   └── evaluation/                # Evaluation results
+├── logs/                          # Training logs
+└── configs/                       # Configuration files
 ```
 
-## 🚀 Quick Start
-
-### 1. Installation
+## Prerequisites
 
 ```bash
-# Clone the repository
-git clone <repository_url>
-cd graph_refactoring_rl
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Or with conda
-conda env create -f environment.yml
-conda activate graph_refactor_rl
+pip install torch torch-geometric networkx scikit-learn matplotlib seaborn
+pip install pandas numpy plotly yaml
 ```
 
-### 2. Data Preparation
+## Quick Start
 
-Prepare your graph dataset in PyTorch Geometric format:
+### 1. Data Preparation
 
-```python
-# Each .pt file should contain a Data object with:
-# - x: node features (N × 7)
-# - edge_index: edge connectivity (2 × E) 
-# - is_smelly: binary label (0=clean, 1=smelly)
-
-# Example data structure:
-data = Data(
-    x=torch.randn(10, 7),           # 10 nodes, 7 features each
-    edge_index=torch.randint(0, 10, (2, 20)),  # 20 edges
-    is_smelly=torch.tensor([1])     # 1 = smelly, 0 = clean
-)
-torch.save(data, 'data_builder/dataset/graph_features/graph_001.pt')
-```
-
-### 3. Run Complete Training Pipeline
+First, prepare your graph dataset using the data collection pipeline:
 
 ```bash
-# Run the complete pipeline (discriminator + RL training)
-python train_main.py --experiment-name my_experiment
-
-# Or run with custom configuration
-python train_main.py --config config.yaml --num-episodes 3000
-
-# Check available options
-python train_main.py --help
+python data_collect.py --config config.yml --projects project1 project2
 ```
 
-### 4. Run Individual Components
+**Configuration**: Edit `config.yml` to specify:
+- `paths.arcan_output`: Path to Arcan analysis results
+- `paths.dataset_output`: Where to save processed graphs
+- `projects`: List of projects to process
+
+**Expected Input**: 
+- `smell-characteristics.csv`: Component smell information
+- `smell-affects.csv`: Smell relationships
+- `dependency-graph-*.graphml`: Dependency graphs
+
+**Output**: Creates `*.pt` files containing PyG Data objects with:
+- Node features (7-dimensional): fan_in, fan_out, degree_centrality, in_out_ratio, pagerank, betweenness_centrality, closeness_centrality
+- Edge connectivity information
+- Smell labels (`is_smelly` attribute)
+
+### 2. Discriminator Pre-training
+
+Train the hub smell discriminator:
 
 ```bash
-# 1. Pre-train discriminator only
 python pre_training_discriminator.py
+```
 
-# 2. Train RL agent only (requires pre-trained discriminator)
+**Key Parameters** (modify in script):
+- `NODE_DIM = 7`: Number of node features
+- `HIDDEN_DIM = 64`: GNN hidden dimensions
+- `NUM_LAYERS = 3`: Number of GCN layers
+- `K_FOLDS = 5`: Cross-validation folds
+- `EPOCHS = 100`: Training epochs per fold
+
+**Output**: Saves `pretrained_discriminator.pt` with:
+- Model state dict
+- Training configuration
+- Cross-validation results
+- Test performance metrics
+
+### 3. PPO Training
+
+Run the complete PPO training pipeline:
+
+```bash
+python train_main.py
+```
+
+Or use the PPO trainer directly:
+
+```bash
 python ppo_trainer.py
-
-# 3. Test system components
-python utils_and_configs.py
 ```
 
-## 🏗️ Architecture
+**Key Configuration** (in `PPOConfig` class):
+- `num_episodes = 5000`: Total training episodes
+- `max_steps = 10`: Maximum steps per episode  
+- `lr = 1e-4`: Learning rate
+- `reward_weights`: Dictionary controlling reward components
 
-### Graph Neural Networks
+## Core Components
 
-The system uses three main GNN components:
+### Data Collection (`data_collect.py`)
 
-1. **Discriminator** (`discriminator.py`):
-   - Pre-trained on labeled smelly/clean graphs
-   - 3-layer GCN with skip connections
-   - Binary classification + optional node-level scoring
-
-2. **Actor Network** (`actor_critic_models.py`):
-   - GCN encoder → global pooling → action logits
-   - Outputs probability distribution over 5 refactoring actions
-
-3. **Critic Network** (`actor_critic_models.py`):
-   - Shared GCN encoder with Actor
-   - Estimates state value V(s) for advantage computation
-
-### Refactoring Actions
-
-The RL agent can perform 5 atomic refactoring operations:
-
-1. **Remove Edge**: Remove dependency from hub node
-2. **Add Edge**: Create new dependency to hub node  
-3. **Move Edge**: Redirect existing dependency
-4. **Create Helper**: Add intermediate node to reduce hub coupling
-5. **Swap Edges**: Exchange dependencies based on betweenness centrality
-
-### Training Pipeline
-
-```mermaid
-graph TD
-    A[Data Preparation] --> B[Discriminator Pre-training]
-    B --> C[Warm-up RL Training]
-    C --> D[Adversarial Fine-tuning]
-    D --> E[Evaluation & Analysis]
-    E --> F[Ablation Studies]
+**SmellMapBuilder**: Processes Arcan CSV files to create component→smell mappings
+```python
+builder = SmellMapBuilder(project_dir)
+smell_map, stats = builder.build_smell_map()
 ```
 
-## ⚙️ Configuration
-
-### Basic Configuration (`config.yaml`)
-
-```yaml
-# Training phases
-schedule:
-  num_episodes: 2000
-  warmup_episodes: 500        # Focus on hub score only
-  adversarial_start_episode: 1000  # Start discriminator updates
-
-# Model architecture  
-model:
-  hidden_dim: 128
-  num_layers: 3
-  dropout: 0.2
-
-# Optimization
-optimization:
-  lr_actor: 0.0003
-  lr_critic: 0.001
-  gamma: 0.95
+**SubgraphExtractor**: Extracts 1-hop ego graphs around components
+```python
+extractor = SubgraphExtractor(config)
+ego_graph = extractor.extract_ego_graph(G, center_node)
+data = extractor.create_pyg_data(ego_graph, center_node, is_smelly)
 ```
 
-### Advanced Options
+### Environment (`rl_gym.py`)
 
-```yaml
-# Reward engineering
-environment:
-  reward_weights:
-    hub_score: 1.0          # Primary objective
-    modularity: 0.5         # Community structure
-    density: -0.3           # Penalize over-connection
-    discriminator: 0.4      # Adversarial signal
+**RefactorEnv**: Main RL environment supporting 7 actions:
+- 0: RemoveEdge - Remove edge from hub
+- 1: AddEdge - Add edge from hub  
+- 2: MoveEdge - Combination of remove + add
+- 3: ExtractMethod - Create method extraction pattern
+- 4: ExtractAbstractUnit - Create abstraction layer
+- 5: ExtractUnit - Split hub responsibilities
+- 6: STOP - Terminate episode
 
-# Experience replay (optional)
-advanced:
-  use_experience_replay: true
-  replay_buffer_size: 10000
-  
-# Curriculum learning (optional)
-advanced:
-  use_curriculum: true
-  curriculum_stages:
-    - episodes: 500
-      difficulty: "easy"
-      max_hub_score: 5
+**PPORefactorEnv**: PPO-compatible wrapper with growth constraints
+
+**Key Methods**:
+```python
+env = PPORefactorEnv(data_path="data/", max_steps=10)
+state = env.reset()  # Returns Data object
+next_state, reward, done, info = env.step(action)
 ```
 
-## 📊 Monitoring & Results
+### Actor-Critic Models (`actor_critic_models.py`)
 
-### Training Metrics
-
-The system tracks comprehensive metrics:
-
-- **Episode rewards** and **hub score improvements**
-- **Actor/Critic losses** and **discriminator accuracy** 
-- **Success rate** and **episode lengths**
-- **Graph metrics** (modularity, density, connectivity)
-
-### TensorBoard Monitoring
-
-```bash
-# Start TensorBoard
-tensorboard --logdir results/rl_training/tensorboard
-
-# View at http://localhost:6006
+**ActorCritic**: Combined model with shared encoder for PPO
+```python
+config = {
+    'node_dim': 7,
+    'hidden_dim': 256, 
+    'num_layers': 3,
+    'num_actions': 7,
+    'global_features_dim': 4,
+    'shared_encoder': True
+}
+model = create_actor_critic(config)
 ```
 
-### Results Analysis
+**Key Methods**:
+```python
+output = model(data, global_features)
+action, log_prob, value = model.get_action_and_value(data, global_features)
+log_probs, values, entropy = model.evaluate_actions(data, global_features, actions)
+```
+
+### Discriminator (`discriminator.py`)
+
+**HubDiscriminator**: GNN for detecting hub smell patterns
+```python
+discriminator = create_discriminator(
+    version="clean",
+    node_dim=7,
+    hidden_dim=64,
+    num_layers=3,
+    add_node_scoring=True
+)
+```
+
+**Usage**:
+```python
+output = discriminator(data)
+classification = discriminator.classify_graph(data)
+node_analysis = discriminator.get_node_hub_analysis(data)
+```
+
+### PPO Trainer (`ppo_trainer.py`)
+
+**PPOConfig**: Single source of truth for all parameters
+```python
+config = PPOConfig()
+config.num_episodes = 5000
+config.lr = 1e-4
+config.max_steps = 20
+```
+
+**PPOTrainer**: Main training loop
+```python
+trainer = PPOTrainer(config)
+training_stats = trainer.train()
+```
+
+## Training Pipeline
+
+The complete pipeline (`train_main.py`) executes:
+
+1. **Setup**: Creates directories, loads configuration
+2. **Data Validation**: Checks dataset availability  
+3. **Discriminator Pre-training**: Trains hub smell detector
+4. **PPO Training**: Learns refactoring policy
+5. **Evaluation**: Tests trained model performance
+
+## Reward System
+
+The reward function combines multiple components:
 
 ```python
-# Load training results
-import json
-with open('results/rl_training/training_results.json', 'r') as f:
-    results = json.load(f)
-
-# Evaluation metrics
-eval_results = results['final_evaluation']
-print(f"Success Rate: {eval_results['success_rate']:.1%}")
-print(f"Hub Improvement: {eval_results['avg_hub_improvement']:.3f}")
-```
-
-## 🧪 Evaluation & Testing
-
-### System Tests
-
-```bash
-# Run comprehensive system tests
-python utils_and_configs.py
-
-# Test individual components
-python -c "
-from rl_gym import RefactorEnv
-from utils_and_configs import test_environment
-test_environment(RefactorEnv, 'data_builder/dataset/graph_features')
-"
-```
-
-### Performance Evaluation
-
-```bash
-# Run evaluation on trained model
-python train_main.py --skip-pretraining --skip-warmup --skip-adversarial
-
-# Run ablation studies
-python train_main.py --run-ablation
-```
-
-### Metrics Comparison
-
-| Metric | Baseline | RL Agent | Improvement |
-|--------|----------|----------|-------------|
-| Hub Score Reduction | 0.0 | 2.3±0.8 | +230% |
-| Modularity | 0.45 | 0.62±0.12 | +38% |
-| Success Rate | 0% | 73±5% | +73pp |
-| Discriminator Score | 0.8 | 0.3±0.1 | -62% |
-
-## 🔧 Customization
-
-### Adding New Actions
-
-```python
-# In rl_gym.py, extend _apply_action method
-def _apply_action(self, action: int) -> bool:
-    if action == 5:  # New action
-        return self._my_custom_action()
-    # ... existing actions
-
-def _my_custom_action(self) -> bool:
-    # Implement your refactoring logic
-    # Return True if successful
-    pass
-```
-
-### Custom Reward Functions
-
-```python
-# In rl_gym.py, modify _calculate_reward method
-def _calculate_reward(self, prev_metrics, curr_metrics, success):
-    # Add your custom reward components
-    custom_reward = self._compute_custom_metric(curr_metrics)
-    
-    base_reward = super()._calculate_reward(prev_metrics, curr_metrics, success)
-    return base_reward + 0.2 * custom_reward
-```
-
-### New Graph Features
-
-```python
-# Extend node features in data preprocessing
-def extract_node_features(node_data):
-    base_features = extract_base_features(node_data)  # Original 7 features
-    custom_features = extract_custom_features(node_data)  # Your features
-    
-    return torch.cat([base_features, custom_features], dim=1)
-
-# Update MODEL_CONFIG
-NODE_DIM = 7 + len(custom_features)  # Update model input dimension
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **CUDA Out of Memory**:
-   ```bash
-   # Reduce batch size
-   python train_main.py --batch-size 16
-   
-   # Or use CPU
-   python train_main.py --device cpu
-   ```
-
-2. **Data Loading Errors**:
-   ```python
-   # Validate your data
-   from utils_and_configs import validate_graph_data, analyze_dataset
-   
-   stats = analyze_dataset('data_builder/dataset/graph_features')
-   print(f"Valid graphs: {stats['valid_graphs']}/{stats['total_files']}")
-   ```
-
-3. **Training Instability**:
-   ```yaml
-   # In config.yaml, try:
-   optimization:
-     lr_actor: 0.0001  # Lower learning rate
-     max_grad_norm: 0.3  # Stronger gradient clipping
-     
-   advanced:
-     normalize_rewards: true
-     advantage_clip: 1.0  # Clip advantages
-   ```
-
-4. **Poor Performance**:
-   ```bash
-   # Check discriminator quality first
-   python pre_training_discriminator.py
-   # Look for F1 > 0.8
-   
-   # Increase warm-up phase
-   python train_main.py --warmup-episodes 800
-   ```
-
-### Debug Mode
-
-```bash
-# Enable detailed logging
-export PYTHONPATH="."
-python train_main.py --experiment-name debug_run 2>&1 | tee debug.log
-
-# Or use Python debugger
-python -m pdb train_main.py --num-episodes 10
-```
-
-## 📈 Performance Optimization
-
-### GPU Acceleration
-
-```bash
-# Check GPU utilization
-nvidia-smi -l 1
-
-# Optimize for your GPU
-export CUDA_LAUNCH_BLOCKING=1  # For debugging
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-```
-
-### Memory Optimization
-
-```python
-# In training code, use gradient accumulation
-ACCUMULATION_STEPS = 4
-if step % ACCUMULATION_STEPS == 0:
-    optimizer.step()
-    optimizer.zero_grad()
-
-# Use mixed precision
-from torch.cuda.amp import autocast, GradScaler
-scaler = GradScaler()
-
-with autocast():
-    output = model(data)
-    loss = criterion(output, target)
-
-scaler.scale(loss).backward()
-scaler.step(optimizer)
-scaler.update()
-```
-
-### Distributed Training
-
-```bash
-# Multi-GPU training
-python -m torch.distributed.launch --nproc_per_node=2 train_main.py
-
-# Cluster training (modify config.yaml)
-distributed:
-  enabled: true
-  backend: "nccl"
-  world_size: 4
-```
-
-## 📚 Research & Papers
-
-This implementation is inspired by:
-
-- **Graph Neural Networks**: [Kipf & Welling, 2017](https://arxiv.org/abs/1609.02907)
-- **Actor-Critic Methods**: [Mnih et al., 2016](https://arxiv.org/abs/1602.01783)
-- **Code Smell Detection**: [Palomba et al., 2018](https://doi.org/10.1109/TSE.2017.2770127)
-- **Graph Refactoring**: [Zhang et al., 2019](https://doi.org/10.1145/3338906.3338937)
-
-### Citing This Work
-
-```bibtex
-@software{graph_refactoring_rl,
-  title = {Graph Refactoring RL: Actor-Critic for Automatic Code Dependency Refactoring},
-  author = {Your Name},
-  year = {2024},
-  url = {https://github.com/your-repo/graph-refactoring-rl}
+reward_weights = {
+    'hub_weight': 5.0,           # Main objective: hub score improvement
+    'step_valid': 0.01,          # Valid action bonus
+    'step_invalid': -0.1,        # Invalid action penalty
+    'time_penalty': -0.02,       # Time step penalty
+    'adversarial_weight': 0.5,   # Discriminator-based reward
+    'success_threshold': 0.03,   # Success detection threshold
+    'success_bonus': 2.0,        # Bonus for achieving success
+    'node_penalty': 1.0,         # Growth control penalty
+    'edge_penalty': 0.02,        # Edge growth penalty
+    'cap_exceeded_penalty': -0.8 # Hard limit violation
 }
 ```
 
-## 🤝 Contributing
+## Growth Control
 
-### Development Setup
+The system implements growth constraints to prevent unrealistic graph expansion:
+
+- `max_new_nodes`: Maximum nodes added per episode (default: 5)
+- `max_growth`: Maximum growth ratio (default: 1.3x original size)
+- Terminal penalties for excessive growth
+- Action masking when at capacity
+
+## Evaluation
+
+Run comprehensive evaluation:
 
 ```bash
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Pre-commit hooks
-pre-commit install
-
-# Run tests
-pytest tests/ -v
-
-# Code formatting
-black . --line-length 100
-isort .
-flake8 .
+python final_evaluation.py
 ```
 
-### Code Structure Guidelines
+**Outputs**:
+- Performance metrics (success rate, rewards, improvements)
+- Graph visualizations (before/after comparisons)
+- Hub tracking analysis
+- Discriminator score changes
 
-- **Follow PEP 8** styling conventions
-- **Add type hints** for all function signatures
-- **Write docstrings** for all classes and methods
-- **Add unit tests** for new features
-- **Update documentation** for API changes
+**Key Metrics**:
+- Success Rate: Episodes with significant hub improvement
+- Hub Score Improvement: Reduction in hub smell intensity
+- Discriminator Improvement: Reduction in smell probability
+- Episode Efficiency: Steps to achieve improvements
 
-### Submitting Changes
+## Model Checkpoints
 
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
+**Discriminator**: `results/discriminator_pretraining/pretrained_discriminator.pt`
+- Contains model weights, configuration, and validation metrics
 
-## 📄 License
+**PPO Model**: `results/ppo_training/best_model.pt`  
+- Contains actor-critic weights, training history, and performance stats
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Configuration
 
-## 🙏 Acknowledgments
+Key configuration files:
 
-- **PyTorch Geometric** team for excellent graph ML framework
-- **OpenAI Gym** for RL environment standards
-- **NetworkX** for graph analysis utilities
-- **Research community** for foundational papers and techniques
+**`config.yml`**: Data processing configuration
+```yaml
+paths:
+  arcan_output: "./arcan_out/intervalDays2"
+  dataset_output: "./dataset/graph_features"
 
-## 📞 Support
+extraction:
+  max_graph_size: 10000
+  min_subgraph_size: 3
+  max_subgraph_size: 200
+```
 
-- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/discussions)
-- **Email**: your.email@example.com
+**`PPOConfig`**: All training parameters in single dataclass
+```python
+@dataclass
+class PPOConfig:
+    num_episodes: int = 5000
+    max_steps: int = 10
+    lr: float = 1e-4
+    # ... many more parameters
+```
 
----
+## Troubleshooting
 
-**Happy Refactoring!** 🚀✨
+**Data Issues**:
+- Ensure `*.pt` files contain PyG Data objects with 7-dimensional node features
+- Check that `is_smelly` attribute exists for labels
+- Verify graph connectivity and valid edge indices
+
+**Training Issues**:
+- Monitor for NaN values in loss functions
+- Check GPU memory usage for large graphs
+- Verify discriminator loading if using adversarial training
+
+**Evaluation Issues**:
+- Ensure model checkpoints exist before evaluation
+- Check data path consistency across components
+- Verify hub tracking doesn't lose target nodes
+
+## Paper Replication
+
+To replicate paper results:
+
+1. Use the same Arcan output structure with CSV files
+2. Run data collection with provided configuration
+3. Pre-train discriminator with 5-fold cross-validation  
+4. Train PPO with default PPOConfig parameters
+5. Evaluate using provided metrics and visualization scripts
+
+Expected performance:
+- Success Rate: >90%
+- Average Hub Improvement: >0.40
+- Average Reward: >3.2
+- Average Episode Length: ≤3 steps
